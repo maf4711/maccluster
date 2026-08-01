@@ -1,0 +1,13 @@
+bridge0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+	options=63<RXCSUM,TXCSUM,TSO4,TSO6>
+	ether 11:22:33:44:55:66
+	inet 10.42.0.1 netmask 0xffffff00 broadcast 10.42.0.255
+	Configuration:
+		id 0:0:0:0:0:0 priority 0 hellotime 0 fwddelay 0
+		maxage 0 holdcnt 0 proto stp maxaddr 100 timeout 1200
+	member: en1 flags=3<LEARNING,DISCOVER>
+	        ifmaxaddr 0 port 10 priority 0 path cost 0
+	Address cache:
+	nd6 options=201<PERFORMNUD,DAD>
+	media: autoselect
+	status: active

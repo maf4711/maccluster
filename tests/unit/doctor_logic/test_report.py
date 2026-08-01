@@ -1,0 +1,32 @@
+"""Doctor report exit codes."""
+
+from __future__ import annotations
+
+from maccluster.doctor_logic.report import build_report
+from maccluster.domain.enums import CheckSeverity
+from maccluster.domain.models import DoctorFinding
+
+
+def test_error_exit_1():
+    r = build_report([DoctorFinding("config", CheckSeverity.ERROR, "bad")])
+    assert r.exit_code == 1
+
+
+def test_peer_warn_exit_3():
+    r = build_report(
+        [
+            DoctorFinding("config", CheckSeverity.OK, "ok"),
+            DoctorFinding("peers", CheckSeverity.WARN, "down"),
+        ]
+    )
+    assert r.exit_code == 3
+
+
+def test_iperf_info_exit_0():
+    r = build_report(
+        [
+            DoctorFinding("config", CheckSeverity.OK, "ok"),
+            DoctorFinding("iperf3", CheckSeverity.INFO, "missing"),
+        ]
+    )
+    assert r.exit_code == 0

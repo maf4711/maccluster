@@ -1,0 +1,34 @@
+# Example MacCluster config for 4 Apple Silicon Mac minis.
+# Copy to ~/.config/maccluster/cluster.toml and adjust hostnames / hw_uuid.
+# Same file can be placed on every member; self is resolved per host.
+
+schema_version = 1
+name = "studio-cluster"
+subnet = "10.42.0.0/24"
+bridge_interface = "bridge0"
+heal_interval_seconds = 30
+ssh_probes_enabled = false
+
+[[nodes]]
+id = "node-a"
+hostnames = ["mac-mini-a.local", "mac-mini-a"]
+ip = "10.42.0.1"
+hw_uuid = "00000000-0000-0000-0000-000000000001"
+
+[[nodes]]
+id = "node-b"
+hostnames = ["mac-mini-b.local", "mac-mini-b"]
+ip = "10.42.0.2"
+hw_uuid = "00000000-0000-0000-0000-000000000002"
+
+[[nodes]]
+id = "node-c"
+hostnames = ["mac-mini-c.local", "mac-mini-c"]
+ip = "10.42.0.3"
+hw_uuid = "00000000-0000-0000-0000-000000000003"
+
+[[nodes]]
+id = "node-d"
+hostnames = ["mac-mini-d.local", "mac-mini-d"]
+ip = "10.42.0.4"
+hw_uuid = "00000000-0000-0000-0000-000000000004"

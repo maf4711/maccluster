@@ -1,0 +1,18 @@
+schema_version = 1
+name = "pair"
+subnet = "10.42.0.0/24"
+bridge_interface = "bridge0"
+heal_interval_seconds = 30
+ssh_probes_enabled = false
+
+[[nodes]]
+id = "node-a"
+hostnames = ["mac-mini-a.local", "mac-mini-a"]
+ip = "10.42.0.1"
+hw_uuid = "00000000-0000-0000-0000-000000000001"
+
+[[nodes]]
+id = "node-b"
+hostnames = ["mac-mini-b.local", "mac-mini-b"]
+ip = "10.42.0.2"
+hw_uuid = "00000000-0000-0000-0000-000000000002"

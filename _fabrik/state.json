@@ -2,8 +2,60 @@
   "projekt": "maccluster",
   "name": "MacCluster",
   "erstellt": "2026-08-01",
-  "phase": "ANALYSE",
+  "phase": "ABNAHME",
   "gates": "autopilot",
-  "freigaben": {},
-  "wellen": { "gesamt": 0, "fertig": 0 }
+  "freigaben": {
+    "ANALYSE": "2026-08-01",
+    "ARCHITEKTUR": "2026-08-01",
+    "PLANUNG": "2026-08-01",
+    "IMPLEMENTIERUNG": "2026-08-01",
+    "QUALITAET": "2026-08-01"
+  },
+  "wellen": {
+    "gesamt": 6,
+    "fertig": 6
+  },
+  "verlauf": [
+    {
+      "phase": "ANALYSE",
+      "datum": "2026-08-01",
+      "tokens": null,
+      "agenten": 7,
+      "dauerMin": null
+    },
+    {
+      "phase": "ARCHITEKTUR",
+      "datum": "2026-08-01",
+      "tokens": null,
+      "agenten": 6,
+      "dauerMin": null
+    },
+    {
+      "phase": "PLANUNG",
+      "datum": "2026-08-01",
+      "tokens": null,
+      "agenten": 1,
+      "dauerMin": null
+    },
+    {
+      "phase": "IMPLEMENTIERUNG",
+      "datum": "2026-08-01",
+      "tokens": null,
+      "agenten": 1,
+      "dauerMin": null,
+      "notiz": "Wellen 1–6 Vollausbau; pytest 93 passed"
+    },
+    {
+      "phase": "QUALITAET",
+      "datum": "2026-08-01",
+      "tokens": null,
+      "agenten": 1,
+      "dauerMin": null,
+      "notiz": "102 pytest passed"
+    }
+  ],
+  "aufwand": {
+    "tokens": 0,
+    "agenten": 17
+  }
 }

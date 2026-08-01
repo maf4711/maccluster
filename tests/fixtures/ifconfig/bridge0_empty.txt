@@ -1,0 +1,7 @@
+bridge0: flags=8822<BROADCAST,SMART,SIMPLEX,MULTICAST> mtu 1500
+	options=63<RXCSUM,TXCSUM,TSO4,TSO6>
+	ether 11:22:33:44:55:66
+	Configuration:
+		id 0:0:0:0:0:0 priority 0 hellotime 0 fwddelay 0
+	media: autoselect
+	status: inactive

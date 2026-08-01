@@ -1,0 +1,10 @@
+schema_version = 1
+name = "too-small"
+subnet = "10.42.0.0/24"
+bridge_interface = "bridge0"
+
+[[nodes]]
+id = "only"
+hostnames = ["only.local"]
+ip = "10.42.0.1"
+hw_uuid = "00000000-0000-0000-0000-000000000001"

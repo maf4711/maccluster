@@ -1,0 +1,31 @@
+"""heal / heal --loop."""
+
+from __future__ import annotations
+
+from maccluster.app_factory import AppContext
+from maccluster.cli.exit_codes import OK
+from maccluster.errors import DegradedError
+from maccluster.render.json_out import dumps, to_jsonable
+from maccluster.services.heal_loop_service import run_heal_loop
+from maccluster.services.mutate_service import ensure_local
+
+
+def run(ctx: AppContext, args) -> int:
+    if getattr(args, "loop", False):
+        interval = getattr(args, "interval", None)
+        # best-effort loop — not HA
+        return run_heal_loop(ctx, interval=interval)
+
+    try:
+        result = ensure_local(ctx)
+    except DegradedError as exc:
+        if ctx.json_mode:
+            print(dumps("heal", {"degraded": True, "message": exc.message}))
+        else:
+            print(exc.message)
+        return exc.exit_code
+    if ctx.json_mode:
+        print(dumps("heal", to_jsonable(result)))
+    else:
+        print(result.message)
+    return OK

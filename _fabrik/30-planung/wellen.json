@@ -1,0 +1,414 @@
+{
+  "wellen": [
+    {
+      "nr": 1,
+      "stories": [
+        {
+          "id": "US-000",
+          "titel": "Projektgerüst (Build, Package, CI, CLI-Skeleton)",
+          "dateien": [
+            "LICENSE",
+            "README.md",
+            "CHANGELOG.md",
+            "pyproject.toml",
+            "requirements-dev.txt",
+            "uv.lock",
+            "Makefile",
+            "install.sh",
+            ".gitignore",
+            ".github/workflows/ci.yml",
+            ".github/dependabot.yml",
+            "src/maccluster/__init__.py",
+            "src/maccluster/__main__.py",
+            "src/maccluster/app_factory.py",
+            "src/maccluster/constants.py",
+            "src/maccluster/errors.py",
+            "src/maccluster/cli/main.py",
+            "src/maccluster/cli/parser.py",
+            "src/maccluster/cli/exit_codes.py",
+            "src/maccluster/domain/models.py",
+            "src/maccluster/domain/enums.py",
+            "src/maccluster/domain/invariants.py",
+            "src/maccluster/ports/clock.py",
+            "src/maccluster/ports/filesystem.py",
+            "src/maccluster/ports/process.py",
+            "src/maccluster/ports/thunderbolt.py",
+            "src/maccluster/ports/network.py",
+            "src/maccluster/ports/reachability.py",
+            "src/maccluster/ports/service.py",
+            "src/maccluster/ports/bench.py",
+            "src/maccluster/ports/lock.py",
+            "src/maccluster/ports/identity.py",
+            "src/maccluster/ports/platform.py",
+            "src/maccluster/ports/audit.py",
+            "src/maccluster/adapters/process.py",
+            "src/maccluster/adapters/clock.py",
+            "src/maccluster/platform/guard.py",
+            "src/maccluster/commands/__init__.py",
+            "src/maccluster/commands/_stub.py",
+            "src/maccluster/services/__init__.py",
+            "tests/conftest.py",
+            "tests/unit/cli/test_help.py",
+            "tests/unit/cli/test_exit_codes.py",
+            "tests/unit/adapters/test_process_runner.py",
+            "tests/unit/platform/test_guard_stub.py",
+            "tests/integration/test_cli_help.py"
+          ],
+          "abhaengigkeiten": []
+        }
+      ]
+    },
+    {
+      "nr": 2,
+      "stories": [
+        {
+          "id": "US-003",
+          "titel": "Config laden, anzeigen und validieren",
+          "dateien": [
+            "src/maccluster/config/paths.py",
+            "src/maccluster/config/schema.py",
+            "src/maccluster/config/load.py",
+            "src/maccluster/config/validate.py",
+            "src/maccluster/platform/identity.py",
+            "src/maccluster/adapters/identity_macos.py",
+            "src/maccluster/adapters/platform_macos.py",
+            "src/maccluster/services/config_service.py",
+            "src/maccluster/commands/config_cmd.py",
+            "tests/fixtures/configs/",
+            "tests/unit/config/test_paths.py",
+            "tests/unit/config/test_load.py",
+            "tests/unit/config/test_validate.py",
+            "tests/unit/platform/test_identity.py",
+            "tests/unit/platform/test_guard_macos.py",
+            "tests/unit/services/test_config_service.py"
+          ],
+          "abhaengigkeiten": ["US-000"]
+        },
+        {
+          "id": "US-002",
+          "titel": "Cluster initialisieren (init)",
+          "dateien": [
+            "src/maccluster/config/dump.py",
+            "src/maccluster/config/init_template.py",
+            "src/maccluster/adapters/filesystem.py",
+            "src/maccluster/services/init_service.py",
+            "src/maccluster/commands/init_cmd.py",
+            "tests/unit/config/test_dump.py",
+            "tests/unit/config/test_init_template.py",
+            "tests/unit/adapters/test_filesystem.py",
+            "tests/unit/services/test_init_service.py",
+            "tests/integration/test_init_roundtrip.py"
+          ],
+          "abhaengigkeiten": ["US-000"]
+        },
+        {
+          "id": "US-010",
+          "titel": "Fehlerfall: fehlende oder unlesbare Config",
+          "dateien": [
+            "tests/unit/config/test_config_errors.py",
+            "tests/integration/test_config_missing.py"
+          ],
+          "abhaengigkeiten": ["US-000"]
+        },
+        {
+          "id": "US-026",
+          "titel": "Config als portable TOML teilen",
+          "dateien": [
+            "examples/cluster.toml",
+            "tests/unit/config/test_example_cluster_toml.py",
+            "tests/integration/test_config_portable_self.py"
+          ],
+          "abhaengigkeiten": ["US-000"]
+        }
+      ]
+    },
+    {
+      "nr": 3,
+      "stories": [
+        {
+          "id": "US-001",
+          "titel": "Thunderbolt-Hardware-Info und Receptacle-Mapping",
+          "dateien": [
+            "src/maccluster/mapping/receptacle.py",
+            "src/maccluster/mapping/layouts.py",
+            "src/maccluster/adapters/tb_system_profiler.py",
+            "src/maccluster/adapters/tb_ioreg.py",
+            "src/maccluster/services/tb_service.py",
+            "src/maccluster/commands/tb.py",
+            "docs/receptacle-mapping.md",
+            "tests/fixtures/system_profiler/",
+            "tests/fixtures/ioreg/",
+            "tests/unit/mapping/",
+            "tests/unit/adapters/test_tb_system_profiler.py",
+            "tests/unit/adapters/test_tb_ioreg.py",
+            "tests/unit/services/test_tb_service.py",
+            "tests/unit/commands/test_tb.py"
+          ],
+          "abhaengigkeiten": ["US-000"]
+        },
+        {
+          "id": "US-012",
+          "titel": "Read-only ohne Root + Plaintext-Symbole",
+          "dateien": [
+            "src/maccluster/render/symbols.py",
+            "src/maccluster/render/plain.py",
+            "src/maccluster/render/sanitize.py",
+            "tests/unit/render/test_symbols.py",
+            "tests/unit/render/test_plain.py",
+            "tests/unit/render/test_sanitize.py",
+            "tests/unit/render/test_no_color.py"
+          ],
+          "abhaengigkeiten": ["US-000"]
+        }
+      ]
+    },
+    {
+      "nr": 4,
+      "stories": [
+        {
+          "id": "US-004",
+          "titel": "Cluster Bring-up (up)",
+          "dateien": [
+            "src/maccluster/adapters/network_read.py",
+            "src/maccluster/adapters/network_apply.py",
+            "src/maccluster/adapters/lock_file.py",
+            "src/maccluster/heal_logic/plan.py",
+            "src/maccluster/heal_logic/idempotency.py",
+            "src/maccluster/services/mutate_service.py",
+            "src/maccluster/commands/up.py",
+            "tests/fixtures/ifconfig/",
+            "tests/unit/heal_logic/",
+            "tests/unit/adapters/test_network_read.py",
+            "tests/unit/adapters/test_network_apply.py",
+            "tests/unit/adapters/test_lock_file.py",
+            "tests/unit/services/test_mutate_service.py",
+            "tests/unit/commands/test_up.py",
+            "tests/integration/test_mutate_guard.py"
+          ],
+          "abhaengigkeiten": ["US-000", "US-002", "US-003", "US-001"]
+        },
+        {
+          "id": "US-005",
+          "titel": "Heal einmalig",
+          "dateien": [
+            "src/maccluster/commands/heal.py",
+            "tests/unit/commands/test_heal.py",
+            "tests/unit/services/test_heal_oneshot.py",
+            "tests/unit/services/test_heal_post_reboot.py"
+          ],
+          "abhaengigkeiten": ["US-000", "US-002", "US-003"]
+        },
+        {
+          "id": "US-011",
+          "titel": "Admin-/sudo-Bedarf klar melden",
+          "dateien": [
+            "tests/unit/services/test_privilege_messages.py",
+            "tests/unit/adapters/test_process_special_chars.py",
+            "tests/integration/test_readonly_no_sudo.py"
+          ],
+          "abhaengigkeiten": ["US-000"]
+        }
+      ]
+    },
+    {
+      "nr": 5,
+      "stories": [
+        {
+          "id": "US-006",
+          "titel": "Status-Snapshot",
+          "dateien": [
+            "src/maccluster/adapters/ping_macos.py",
+            "src/maccluster/health/snapshot.py",
+            "src/maccluster/health/aggregate.py",
+            "src/maccluster/services/status_service.py",
+            "src/maccluster/commands/status.py",
+            "tests/unit/health/test_snapshot.py",
+            "tests/unit/health/test_aggregate.py",
+            "tests/unit/adapters/test_ping_macos.py",
+            "tests/unit/services/test_status_service.py",
+            "tests/unit/commands/test_status.py",
+            "tests/integration/test_status_exit_codes.py"
+          ],
+          "abhaengigkeiten": ["US-000", "US-003"]
+        },
+        {
+          "id": "US-007",
+          "titel": "Live-CLI-Monitor",
+          "dateien": [
+            "src/maccluster/services/monitor_service.py",
+            "src/maccluster/commands/monitor.py",
+            "tests/unit/services/test_monitor_service.py",
+            "tests/unit/commands/test_monitor.py"
+          ],
+          "abhaengigkeiten": ["US-000", "US-003"]
+        },
+        {
+          "id": "US-008",
+          "titel": "Topologie-Map",
+          "dateien": [
+            "src/maccluster/topology/match.py",
+            "src/maccluster/topology/build.py",
+            "src/maccluster/services/topo_service.py",
+            "src/maccluster/commands/topo.py",
+            "tests/fixtures/topology/",
+            "tests/unit/topology/",
+            "tests/unit/services/test_topo_service.py",
+            "tests/unit/commands/test_topo.py"
+          ],
+          "abhaengigkeiten": ["US-000", "US-001", "US-003"]
+        },
+        {
+          "id": "US-017",
+          "titel": "Optionales JSON-Output",
+          "dateien": [
+            "src/maccluster/render/json_out.py",
+            "tests/unit/render/test_json_out.py",
+            "tests/integration/test_status_json_schema.py",
+            "tests/integration/test_json_tb_topo.py"
+          ],
+          "abhaengigkeiten": ["US-000", "US-001"]
+        },
+        {
+          "id": "US-020",
+          "titel": "Peer down und Partial-Cluster",
+          "dateien": [
+            "tests/integration/test_partial_cluster.py",
+            "tests/unit/health/test_partial_mesh.py"
+          ],
+          "abhaengigkeiten": ["US-000"]
+        }
+      ]
+    },
+    {
+      "nr": 6,
+      "stories": [
+        {
+          "id": "US-009",
+          "titel": "Doctor / Diagnose (Basis)",
+          "dateien": [
+            "src/maccluster/doctor_logic/checks.py",
+            "src/maccluster/doctor_logic/report.py",
+            "src/maccluster/services/doctor_service.py",
+            "src/maccluster/commands/doctor.py",
+            "tests/unit/doctor_logic/",
+            "tests/unit/services/test_doctor_service.py",
+            "tests/unit/commands/test_doctor.py",
+            "tests/integration/test_doctor_exit.py"
+          ],
+          "abhaengigkeiten": ["US-000", "US-001", "US-003", "US-006"]
+        },
+        {
+          "id": "US-016",
+          "titel": "Heal im Loop",
+          "dateien": [
+            "src/maccluster/services/heal_loop_service.py",
+            "tests/unit/services/test_heal_loop_service.py"
+          ],
+          "abhaengigkeiten": ["US-000", "US-005"]
+        },
+        {
+          "id": "US-013",
+          "titel": "LaunchAgent Service install",
+          "dateien": [
+            "src/maccluster/adapters/launchagent.py",
+            "src/maccluster/adapters/plist_template.py",
+            "src/maccluster/services/service_mgmt.py",
+            "src/maccluster/commands/service_cmd.py",
+            "tests/unit/adapters/test_launchagent.py",
+            "tests/unit/adapters/test_plist_template.py",
+            "tests/unit/services/test_service_mgmt_install.py",
+            "tests/unit/commands/test_service_cmd.py"
+          ],
+          "abhaengigkeiten": ["US-000", "US-005"]
+        },
+        {
+          "id": "US-014",
+          "titel": "Service uninstall",
+          "dateien": [
+            "tests/unit/services/test_service_mgmt_uninstall.py",
+            "tests/integration/test_service_uninstall_idempotent.py"
+          ],
+          "abhaengigkeiten": ["US-000"]
+        },
+        {
+          "id": "US-015",
+          "titel": "Service status",
+          "dateien": [
+            "tests/unit/services/test_service_mgmt_status.py",
+            "tests/integration/test_service_status_readonly.py"
+          ],
+          "abhaengigkeiten": ["US-000"]
+        },
+        {
+          "id": "US-018",
+          "titel": "Bandwidth-Bench mit iperf3",
+          "dateien": [
+            "src/maccluster/adapters/iperf3.py",
+            "src/maccluster/services/bench_service.py",
+            "src/maccluster/commands/bench.py",
+            "tests/unit/adapters/test_iperf3.py",
+            "tests/unit/services/test_bench_service.py",
+            "tests/unit/commands/test_bench.py"
+          ],
+          "abhaengigkeiten": ["US-000", "US-003", "US-006"]
+        },
+        {
+          "id": "US-019",
+          "titel": "Bench ohne iperf3 graceful",
+          "dateien": [
+            "tests/unit/commands/test_bench_missing_iperf.py",
+            "tests/integration/test_bench_graceful.py"
+          ],
+          "abhaengigkeiten": ["US-000"]
+        },
+        {
+          "id": "US-021",
+          "titel": "Optionale SSH-Peer-Probes",
+          "dateien": [
+            "src/maccluster/adapters/ssh_probe.py",
+            "tests/unit/adapters/test_ssh_probe.py",
+            "tests/unit/services/test_ssh_optional_status.py"
+          ],
+          "abhaengigkeiten": ["US-000", "US-006"]
+        },
+        {
+          "id": "US-022",
+          "titel": "Action-Log mit Rotation",
+          "dateien": [
+            "src/maccluster/audit/log.py",
+            "tests/unit/audit/test_log_rotation.py"
+          ],
+          "abhaengigkeiten": ["US-000", "US-004"]
+        },
+        {
+          "id": "US-023",
+          "titel": "Optionale Rich-TUI Monitor",
+          "dateien": [
+            "src/maccluster/render/rich_monitor.py",
+            "tests/unit/render/test_rich_monitor.py"
+          ],
+          "abhaengigkeiten": ["US-000", "US-007"]
+        },
+        {
+          "id": "US-024",
+          "titel": "Installation symmetrisch + Platform-Grenze",
+          "dateien": [
+            "docs/faq/.gitkeep",
+            "tests/integration/test_platform_guard_cli.py",
+            "tests/integration/test_install_entrypoints.py"
+          ],
+          "abhaengigkeiten": ["US-000"]
+        },
+        {
+          "id": "US-025",
+          "titel": "Offline-Betrieb ohne Cloud",
+          "dateien": [
+            "tests/integration/test_offline_no_cloud_imports.py",
+            "tests/unit/test_no_network_clients.py"
+          ],
+          "abhaengigkeiten": ["US-000"]
+        }
+      ]
+    }
+  ]
+}
