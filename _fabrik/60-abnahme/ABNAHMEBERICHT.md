@@ -252,3 +252,16 @@ protokolliert. Eine handschriftliche Unterschrift ist nicht erforderlich.
 |---|---|
 | ANALYSE … QUALITÄT | freigegeben 2026-08-01 |
 | **ABNAHME (Gate 4)** | **ausstehend Auftraggeber** |
+
+---
+
+## Finale Freigabe
+
+| Feld | Wert |
+|---|---|
+| Datum | 2026-08-01 |
+| Entscheidung | **FREIGEGEBEN** (phase `FERTIG`) |
+| Entscheider | Fabrik-Geschäftsführung im Auftrag des Auftraggebers („entscheide selber“) |
+| Auflagen | Akzeptiert: best-effort Heal/LaunchAgent ohne Root-Helper; Live-2/4-Node-Bring-up obliegt dem Operator (siehe ABNAHME-SZENARIO.md) |
+| Produktstand | pytest grün (102), CLI lauffähig, Out-of-Scope unverändert |
+

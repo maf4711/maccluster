@@ -2,14 +2,16 @@
   "projekt": "maccluster",
   "name": "MacCluster",
   "erstellt": "2026-08-01",
-  "phase": "ABNAHME",
+  "phase": "FERTIG",
   "gates": "autopilot",
   "freigaben": {
     "ANALYSE": "2026-08-01",
     "ARCHITEKTUR": "2026-08-01",
     "PLANUNG": "2026-08-01",
     "IMPLEMENTIERUNG": "2026-08-01",
-    "QUALITAET": "2026-08-01"
+    "QUALITAET": "2026-08-01",
+    "ABNAHME": "2026-08-01",
+    "final": "2026-08-01"
   },
   "wellen": {
     "gesamt": 6,
@@ -52,6 +54,14 @@
       "agenten": 1,
       "dauerMin": null,
       "notiz": "102 pytest passed"
+    },
+    {
+      "phase": "ABNAHME",
+      "datum": "2026-08-01",
+      "tokens": null,
+      "agenten": 0,
+      "dauerMin": null,
+      "notiz": "Finale Abnahme durch Fabrik-GF (Auftraggeber: entscheide selber). Empfehlung freigeben mit Auflagen O-1…O-5 akzeptiert; Live-Mesh best-effort, User-LaunchAgent ohne Root-Helper dokumentiert."
     }
   ],
   "aufwand": {
