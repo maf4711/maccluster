@@ -1,0 +1,9 @@
+{
+  "projekt": "maccluster",
+  "name": "MacCluster",
+  "erstellt": "2026-08-01",
+  "phase": "ANALYSE",
+  "gates": "autopilot",
+  "freigaben": {},
+  "wellen": { "gesamt": 0, "fertig": 0 }
+}
