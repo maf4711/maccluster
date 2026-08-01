@@ -67,5 +67,17 @@
   "aufwand": {
     "tokens": 0,
     "agenten": 17
+  },
+  "ops": {
+    "node_a": {
+      "hostname": "CM-CFMQ2D029F",
+      "ip": "10.42.0.1",
+      "hw_uuid": "409C591A-9803-5203-B8C9-E72E73A3EF6E",
+      "pipx": true,
+      "service": true,
+      "bridge_ip_pending_sudo": true
+    },
+    "node_b_mdns": "CM-KWFVR7JGW3",
+    "updated": "2026-08-01"
   }
 }

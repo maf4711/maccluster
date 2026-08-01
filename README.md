@@ -129,3 +129,15 @@ On non-macOS CI hosts set `MACCLUSTER_SKIP_PLATFORM_GUARD=1`.
 - Subprocess only via allowlisted absolute paths (`shell=False`, timeouts).
 - Network mutation is **local Self-host only**; no default-route or Wi-Fi changes.
 - No secrets in config, logs, or JSON output.
+
+## Operations (this Mac)
+
+See [`docs/ops.md`](docs/ops.md) for the live `studio-cluster` inventory and
+member install scripts under [`scripts/`](scripts/).
+
+```bash
+./scripts/install-member.sh
+sudo maccluster up          # once, admin password
+maccluster service install  # LaunchAgent heal --loop
+maccluster status
+```

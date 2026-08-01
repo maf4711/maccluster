@@ -265,3 +265,14 @@ protokolliert. Eine handschriftliche Unterschrift ist nicht erforderlich.
 | Auflagen | Akzeptiert: best-effort Heal/LaunchAgent ohne Root-Helper; Live-2/4-Node-Bring-up obliegt dem Operator (siehe ABNAHME-SZENARIO.md) |
 | Produktstand | pytest grün (102), CLI lauffähig, Out-of-Scope unverändert |
 
+### Operative Nacharbeit (2026-08-01)
+
+| Punkt | Status |
+|---|---|
+| pipx-Install auf node-a | erledigt (`~/.local/bin/maccluster` 0.1.0) |
+| Config `~/.config/maccluster/cluster.toml` | erledigt (self node-a real UUID) |
+| LaunchAgent `com.maccluster.heal` | installiert + running |
+| iperf3 | installiert (Homebrew) |
+| `sudo maccluster up` | **Operator einmalig** (Admin-Passwort GUI/Terminal) — Bridge-IP 10.42.0.1 |
+| Peer node-b | Hostname `CM-KWFVR7JGW3` vorbereitet; UUID auf Peer nachziehen; TB-Kabel stecken |
+| node-c/d | Platzhalter bis Hardware da |
