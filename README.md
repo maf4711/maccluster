@@ -9,21 +9,42 @@ cluster. Same package on every member — no leader, no cloud, no database.
 
 ## Install
 
+### One-liner (GitHub raw)
+
 ```bash
-# Preferred
-pipx install .
-
-# Or editable for development
-python3 -m pip install -e ".[dev]"
-
-# Convenience
-./install.sh
+curl -fsSL https://raw.githubusercontent.com/maf4711/maccluster/main/install.sh | bash
 ```
 
-Verify:
+### Download ZIP
+
+| What | URL |
+|------|-----|
+| **ZIP (main)** | https://github.com/maf4711/maccluster/archive/refs/heads/main.zip |
+| **raw install.sh** | https://raw.githubusercontent.com/maf4711/maccluster/main/install.sh |
+| **Repo** | https://github.com/maf4711/maccluster |
+| **Tag release ZIP** | https://github.com/maf4711/maccluster/archive/refs/tags/v0.1.0.zip |
 
 ```bash
-make verify   # ruff + pytest
+curl -fsSL https://github.com/maf4711/maccluster/archive/refs/heads/main.zip -o maccluster.zip
+unzip maccluster.zip && cd maccluster-main && ./install.sh
+```
+
+### pipx / pip from Git
+
+```bash
+pipx install "git+https://github.com/maf4711/maccluster.git"
+# or a tag:
+pipx install "git+https://github.com/maf4711/maccluster.git@v0.1.0"
+```
+
+### Local checkout (dev)
+
+```bash
+git clone https://github.com/maf4711/maccluster.git
+cd maccluster
+pipx install .          # or: python3 -m pip install -e ".[dev]"
+./install.sh
+make verify             # ruff + pytest
 maccluster --help
 ```
 

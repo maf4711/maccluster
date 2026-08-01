@@ -14,6 +14,18 @@ A negotiated **40 Gb/s** Mac↔Mac link usually means a TB4-class cable.
 
 ## One-time per member
 
+### Fast path (no prior checkout)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/maf4711/maccluster/main/install.sh | bash
+maccluster init
+# edit ~/.config/maccluster/cluster.toml on all nodes (same content)
+sudo maccluster up
+maccluster service install
+```
+
+### From repo checkout
+
 ```bash
 cd /path/to/maccluster
 ./scripts/install-member.sh
@@ -21,6 +33,15 @@ cd /path/to/maccluster
 sudo maccluster up
 maccluster service install
 ```
+
+### Download links
+
+| Artifact | Link |
+|----------|------|
+| Install script (raw) | https://raw.githubusercontent.com/maf4711/maccluster/main/install.sh |
+| Source ZIP (main) | https://github.com/maf4711/maccluster/archive/refs/heads/main.zip |
+| Source ZIP (v0.1.0) | https://github.com/maf4711/maccluster/archive/refs/tags/v0.1.0.zip |
+| Repository | https://github.com/maf4711/maccluster |
 
 Copy the **same** `cluster.toml` to every node (edit UUIDs/hostnames first):
 

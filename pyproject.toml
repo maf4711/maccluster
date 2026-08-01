@@ -38,8 +38,12 @@ dev = [
 maccluster = "maccluster.cli.main:main"
 
 [project.urls]
-Homepage = "https://github.com/example/maccluster"
-Documentation = "https://github.com/example/maccluster#readme"
+Homepage = "https://github.com/maf4711/maccluster"
+Documentation = "https://github.com/maf4711/maccluster#readme"
+Repository = "https://github.com/maf4711/maccluster"
+Issues = "https://github.com/maf4711/maccluster/issues"
+Download = "https://github.com/maf4711/maccluster/archive/refs/heads/main.zip"
+RawInstall = "https://raw.githubusercontent.com/maf4711/maccluster/main/install.sh"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/maccluster"]
