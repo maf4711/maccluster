@@ -37,7 +37,7 @@ make verify
 
 MacCluster runs entirely on the local Mac. It does not call remote LLM or SaaS
 APIs. Host tools used: `system_profiler`, `ioreg`, `ifconfig`, `networksetup`,
-`ping`, `launchctl` (and optional `iperf3` / `ssh`).
+`ping`, `launchctl` (and optional `iperf3` / `ssh` / `scp` / `ditto` for sync home).
 
 ## Configuration
 
@@ -75,12 +75,32 @@ targets are refused for write/lock paths.
 | `monitor` | no | Live refresh (`--interval`) with TX/RX Mb/s, pps, errors; Ctrl+C → exit 0 |
 | `topo` | no | Cable / topology map (no rewiring advice) |
 | `doctor` | no | Diagnostics (config, self, TB, bridge, peers) |
-| `bench` | no | Optional `iperf3` to a peer IP |
+| `bench` | no | Optional `iperf3` to a peer IP (bound to TB Self-IP) |
+| `speedtest` | no | TB **cable grade** (40G ideal) + iperf3 over bridge; also runs at start of `sync home` / `remote-install` |
 | `service install\|uninstall\|status` | plist | User LaunchAgent → `heal --loop` |
+| `sync home` | files via SSH | Two-way **Home** sync via **Apple ditto** (newest-wins by mtime, full xattrs/ACLs); no deletes. See [`docs/SYNC-HOME.md`](docs/SYNC-HOME.md) |
+| `remote-install` | peer install | Install wheel+config on peer over **TB bridge only** (`10.42.0.x`, BindAddress Self-IP). See [`docs/REMOTE-INSTALL.md`](docs/REMOTE-INSTALL.md) |
+| `ssh-config` | OpenSSH | Write `~/.ssh/config.d/maccluster` so `10.42.0.*` uses bridge BindAddress |
 
 Global flags: `--config`, `--json`, `-v` / `--verbose`.  
 Env: `NO_COLOR`, `MACCLUSTER_CONFIG`, `MACCLUSTER_SKIP_PLATFORM_GUARD=1` (tests only),
 `MACCLUSTER_RICH=0`.
+
+### Home sync (`maccluster sync home`)
+
+Mesh bring-up does **not** copy files. To keep `~/` aligned across minis over TB,
+MacCluster uses **Apple `ditto`** (metadata-complete: xattrs, ACLs, resource forks)
+with **newest-wins** by mtime — not Homebrew rsync, not iCloud:
+
+```bash
+# needs: ssh key login to peers (stock macOS ditto + scp)
+maccluster sync home --dry-run    # preview
+maccluster sync home              # push then pull per peer (newest wins)
+maccluster sync home --peer node-b
+```
+
+Requires working SSH (`ssh-copy-id user@10.42.0.x`). Details: [`docs/SYNC-HOME.md`](docs/SYNC-HOME.md),
+SSH troubles: [`docs/PEER-SSH.md`](docs/PEER-SSH.md).
 
 ### Live traffic (status / monitor)
 

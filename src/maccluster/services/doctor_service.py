@@ -40,6 +40,7 @@ def run_doctor(ctx: AppContext) -> DoctorReport:
     except Exception as exc:
         tb_error = str(exc)
     findings.append(checks.check_tb(tb, tb_error))
+    findings.append(checks.check_cable(tb))
 
     bridge = None
     desired_ip = str(self_node.ip) if self_node else None

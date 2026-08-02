@@ -78,7 +78,13 @@ cd ~/Developer/fabrik/projects/maccluster
 ./scripts/remote-install.sh a321@10.42.0.2 --copy-config
 maccluster status
 maccluster doctor
+
+# Optional: keep Home in sync (newest-wins, no deletes)
+maccluster sync home --dry-run
+maccluster sync home
 ```
+
+See [SYNC-HOME.md](./SYNC-HOME.md).
 
 ## Note on ICMP
 

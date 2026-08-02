@@ -25,9 +25,11 @@ def run_bench(ctx: AppContext, target: str | None, *, duration: int = 5) -> Benc
         )
 
     resolved = target
-    # Allow node id from config
+    bind_ip = None
+    # Allow node id from config; bind iperf to TB Self-IP
     try:
         cfg, self_node = load_and_bind_self(ctx)
+        bind_ip = str(self_node.ip)
         for n in cfg.nodes:
             if n.id == target:
                 if n.id == self_node.id:
@@ -50,7 +52,7 @@ def run_bench(ctx: AppContext, target: str | None, *, duration: int = 5) -> Benc
         except ValueError as exc:
             raise CliError(f"invalid bench target: {target!r}", exit_code=2) from exc
 
-    result = ctx.bench.run(resolved, duration=duration)
+    result = ctx.bench.run(resolved, duration=duration, bind_ip=bind_ip)
     if not result.success:
         raise CliError(result.message, exit_code=1)
     return result

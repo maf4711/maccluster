@@ -33,6 +33,7 @@ TIMEOUT_SSH = 3.0
 TIMEOUT_IPERF = 15.0
 TIMEOUT_GENERIC = 15.0
 TIMEOUT_PROFILER = 30.0
+TIMEOUT_SYNC = 3600.0  # home ditto archives can be large; override via --timeout
 
 PING_COUNT = 1
 STATUS_BUDGET_S = 3.0
@@ -52,7 +53,27 @@ ALLOWLIST_BASENAMES = frozenset(
         "scutil",
         "iperf3",
         "ssh",
+        "scp",
+        "ditto",  # Apple metadata-complete copy (sync home)
     }
+)
+
+# Default excludes for `maccluster sync home` (newest-wins; never deletes)
+SYNC_HOME_EXCLUDES: tuple[str, ...] = (
+    ".Trash/",
+    ".cache/",
+    "Library/Caches/",
+    "Library/Logs/",
+    "Library/Developer/Xcode/DerivedData/",
+    "Library/Developer/CoreSimulator/",
+    "Library/Application Support/MobileSync/",
+    "Library/Mail/V*/MailData/Envelope Index*",
+    ".npm/_cacache/",
+    "**/node_modules/",
+    "**/__pycache__/",
+    "**/.venv/",
+    "**/venv/",
+    ".DS_Store",
 )
 
 # Traffic sampling (status/monitor TX/RX rates)

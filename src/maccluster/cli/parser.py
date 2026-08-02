@@ -87,10 +87,145 @@ def build_parser() -> argparse.ArgumentParser:
         help="iperf3 duration seconds (max 60)",
     )
 
+    p_st = sub.add_parser(
+        "speedtest",
+        help=(
+            "TB cable grade (40G ideal / 20G ok) + iperf3 over bridge Self-IP "
+            "(run at fleet bring-up)"
+        ),
+    )
+    p_st.add_argument(
+        "--peer",
+        default=None,
+        help="Only test this peer id or IP (default: all peers)",
+    )
+    p_st.add_argument(
+        "--duration",
+        type=int,
+        default=5,
+        help="iperf3 seconds (default 5, max 30)",
+    )
+    p_st.add_argument(
+        "--cable-only",
+        action="store_true",
+        help="Skip iperf3; only classify link speed / cable path",
+    )
+    p_st.add_argument(
+        "--no-server",
+        action="store_true",
+        help="Do not try to start remote iperf3 -s via SSH",
+    )
+
     p_svc = sub.add_parser("service", help="User LaunchAgent for heal --loop")
     svc_sub = p_svc.add_subparsers(dest="service_action", metavar="ACTION")
     svc_sub.add_parser("install", help="Install LaunchAgent")
     svc_sub.add_parser("uninstall", help="Remove LaunchAgent")
     svc_sub.add_parser("status", help="Show LaunchAgent status")
+
+    p_sync = sub.add_parser(
+        "sync",
+        help="Sync data with peers over TB/SSH (separate from mesh bring-up)",
+    )
+    sync_sub = p_sync.add_subparsers(dest="sync_action", metavar="TARGET")
+    p_home = sync_sub.add_parser(
+        "home",
+        help=(
+            "Two-way Home sync via Apple ditto (newest-wins by mtime, full "
+            "xattrs/ACLs). No deletes. Needs SSH key login to peers."
+        ),
+    )
+    p_home.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what ditto would transfer (no writes)",
+    )
+    p_home.add_argument(
+        "--peer",
+        metavar="ID|IP",
+        default=None,
+        help="Only sync with this node id or IP (default: all peers)",
+    )
+    p_home.add_argument(
+        "--push-only",
+        action="store_true",
+        help="Only push local → peer (still newest-wins by mtime)",
+    )
+    p_home.add_argument(
+        "--pull-only",
+        action="store_true",
+        help="Only pull peer → local (still newest-wins by mtime)",
+    )
+    p_home.add_argument(
+        "--user",
+        metavar="NAME",
+        default=None,
+        help="SSH username on peers (default: local $USER)",
+    )
+    p_home.add_argument(
+        "--home",
+        metavar="PATH",
+        default=None,
+        help="Local home path (default: ~)",
+    )
+    p_home.add_argument(
+        "--remote-home",
+        metavar="PATH",
+        default=None,
+        help="Remote home path (default: same as local home path)",
+    )
+    p_home.add_argument(
+        "--exclude",
+        action="append",
+        default=[],
+        metavar="PATTERN",
+        help="Extra exclude pattern (repeatable); defaults already skip Caches/Trash/…",
+    )
+    p_home.add_argument(
+        "--timeout",
+        type=float,
+        default=None,
+        help="Per-step timeout seconds (default 3600)",
+    )
+    p_home.add_argument(
+        "--no-progress",
+        action="store_true",
+        help="Disable live progress bar (percent / path / speed)",
+    )
+
+    p_ri = sub.add_parser(
+        "remote-install",
+        help=(
+            "Install MacCluster on a peer over the TB bridge only "
+            "(BindAddress Self-IP → peer 10.42.0.x; not Wi‑Fi)"
+        ),
+    )
+    p_ri.add_argument(
+        "peer",
+        help="Peer node id or cluster IP (e.g. node-b or 10.42.0.2)",
+    )
+    p_ri.add_argument("--user", default=None, help="SSH user (default $USER)")
+    p_ri.add_argument(
+        "--no-config",
+        action="store_true",
+        help="Do not copy local cluster.toml to peer",
+    )
+    p_ri.add_argument(
+        "--no-ssh-config",
+        action="store_true",
+        help="Skip writing ~/.ssh/config.d/maccluster",
+    )
+    p_ri.add_argument("--dry-run", action="store_true", help="Plan only")
+    p_ri.add_argument(
+        "--timeout",
+        type=float,
+        default=600.0,
+        help="SSH/SCP timeout seconds (default 600)",
+    )
+
+    p_sshc = sub.add_parser(
+        "ssh-config",
+        help="Write OpenSSH config so 10.42.0.* uses BindAddress on TB bridge only",
+    )
+    p_sshc.add_argument("--user", default=None, help="SSH user (default $USER)")
 
     return parser

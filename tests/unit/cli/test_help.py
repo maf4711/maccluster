@@ -20,6 +20,10 @@ def test_parser_has_commands():
         "doctor",
         "bench",
         "service",
+        "sync",
+        "remote-install",
+        "ssh-config",
+        "speedtest",
     ):
         assert cmd in help_text
 

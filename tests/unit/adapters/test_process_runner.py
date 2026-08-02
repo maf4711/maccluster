@@ -23,6 +23,18 @@ def test_resolve_ping():
     assert path.startswith("/")
 
 
+def test_ditto_and_scp_allowlisted():
+    runner = ProcessRunner()
+    for name in ("ditto", "scp"):
+        try:
+            path = runner.resolve(name)
+            assert path.endswith(name)
+            assert path.startswith("/")
+        except CliError as exc:
+            assert "not found" in exc.message
+            assert "allowlisted" not in exc.message
+
+
 def test_run_true_like_sw_vers_or_echo_blocked():
     runner = ProcessRunner()
     with pytest.raises(CliError):

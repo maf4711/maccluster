@@ -23,7 +23,13 @@ class Iperf3Bench:
         except CliError:
             return False
 
-    def run(self, target: str, *, duration: int = 5) -> BenchResult:
+    def run(
+        self,
+        target: str,
+        *,
+        duration: int = 5,
+        bind_ip: str | None = None,
+    ) -> BenchResult:
         if not self.available():
             return BenchResult(
                 target=target,
@@ -39,8 +45,12 @@ class Iperf3Bench:
                 raise CliError(f"invalid bench target: {target!r}", exit_code=2) from None
         duration = max(1, min(int(duration), 60))
         abs_iperf = self._runner.resolve("iperf3")
+        argv = [abs_iperf, "-c", target, "-t", str(duration), "-J"]
+        # Force traffic out the TB bridge Self-IP (not Wi‑Fi)
+        if bind_ip:
+            argv.extend(["-B", str(bind_ip)])
         result = self._runner.run(
-            [abs_iperf, "-c", target, "-t", str(duration), "-J"],
+            argv,
             timeout=TIMEOUT_IPERF + duration,
         )
         if result.returncode != 0:
@@ -84,7 +94,9 @@ class FakeBench:
     def available(self) -> bool:
         return self._available
 
-    def run(self, target: str, *, duration: int = 5) -> BenchResult:
+    def run(
+        self, target: str, *, duration: int = 5, bind_ip: str | None = None
+    ) -> BenchResult:
         if not self._available:
             return BenchResult(
                 target=target,

@@ -75,6 +75,8 @@ maccluster status       # nodes + link + TX/RX rates (2nd run shows rates)
 maccluster monitor      # live refresh
 maccluster topo         # cable map
 maccluster doctor       # diagnostics
+maccluster sync home --dry-run   # Home newest-wins over TB/SSH (needs keys)
+maccluster sync home             # see docs/SYNC-HOME.md
 ```
 
 ---
@@ -99,6 +101,8 @@ maccluster doctor       # diagnostics
 | `sudo maccluster up` fails | Run in Terminal with admin rights; or `open scripts/up-with-admin.command` |
 | Peers DOWN | Plug TB cables · same `cluster.toml` on all nodes · `maccluster doctor` |
 | Rates show `n/a` | Run `status` twice (Δ ≥ ~0.5 s) or use `monitor` |
+| `sync home` SSH failed | Key login: `ssh-copy-id user@10.42.0.x` · [PEER-SSH.md](PEER-SSH.md) · [SYNC-HOME.md](SYNC-HOME.md) |
+| `ditto not found` | Unexpected on macOS — restore `/usr/bin/ditto` |
 
 ---
 

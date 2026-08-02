@@ -18,6 +18,8 @@ from maccluster.render.symbols import link_symbol, reachability_symbol
 
 
 def render_tb(snap: ThunderboltSnapshot) -> str:
+    from maccluster.domain.cable import assess_cluster_cables
+
     lines = [f"Thunderbolt ({snap.source})" + (f" — {snap.host_model}" if snap.host_model else "")]
     if not snap.ports:
         lines.append("  (no ports detected)")
@@ -26,14 +28,18 @@ def render_tb(snap: ThunderboltSnapshot) -> str:
         speed = f"{p.link_speed_gbps:g} Gb/s" if p.link_speed_gbps is not None else "n/a"
         peer = sanitize(p.peer_name) if p.peer_name else "no peer"
         iface = p.interface_name or "-"
+        mode = f" mode={sanitize(p.peer_mode)}" if p.peer_mode else ""
         lines.append(
             f"  receptacle {sanitize(p.receptacle_id)}: "
             f"{link_symbol(p.link_state)} {p.link_state.value} "
             f"cap={p.thunderbolt_version or '?'} speed={speed} "
-            f"iface={iface} peer={peer}"
+            f"iface={iface} peer={peer}{mode}"
         )
         if p.domain_uuid:
             lines.append(f"    domain={p.domain_uuid}")
+    report = assess_cluster_cables(snap)
+    lines.append(f"cable: [{report.overall_grade.value}] {report.summary}")
+    lines.append(f"  → {report.recommendation}")
     return "\n".join(lines)
 
 
@@ -89,6 +95,8 @@ def render_traffic_block(traffic: tuple[InterfaceTraffic, ...]) -> list[str]:
 
 
 def render_status(snap: HealthSnapshot) -> str:
+    from maccluster.domain.cable import assess_cluster_cables
+
     lines = [
         f"cluster: {sanitize(snap.cluster_name)}  overall={snap.overall.value}  "
         f"ts={snap.timestamp.isoformat()}",
@@ -97,6 +105,16 @@ def render_status(snap: HealthSnapshot) -> str:
         b = snap.bridge
         addrs = ",".join(str(a) for a in b.addresses) or "-"
         lines.append(f"bridge: {b.name} exists={b.exists} up={b.admin_up} addrs={addrs}")
+    if snap.tb is not None:
+        cable = assess_cluster_cables(snap.tb)
+        lines.append(
+            f"cable: [{cable.overall_grade.value}] {cable.summary}"
+            + (
+                f" (best {cable.best_mac_peer_gbps:g}G)"
+                if cable.best_mac_peer_gbps is not None
+                else ""
+            )
+        )
     for nh in snap.nodes:
         mark = "*" if snap.self_node_id and nh.node.id == snap.self_node_id else " "
         rtt = f" rtt={nh.rtt_ms:.1f}ms" if nh.rtt_ms is not None else ""

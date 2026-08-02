@@ -61,6 +61,27 @@ def check_tb(tb: ThunderboltSnapshot | None, error: str | None = None) -> Doctor
     )
 
 
+def check_cable(tb: ThunderboltSnapshot | None) -> DoctorFinding:
+    """Grade TB cable/path: 40G excellent, 20G ok, below = warn."""
+    from maccluster.domain.cable import CableGrade, assess_cluster_cables
+
+    report = assess_cluster_cables(tb)
+    if report.overall_grade == CableGrade.EXCELLENT:
+        sev = CheckSeverity.OK
+    elif report.overall_grade == CableGrade.GOOD:
+        sev = CheckSeverity.OK
+    elif report.overall_grade == CableGrade.MARGINAL:
+        sev = CheckSeverity.WARN
+    else:
+        sev = CheckSeverity.WARN
+    return DoctorFinding(
+        "cable",
+        sev,
+        report.summary,
+        report.recommendation,
+    )
+
+
 def check_bridge(bridge: BridgeInterface | None, desired_ip: str | None) -> DoctorFinding:
     if bridge is None:
         return DoctorFinding("bridge", CheckSeverity.WARN, "bridge not probed", "")

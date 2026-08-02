@@ -62,6 +62,7 @@ class ThunderboltPort:
     peer_name: str | None = None
     bus_uid: str | None = None
     status_raw: str | None = None
+    peer_mode: str | None = None  # e.g. "Thunderbolt 3", "USB4" from system_profiler
 
 
 @dataclass(frozen=True)
@@ -181,11 +182,71 @@ class DoctorReport:
 
 
 @dataclass(frozen=True)
+class SyncPeerResult:
+    """One peer direction result for home sync."""
+
+    peer_id: str
+    peer_ip: str
+    ssh_target: str
+    push_rc: int
+    pull_rc: int
+    push_stdout: str = ""
+    pull_stdout: str = ""
+    push_stderr: str = ""
+    pull_stderr: str = ""
+    ok: bool = False
+    skipped: bool = False
+    message: str = ""
+
+
+@dataclass(frozen=True)
+class SyncHomeResult:
+    """Aggregate result of `maccluster sync home`."""
+
+    local_home: str
+    dry_run: bool
+    strategy: str  # newest-wins
+    peers: tuple[SyncPeerResult, ...]
+    excludes: tuple[str, ...] = ()
+
+    @property
+    def ok(self) -> bool:
+        return all(p.ok or p.skipped for p in self.peers) and bool(self.peers)
+
+
+@dataclass(frozen=True)
 class BenchResult:
     target: str
     mbps: float | None
     success: bool
     message: str
+
+
+@dataclass(frozen=True)
+class SpeedtestPeerResult:
+    peer_id: str
+    peer_ip: str
+    link_speed_gbps: float | None
+    cable_grade: str
+    cable_summary: str
+    iperf_mbps: float | None
+    iperf_ok: bool
+    iperf_message: str
+    good_enough: bool
+
+
+@dataclass(frozen=True)
+class SpeedtestReport:
+    """Cable assessment + optional iperf3 over TB bridge."""
+
+    cable_summary: str
+    cable_grade: str
+    cable_recommendation: str
+    best_link_gbps: float | None
+    good_enough: bool
+    peers: tuple[SpeedtestPeerResult, ...]
+    bind_ip: str | None = None
+    duration_s: int = 5
 
 
 @dataclass(frozen=True)
