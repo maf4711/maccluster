@@ -18,10 +18,10 @@ def test_semicolon_hostname_not_shell_expanded():
     combined = (result.stdout or "") + (result.stderr or "")
     # Shell expansion would typically leave a bare "pwned" line; argv path keeps it in the host string.
     # macOS: "cannot resolve" / "Unknown host"; Linux: "Name or service not known"
-        low = combined.lower()
-        assert (
-            "cannot resolve" in low
-            or "unknown host" in low
-            or "name or service not known" in low
-            or "temporary failure" in low
-        )
+    low = combined.lower()
+    assert (
+        "cannot resolve" in low
+        or "unknown host" in low
+        or "name or service not known" in low
+        or "temporary failure" in low
+    )
