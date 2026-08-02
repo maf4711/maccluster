@@ -5,7 +5,6 @@ from __future__ import annotations
 from maccluster.app_factory import AppContext
 from maccluster.doctor_logic import checks
 from maccluster.doctor_logic.report import build_report
-from maccluster.domain.enums import ReachabilityState
 from maccluster.domain.models import DoctorReport
 from maccluster.services.config_service import load_and_bind_self, load_config
 from maccluster.services.tb_service import probe_tb

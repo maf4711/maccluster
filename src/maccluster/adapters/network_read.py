@@ -67,9 +67,7 @@ class NetworkRead:
         parsed = parse_netstat_ib(result.stdout, t_mono=time.monotonic())
         return parsed.get(name)
 
-    def get_iface_counters_many(
-        self, names: tuple[str, ...]
-    ) -> dict[str, InterfaceCounters]:
+    def get_iface_counters_many(self, names: tuple[str, ...]) -> dict[str, InterfaceCounters]:
         if not names:
             return {}
         # One netstat -ib is cheaper than N calls and covers bridge members.
@@ -118,12 +116,9 @@ class FakeNetworkRead:
     def get_iface_counters(self, name: str) -> InterfaceCounters | None:
         return self.get_iface_counters_many((name,)).get(name)
 
-    def get_iface_counters_many(
-        self, names: tuple[str, ...]
-    ) -> dict[str, InterfaceCounters]:
+    def get_iface_counters_many(self, names: tuple[str, ...]) -> dict[str, InterfaceCounters]:
         """Each call advances synthetic counters so rates become available."""
         self._counter_tick += 1
-        t = float(self._counter_tick)  # 1.0s steps if clock.sleep advances separately
         out: dict[str, InterfaceCounters] = {}
         for n in names:
             base = self.counters.get(n)

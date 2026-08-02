@@ -17,9 +17,7 @@ class NetworkReadPort(Protocol):
         """Cumulative counters for one interface (netstat Link row), or None."""
         ...
 
-    def get_iface_counters_many(
-        self, names: tuple[str, ...]
-    ) -> dict[str, InterfaceCounters]:
+    def get_iface_counters_many(self, names: tuple[str, ...]) -> dict[str, InterfaceCounters]:
         """Batch counters; missing ifaces omitted."""
         ...
 
