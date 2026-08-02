@@ -57,6 +57,16 @@ maccluster init --no-keychain    # local only
 | Any Apple ID / iCloud Keychain state | **No** — `security` items are not synchronizable |
 | Getting config to a peer | `maccluster remote-install <peer>` (TB bridge), then `keychain push` there |
 
+## Writes need a local login session
+
+`keychain push` writes to the login keychain. Over SSH that keychain is locked
+and the write fails with *"The authorization was denied."* Run `keychain push`
+in a Terminal **on that Mac**, or unlock first:
+
+```bash
+security unlock-keychain ~/Library/Keychains/login.keychain-db
+```
+
 ## Security
 
 - Password is only in Keychain, never in `cluster.toml` or git.  

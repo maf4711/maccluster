@@ -127,3 +127,34 @@ def test_set_password_deletes_then_adds_without_update_flag():
     add = runner.calls[1]
     assert "-U" not in add
     assert "" not in add  # no empty -T arg
+
+
+class _DenyingRunner(_RecordingRunner):
+    """Login keychain locked (typical in an SSH session)."""
+
+    def run(self, argv, *, timeout, check=False):
+        from maccluster.ports.process import ProcessResult
+
+        self.calls.append(list(argv))
+        if "add-generic-password" in argv:
+            return ProcessResult(
+                argv=tuple(argv),
+                returncode=1,
+                stdout="",
+                stderr=(
+                    "security: SecKeychainItemCreateFromContent (<default>): "
+                    "The authorization was denied."
+                ),
+            )
+        return ProcessResult(argv=tuple(argv), returncode=44, stdout="", stderr="")
+
+
+def test_locked_keychain_error_explains_ssh_session():
+    from maccluster.adapters.keychain_macos import KeychainStore
+    from maccluster.errors import CliError
+
+    kc = KeychainStore(_DenyingRunner())
+    with pytest.raises(CliError) as exc:
+        kc.set_password(service="svc", password="x", account="acct")
+    msg = exc.value.message
+    assert "unlock-keychain" in msg or "log in on that Mac" in msg

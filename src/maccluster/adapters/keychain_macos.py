@@ -112,9 +112,19 @@ class KeychainStore:
             args.extend(["-l", label])
         rc, out, err = self._security(*args)
         if rc != 0:
-            hint = " (Keychain UI prompt pending?)" if rc == 124 else ""
+            detail = err or out or str(rc)
+            if "authorization was denied" in detail.lower():
+                hint = (
+                    " — the login keychain is locked (SSH sessions cannot write to it): "
+                    "log in on that Mac and rerun, or first run "
+                    "`security unlock-keychain ~/Library/Keychains/login.keychain-db`"
+                )
+            elif rc == 124:
+                hint = " — write timed out (Keychain UI prompt pending?)"
+            else:
+                hint = ""
             raise CliError(
-                f"keychain write failed for {service}: {err or out or rc}{hint}",
+                f"keychain write failed for {service}: {detail}{hint}",
                 exit_code=1,
             )
 
