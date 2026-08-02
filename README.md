@@ -86,8 +86,8 @@ targets are refused for write/lock paths.
 | `up` | yes (local) | Ensure bridge + fixed Self-IP; often needs admin |
 | `heal` | yes (local) | One-shot ensure (same path as `up`) |
 | `heal --loop` | yes | Periodic heal (default 30 s, min 5 s); **best-effort**, not HA |
-| `status` | no | Nodes + reachability + TB link hints |
-| `monitor` | no | Live refresh (`--interval`); Ctrl+C → exit 0 |
+| `status` | no | Nodes + reachability + TB link + **live TX/RX rates** (netstat deltas) |
+| `monitor` | no | Live refresh (`--interval`) with TX/RX Mb/s, pps, errors; Ctrl+C → exit 0 |
 | `topo` | no | Cable / topology map (no rewiring advice) |
 | `doctor` | no | Diagnostics (config, self, TB, bridge, peers) |
 | `bench` | no | Optional `iperf3` to a peer IP |
@@ -96,6 +96,22 @@ targets are refused for write/lock paths.
 Global flags: `--config`, `--json`, `-v` / `--verbose`.  
 Env: `NO_COLOR`, `MACCLUSTER_CONFIG`, `MACCLUSTER_SKIP_PLATFORM_GUARD=1` (tests only),
 `MACCLUSTER_RICH=0`.
+
+### Live traffic (status / monitor)
+
+`status` and `monitor` sample macOS `netstat` counters for `bridge0` and Thunderbolt
+member ports (`en2`/`en3`/`en4`). Rates need **two samples** (Δt ≥ ~0.4 s):
+
+- First run after idle: shows cumulative bytes/packets, `rate=n/a`
+- Second `status` within 2 minutes, or every `monitor` tick: **RX/TX b/s–Gb/s**, packets/s, error counters (+delta)
+
+```text
+traffic Δ1.5s:
+  bridge0     RX   12.40 Mb/s (  1.2k pps)  TX    3.10 Mb/s (  400 pps)  err in/out 0/0 (+0/+0)
+```
+
+This is **interface throughput**, not application transaction rate. For saturation
+tests use `maccluster bench` (iperf3).
 
 ### Exit codes
 

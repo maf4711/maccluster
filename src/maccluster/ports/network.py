@@ -5,13 +5,23 @@ from __future__ import annotations
 from ipaddress import IPv4Address
 from typing import Protocol
 
-from maccluster.domain.models import BridgeInterface
+from maccluster.domain.models import BridgeInterface, InterfaceCounters
 
 
 class NetworkReadPort(Protocol):
     def get_bridge(self, name: str) -> BridgeInterface: ...
 
     def list_interfaces(self) -> tuple[str, ...]: ...
+
+    def get_iface_counters(self, name: str) -> InterfaceCounters | None:
+        """Cumulative counters for one interface (netstat Link row), or None."""
+        ...
+
+    def get_iface_counters_many(
+        self, names: tuple[str, ...]
+    ) -> dict[str, InterfaceCounters]:
+        """Batch counters; missing ifaces omitted."""
+        ...
 
 
 class NetworkApplyPort(Protocol):

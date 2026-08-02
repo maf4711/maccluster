@@ -81,6 +81,44 @@ class BridgeInterface:
 
 
 @dataclass(frozen=True)
+class InterfaceCounters:
+    """Cumulative interface counters from netstat (Link row)."""
+
+    name: str
+    ipkts: int
+    ierrs: int
+    ibytes: int
+    opkts: int
+    oerrs: int
+    obytes: int
+    coll: int = 0
+    t_mono: float = 0.0  # time.monotonic() at sample
+
+
+@dataclass(frozen=True)
+class InterfaceTraffic:
+    """Per-interface traffic view: cumulative counters + rates over sample Δt."""
+
+    name: str
+    ibytes: int
+    obytes: int
+    ipkts: int
+    opkts: int
+    ierrs: int
+    oerrs: int
+    coll: int = 0
+    # Rates (None if no previous sample / Δt out of range)
+    rx_bps: float | None = None  # bits/s
+    tx_bps: float | None = None
+    rx_pps: float | None = None  # packets/s
+    tx_pps: float | None = None
+    ierrs_delta: int | None = None
+    oerrs_delta: int | None = None
+    sample_dt_s: float | None = None
+    rate_available: bool = False
+
+
+@dataclass(frozen=True)
 class NodeHealth:
     node: Node
     reachability: ReachabilityState
@@ -99,6 +137,7 @@ class HealthSnapshot:
     overall: OverallHealth
     bridge: BridgeInterface | None = None
     tb: ThunderboltSnapshot | None = None
+    traffic: tuple[InterfaceTraffic, ...] = ()
 
 
 @dataclass(frozen=True)

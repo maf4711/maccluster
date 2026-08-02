@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1 — 2026-08-02
+
+### Added
+- Live TX/RX rates, pps, errors on `status`/`monitor` (netstat counter deltas)
+- `traffic[]` in JSON output; cache under `~/Library/Caches/maccluster/`
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),

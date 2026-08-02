@@ -9,6 +9,7 @@ from maccluster.domain.models import (
     BridgeInterface,
     ClusterConfig,
     HealthSnapshot,
+    InterfaceTraffic,
     NodeHealth,
     ThunderboltSnapshot,
 )
@@ -22,6 +23,7 @@ def build_snapshot(
     node_health: list[NodeHealth] | tuple[NodeHealth, ...],
     bridge: BridgeInterface | None = None,
     tb: ThunderboltSnapshot | None = None,
+    traffic: tuple[InterfaceTraffic, ...] = (),
 ) -> HealthSnapshot:
     overall = aggregate_overall(node_health, self_node_id=self_node_id)
     return HealthSnapshot(
@@ -32,6 +34,7 @@ def build_snapshot(
         overall=overall,
         bridge=bridge,
         tb=tb,
+        traffic=traffic,
     )
 
 

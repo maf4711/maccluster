@@ -7,10 +7,12 @@ from maccluster.domain.models import (
     ClusterConfig,
     DoctorReport,
     HealthSnapshot,
+    InterfaceTraffic,
     ServiceState,
     ThunderboltSnapshot,
     Topology,
 )
+from maccluster.health.traffic import format_bps, format_pps
 from maccluster.render.sanitize import sanitize
 from maccluster.render.symbols import link_symbol, reachability_symbol
 
@@ -58,6 +60,34 @@ def render_config(cfg: ClusterConfig, *, self_id: str | None = None) -> str:
     return "\n".join(lines)
 
 
+def render_traffic_block(traffic: tuple[InterfaceTraffic, ...]) -> list[str]:
+    if not traffic:
+        return ["traffic: (no interface counters)"]
+    dts = [t.sample_dt_s for t in traffic if t.sample_dt_s is not None]
+    dt_note = f" Δ{dts[0]:.1f}s" if dts else " (rates after 2nd sample)"
+    lines = [f"traffic{dt_note}:"]
+    for t in traffic:
+        if t.rate_available:
+            err = (
+                f"err in/out {t.ierrs}/{t.oerrs} "
+                f"(+{t.ierrs_delta or 0}/+{t.oerrs_delta or 0})"
+            )
+            lines.append(
+                f"  {t.name:10}  "
+                f"RX {format_bps(t.rx_bps):>10} ({format_pps(t.rx_pps):>8})  "
+                f"TX {format_bps(t.tx_bps):>10} ({format_pps(t.tx_pps):>8})  "
+                f"{err}"
+            )
+        else:
+            lines.append(
+                f"  {t.name:10}  "
+                f"RX bytes={t.ibytes} pkts={t.ipkts}  "
+                f"TX bytes={t.obytes} pkts={t.opkts}  "
+                f"err in/out {t.ierrs}/{t.oerrs}  rate=n/a"
+            )
+    return lines
+
+
 def render_status(snap: HealthSnapshot) -> str:
     lines = [
         f"cluster: {sanitize(snap.cluster_name)}  overall={snap.overall.value}  "
@@ -75,6 +105,7 @@ def render_status(snap: HealthSnapshot) -> str:
             f"{reachability_symbol(nh.reachability)} {nh.reachability.value:7} "
             f"{link_symbol(nh.link_state)} {nh.link_state.value}{rtt}"
         )
+    lines.extend(render_traffic_block(snap.traffic))
     return "\n".join(lines)
 
 

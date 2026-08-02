@@ -44,6 +44,7 @@ ALLOWLIST_BASENAMES = frozenset(
         "ioreg",
         "ifconfig",
         "networksetup",
+        "netstat",
         "ping",
         "launchctl",
         "sw_vers",
@@ -53,6 +54,12 @@ ALLOWLIST_BASENAMES = frozenset(
         "ssh",
     }
 )
+
+# Traffic sampling (status/monitor TX/RX rates)
+TRAFFIC_CACHE_DIR_NAME = "maccluster"
+TRAFFIC_CACHE_FILE_NAME = "traffic_sample.json"
+TRAFFIC_MIN_DT_S = 0.4
+TRAFFIC_MAX_DT_S = 120.0
 
 SEARCH_PATHS = (
     "/usr/sbin",
