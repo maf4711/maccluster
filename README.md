@@ -9,43 +9,28 @@ cluster. Same package on every member — no leader, no cloud, no database.
 
 ## Install
 
-### One-liner (GitHub raw)
+**Short guide:** [`docs/INSTALL.md`](docs/INSTALL.md)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/maf4711/maccluster/main/install.sh | bash
+export PATH="$HOME/.local/bin:$PATH"
+maccluster --version
 ```
 
-### Download ZIP
-
-| What | URL |
-|------|-----|
-| **ZIP (main)** | https://github.com/maf4711/maccluster/archive/refs/heads/main.zip |
+| Artifact | URL |
+|----------|-----|
 | **raw install.sh** | https://raw.githubusercontent.com/maf4711/maccluster/main/install.sh |
+| **ZIP (main)** | https://github.com/maf4711/maccluster/archive/refs/heads/main.zip |
 | **Repo** | https://github.com/maf4711/maccluster |
-| **Tag release ZIP** | https://github.com/maf4711/maccluster/archive/refs/tags/v0.1.0.zip |
 
 ```bash
-curl -fsSL https://github.com/maf4711/maccluster/archive/refs/heads/main.zip -o maccluster.zip
-unzip maccluster.zip && cd maccluster-main && ./install.sh
-```
-
-### pipx / pip from Git
-
-```bash
+# pipx from Git
 pipx install "git+https://github.com/maf4711/maccluster.git"
-# or a tag:
-pipx install "git+https://github.com/maf4711/maccluster.git@v0.1.0"
-```
 
-### Local checkout (dev)
-
-```bash
-git clone https://github.com/maf4711/maccluster.git
-cd maccluster
-pipx install .          # or: python3 -m pip install -e ".[dev]"
-./install.sh
-make verify             # ruff + pytest
-maccluster --help
+# dev checkout
+git clone https://github.com/maf4711/maccluster.git && cd maccluster
+pipx install .   # or: python3 -m pip install -e ".[dev]"
+make verify
 ```
 
 ## Offline / zero cloud
