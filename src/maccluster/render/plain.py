@@ -71,10 +71,7 @@ def render_traffic_block(traffic: tuple[InterfaceTraffic, ...]) -> list[str]:
     lines = [f"traffic{dt_note}:"]
     for t in traffic:
         if t.rate_available:
-            err = (
-                f"err in/out {t.ierrs}/{t.oerrs} "
-                f"(+{t.ierrs_delta or 0}/+{t.oerrs_delta or 0})"
-            )
+            err = f"err in/out {t.ierrs}/{t.oerrs} (+{t.ierrs_delta or 0}/+{t.oerrs_delta or 0})"
             lines.append(
                 f"  {t.name:10}  "
                 f"RX {format_bps(t.rx_bps):>10} ({format_pps(t.rx_pps):>8})  "
