@@ -1,4 +1,4 @@
 hatchling==1.31.0
 pytest==9.0.3
-rich==14.2.0
+rich==15.0.0
 ruff==0.13.3
