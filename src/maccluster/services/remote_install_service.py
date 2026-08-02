@@ -14,6 +14,7 @@ from maccluster.app_factory import AppContext
 from maccluster.cluster_ssh import (
     cluster_target,
     is_cluster_ip,
+    node_ssh_user,
     read_pubkey,
     require_cluster_ip,
     scp_bind_argv,
@@ -100,12 +101,7 @@ class RemoteInstallResult:
 def resolve_install_user(user: str | None, peer_node) -> str:
     """SSH user for the peer: explicit --user, else user from the node's
     ssh_target in cluster.toml, else local $USER."""
-    if user:
-        return user
-    tgt = getattr(peer_node, "ssh_target", None) or ""
-    if "@" in tgt:
-        return tgt.split("@", 1)[0]
-    return os.environ.get("USER") or "a321"
+    return node_ssh_user(peer_node, override=user)
 
 
 def _project_root_candidates() -> list[Path]:

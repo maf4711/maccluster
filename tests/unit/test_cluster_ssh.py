@@ -55,3 +55,16 @@ def test_ssh_config_fragment():
     text = render_ssh_config_fragment(self_ip="10.42.0.1", user="a321")
     assert "BindAddress 10.42.0.1" in text
     assert "10.42.0.*" in text
+
+
+def test_node_ssh_user_prefers_ssh_target(monkeypatch):
+    from types import SimpleNamespace
+
+    from maccluster.cluster_ssh import node_ssh_user
+
+    monkeypatch.setenv("USER", "localuser")
+    node = SimpleNamespace(ssh_target="mafoe@10.42.0.2")
+    assert node_ssh_user(node) == "mafoe"
+    assert node_ssh_user(node, override="alice") == "alice"
+    assert node_ssh_user(SimpleNamespace(ssh_target=None)) == "localuser"
+    assert node_ssh_user(SimpleNamespace(ssh_target="10.42.0.2")) == "localuser"

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from maccluster.app_factory import AppContext
-from maccluster.cluster_ssh import ssh_bind_argv
+from maccluster.cluster_ssh import node_ssh_user, ssh_bind_argv
 from maccluster.domain.cable import (
     assess_cluster_cables,
     grade_link_speed,
@@ -68,7 +68,12 @@ def run_speedtest(
                 iperf_msg = "iperf3 not installed locally (brew install iperf3)"
             else:
                 if try_start_server:
-                    _try_start_remote_iperf(ctx, bind_ip=bind_ip, peer_ip=peer_ip)
+                    _try_start_remote_iperf(
+                        ctx,
+                        bind_ip=bind_ip,
+                        peer_ip=peer_ip,
+                        user=node_ssh_user(n),
+                    )
                 try:
                     br = ctx.bench.run(peer_ip, duration=duration, bind_ip=bind_ip)
                     iperf_ok = br.success
@@ -133,7 +138,9 @@ def run_speedtest(
     )
 
 
-def _try_start_remote_iperf(ctx: AppContext, *, bind_ip: str, peer_ip: str) -> None:
+def _try_start_remote_iperf(
+    ctx: AppContext, *, bind_ip: str, peer_ip: str, user: str | None = None
+) -> None:
     """Best-effort: start `iperf3 -s -D` on peer via TB-bound SSH."""
     try:
         abs_ssh = ctx.runner.resolve("ssh")
@@ -152,6 +159,7 @@ def _try_start_remote_iperf(ctx: AppContext, *, bind_ip: str, peer_ip: str) -> N
                 abs_ssh,
                 bind_ip=bind_ip,
                 peer_ip=peer_ip,
+                user=user,
                 connect_timeout=4,
                 remote=(remote,),
             ),

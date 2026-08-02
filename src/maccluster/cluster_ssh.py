@@ -78,6 +78,17 @@ def cluster_target(user: str, peer_ip: str | IPv4Address) -> str:
     return f"{user}@{IPv4Address(str(peer_ip))}"
 
 
+def node_ssh_user(node, override: str | None = None) -> str:
+    """SSH user for a cluster node: explicit override, else the user part of
+    the node's ssh_target from cluster.toml, else local $USER."""
+    if override:
+        return override
+    tgt = getattr(node, "ssh_target", None) or ""
+    if "@" in tgt:
+        return tgt.split("@", 1)[0]
+    return ssh_user(None)
+
+
 def ssh_bind_argv(
     abs_ssh: str,
     *,
