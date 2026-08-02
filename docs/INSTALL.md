@@ -104,22 +104,37 @@ maccluster doctor       # diagnostics
 
 ## Remote install (peer Mac mini)
 
-On **this** Mac (node-a), after TB peer has IP `10.42.0.2` and Remote Login enabled:
+**If `ssh-copy-id` prints `Connection closed by … port 22` after password:**
+SSH auth is rejected on the peer. Fix Remote Login / password there, or bootstrap
+**on the peer screen** (no SSH). Full guide: [`PEER-SSH.md`](PEER-SSH.md).
+
+### A) Without SSH (AirDrop / peer Terminal) — reliable
+
+On node-a:
 
 ```bash
-# one-time: allow SSH key (enter peer password once)
-ssh-copy-id -i ~/.ssh/id_ed25519.pub a321@10.42.0.2
-
-# install + copy config + up + service
-cd /path/to/maccluster
-./scripts/remote-install.sh a321@10.42.0.2 --copy-config
+cp ~/.config/maccluster/cluster.toml ~/Desktop/cluster.toml
+# AirDrop cluster.toml to the peer
 ```
 
-Or on the peer itself:
+On peer:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/maf4711/maccluster/main/install.sh | bash
-# place same cluster.toml, then:
+mkdir -p ~/.config/maccluster
+cp ~/Downloads/cluster.toml ~/.config/maccluster/cluster.toml
+chmod 600 ~/.config/maccluster/cluster.toml
+export PATH="$HOME/.local/bin:$PATH"
+maccluster config validate
 sudo maccluster up
 maccluster service install
+maccluster status
+```
+
+### B) With SSH (after Remote Login works)
+
+```bash
+ssh-copy-id -i ~/.ssh/id_ed25519.pub a321@10.42.0.2
+cd /path/to/maccluster
+./scripts/remote-install.sh a321@10.42.0.2 --copy-config
 ```
