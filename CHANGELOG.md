@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.3 — 2026-08-02
+
+### Fixed
+- Shared peer reachability helper (`health/reach.py`) for status, doctor, topo
+- Peer TB link state inferred when Mac-to-Mac TB link + peer UP (shows 40G etc.)
+- Topo no longer uses bare ping (missed TB-bridge routing)
+- PATH conflict: document pipx primary; skill report hardened
+
 ## 0.1.2 — 2026-08-02
 
 ### Fixed / complete

@@ -104,10 +104,11 @@ def render_status(snap: HealthSnapshot) -> str:
         mark = "*" if snap.self_node_id and nh.node.id == snap.self_node_id else " "
         rtt = f" rtt={nh.rtt_ms:.1f}ms" if nh.rtt_ms is not None else ""
         how = f" via={sanitize(nh.notes)}" if nh.notes and nh.notes not in ("self",) else ""
+        spd = f" {nh.link_speed_gbps:g}G" if nh.link_speed_gbps is not None else ""
         lines.append(
             f"{mark} {nh.node.id:12} {str(nh.node.ip):15} "
             f"{reachability_symbol(nh.reachability)} {nh.reachability.value:7} "
-            f"{link_symbol(nh.link_state)} {nh.link_state.value}{rtt}{how}"
+            f"{link_symbol(nh.link_state)} {nh.link_state.value}{spd}{rtt}{how}"
         )
     lines.extend(render_traffic_block(snap.traffic))
     return "\n".join(lines)

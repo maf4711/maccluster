@@ -53,22 +53,13 @@ def run_doctor(ctx: AppContext) -> DoctorReport:
 
     peers: list = []
     if cfg is not None and self_node is not None:
+        from maccluster.health.reach import probe_peer
+
         source = str(self_node.ip)
         for node in cfg.nodes:
             if node.id == self_node.id:
                 continue
-            state = ReachabilityState.UNKNOWN
-            try:
-                pr = ctx.reachability.ping(str(node.ip), source=source)
-                state = pr.state
-            except Exception:
-                pass
-            if state != ReachabilityState.UP:
-                try:
-                    tr = ctx.reachability.tcp_probe(str(node.ip), port=22)
-                    state = tr.state
-                except Exception:
-                    pass
+            state = probe_peer(ctx, peer_ip=str(node.ip), source=source).state
             peers.append((node, state))
     findings.append(checks.check_peers(peers))
 

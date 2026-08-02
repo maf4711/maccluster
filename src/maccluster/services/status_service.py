@@ -113,28 +113,14 @@ def collect_status(
             )
             continue
         # Peer reachability: ICMP from self IP (TB bridge), then TCP:22, optional SSH
-        state = ReachabilityState.UNKNOWN
-        rtt: float | None = None
-        notes = ""
+        from maccluster.health.reach import probe_peer
+
         peer_ip = str(node.ip)
         source = str(self_node.ip)
-        try:
-            pr = ctx.reachability.ping(peer_ip, source=source)
-            state = pr.state
-            rtt = pr.rtt_ms
-            notes = pr.method
-        except Exception as exc:
-            notes = f"ping-error:{exc}"[:80]
-
-        if state != ReachabilityState.UP:
-            try:
-                tr = ctx.reachability.tcp_probe(peer_ip, port=22)
-                if tr.state == ReachabilityState.UP:
-                    state = ReachabilityState.UP
-                    rtt = tr.rtt_ms
-                    notes = tr.method
-            except Exception:
-                pass
+        pr = probe_peer(ctx, peer_ip=peer_ip, source=source)
+        state = pr.state
+        rtt = pr.rtt_ms
+        notes = pr.method
 
         if cfg.ssh_probes_enabled and state != ReachabilityState.UP:
             target = node.ssh_target or peer_ip
@@ -147,11 +133,29 @@ def collect_status(
             except Exception:
                 pass
 
+        # Infer peer TB link when local TB has Mac-to-Mac connections and peer is up
+        peer_link = LinkState.UNKNOWN
+        peer_speed: float | None = None
+        if tb and tb.ports and state == ReachabilityState.UP:
+            mac_links = [
+                p
+                for p in tb.ports
+                if p.link_state == LinkState.CONNECTED
+                and p.peer_name
+                and "mac" in p.peer_name.lower()
+            ]
+            if mac_links:
+                peer_link = LinkState.CONNECTED
+                speeds = [p.link_speed_gbps for p in mac_links if p.link_speed_gbps is not None]
+                if speeds:
+                    peer_speed = max(speeds)
+
         node_health.append(
             NodeHealth(
                 node=node,
                 reachability=state,
-                link_state=LinkState.UNKNOWN,
+                link_state=peer_link,
+                link_speed_gbps=peer_speed,
                 rtt_ms=rtt,
                 notes=notes,
             )
