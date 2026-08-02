@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "maccluster"
-version = "0.1.8"
+version = "0.1.9"
 description = "CLI tool for Thunderbolt-networked Apple Silicon Mac mini clusters (2–4 nodes)"
 readme = "README.md"
 license = "MIT"
@@ -29,7 +29,7 @@ dependencies = []
 [project.optional-dependencies]
 monitor = ["rich>=13.7,<15"]
 dev = [
-  "pytest>=8.0",
+  "pytest>=9.0.3",
   "ruff>=0.6",
   "pip-audit>=2.7",
 ]

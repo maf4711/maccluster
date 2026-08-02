@@ -15,13 +15,13 @@ Studio fleet guidance (Apple Silicon Mac mini mesh over TB/USB4):
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 from maccluster.domain.enums import LinkState
 from maccluster.domain.models import ThunderboltPort, ThunderboltSnapshot
 
 
-class CableGrade(str, Enum):
+class CableGrade(StrEnum):
     EXCELLENT = "excellent"  # >= 40 Gb/s link
     GOOD = "good"  # >= 20 Gb/s
     MARGINAL = "marginal"  # > 0 and < 20

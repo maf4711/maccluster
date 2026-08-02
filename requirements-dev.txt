@@ -1,5 +1,5 @@
 # Dev / CI dependencies (runtime is stdlib-only)
-pytest>=8.0
+pytest>=9.0.3
 ruff>=0.6
 pip-audit>=2.7
 hatchling>=1.25

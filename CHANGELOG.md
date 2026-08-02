@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.9 — 2026-08-02
+
+### Fixed
+- CI: `CableGrade` uses `StrEnum` (ruff UP042)
+- Dev dependency: `pytest>=9.0.3` (CVE-2025-71176 / GHSA-6w46-j5rx-g56g tmpdir)
+- Shared `node_ssh_user()` for remote-install + speedtest peer iperf3 SSH
+
 ## 0.1.8 — 2026-08-02
 
 ### Fixed
