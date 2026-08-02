@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.2 — 2026-08-02
+
+### Fixed / complete
+- Peer reachability: ICMP ping with **`-S <self-ip>`** (TB bridge), fallback **TCP:22** when ICMP filtered
+- Status shows probe method (`via=tcp:22` / `ping`)
+- Example config restored to 4-node template; live 2-node under `examples/studio-live.toml`
+- `scripts/remote-install.sh` for peer install over SSH
+- Version sync `__version__` / pyproject **0.1.2**
+
 ## 0.1.1 — 2026-08-02
 
 ### Added

@@ -112,21 +112,38 @@ def collect_status(
                 )
             )
             continue
-        # Ping peer IP
+        # Peer reachability: ICMP from self IP (TB bridge), then TCP:22, optional SSH
+        state = ReachabilityState.UNKNOWN
+        rtt: float | None = None
+        notes = ""
+        peer_ip = str(node.ip)
+        source = str(self_node.ip)
         try:
-            pr = ctx.reachability.ping(str(node.ip))
+            pr = ctx.reachability.ping(peer_ip, source=source)
             state = pr.state
             rtt = pr.rtt_ms
-        except Exception:
-            state = ReachabilityState.UNKNOWN
-            rtt = None
+            notes = pr.method
+        except Exception as exc:
+            notes = f"ping-error:{exc}"[:80]
+
+        if state != ReachabilityState.UP:
+            try:
+                tr = ctx.reachability.tcp_probe(peer_ip, port=22)
+                if tr.state == ReachabilityState.UP:
+                    state = ReachabilityState.UP
+                    rtt = tr.rtt_ms
+                    notes = tr.method
+            except Exception:
+                pass
 
         if cfg.ssh_probes_enabled and state != ReachabilityState.UP:
-            target = node.ssh_target or str(node.ip)
+            target = node.ssh_target or peer_ip
             try:
                 sr = ctx.reachability.ssh_probe(target)
                 if sr.state == ReachabilityState.UP:
                     state = ReachabilityState.UP
+                    rtt = sr.rtt_ms
+                    notes = "ssh"
             except Exception:
                 pass
 
@@ -136,6 +153,7 @@ def collect_status(
                 reachability=state,
                 link_state=LinkState.UNKNOWN,
                 rtt_ms=rtt,
+                notes=notes,
             )
         )
 

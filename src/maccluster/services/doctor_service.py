@@ -53,14 +53,23 @@ def run_doctor(ctx: AppContext) -> DoctorReport:
 
     peers: list = []
     if cfg is not None and self_node is not None:
+        source = str(self_node.ip)
         for node in cfg.nodes:
             if node.id == self_node.id:
                 continue
+            state = ReachabilityState.UNKNOWN
             try:
-                pr = ctx.reachability.ping(str(node.ip))
-                peers.append((node, pr.state))
+                pr = ctx.reachability.ping(str(node.ip), source=source)
+                state = pr.state
             except Exception:
-                peers.append((node, ReachabilityState.UNKNOWN))
+                pass
+            if state != ReachabilityState.UP:
+                try:
+                    tr = ctx.reachability.tcp_probe(str(node.ip), port=22)
+                    state = tr.state
+                except Exception:
+                    pass
+            peers.append((node, state))
     findings.append(checks.check_peers(peers))
 
     iperf_ok = False
