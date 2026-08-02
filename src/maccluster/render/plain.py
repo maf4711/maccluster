@@ -63,8 +63,11 @@ def render_config(cfg: ClusterConfig, *, self_id: str | None = None) -> str:
 def render_traffic_block(traffic: tuple[InterfaceTraffic, ...]) -> list[str]:
     if not traffic:
         return ["traffic: (no interface counters)"]
-    dts = [t.sample_dt_s for t in traffic if t.sample_dt_s is not None]
-    dt_note = f" Δ{dts[0]:.1f}s" if dts else " (rates after 2nd sample)"
+    rated = [t for t in traffic if t.rate_available and t.sample_dt_s is not None]
+    if rated:
+        dt_note = f" Δ{rated[0].sample_dt_s:.1f}s"
+    else:
+        dt_note = " (rates after 2nd sample within ~2 min)"
     lines = [f"traffic{dt_note}:"]
     for t in traffic:
         if t.rate_available:
