@@ -39,3 +39,20 @@ def test_run_true_like_sw_vers_or_echo_blocked():
     runner = ProcessRunner()
     with pytest.raises(CliError):
         runner.run(["echo", "hi"], timeout=2)
+
+
+def test_extra_search_paths_include_user_local_bin():
+    """pipx and the peer bootstrap install user tools into ~/.local/bin."""
+    import os
+
+    from maccluster.constants import EXTRA_SEARCH_PATHS
+
+    assert os.path.expanduser("~/.local/bin") in EXTRA_SEARCH_PATHS
+
+
+def test_resolve_iperf3_from_extra_dir(tmp_path):
+    tool = tmp_path / "iperf3"
+    tool.write_text("#!/bin/sh\n")
+    tool.chmod(0o755)
+    runner = ProcessRunner(search_paths=("/nonexistent",), extra_paths=(str(tmp_path),))
+    assert runner.resolve("iperf3") == str(tool)

@@ -3,6 +3,8 @@
 ## 0.1.8 — 2026-08-02
 
 ### Fixed
+- Tool resolution searches `~/.local/bin` (pipx / user-local installs)
+  for iperf3, ssh, scp — doctor now finds user-installed iperf3
 - `remote-install` honors per-node `ssh_target` user from cluster.toml
   (fixes wrong `User $USER` in generated `~/.ssh/config.d/maccluster`)
 - `scripts/remote-install.sh`: repair truncated `"${EXTRA[@]}"` expansion

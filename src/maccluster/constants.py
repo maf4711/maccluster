@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 SCHEMA_VERSION = 1
 SUPPORTED_SCHEMA_VERSIONS = frozenset({1})
 
@@ -89,6 +91,7 @@ SEARCH_PATHS = (
     "/bin",
 )
 EXTRA_SEARCH_PATHS = (
+    os.path.expanduser("~/.local/bin"),
     "/opt/homebrew/bin",
     "/usr/local/bin",
 )
