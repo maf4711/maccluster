@@ -57,8 +57,15 @@ ALLOWLIST_BASENAMES = frozenset(
         "ssh",
         "scp",
         "ditto",  # Apple metadata-complete copy (sync home)
+        "security",  # macOS Keychain
     }
 )
+
+# Keychain (login keychain; syncs via iCloud Keychain if enabled for passwords)
+KEYCHAIN_SERVICE_CONFIG = "ai.maccluster.cluster-config"
+KEYCHAIN_SERVICE_SSH_USER = "ai.maccluster.ssh.user"
+KEYCHAIN_SERVICE_SSH_PASSWORD = "ai.maccluster.ssh.password"
+KEYCHAIN_ACCOUNT_DEFAULT = "default"
 
 # Default excludes for `maccluster sync home` (newest-wins; never deletes)
 SYNC_HOME_EXCLUDES: tuple[str, ...] = (

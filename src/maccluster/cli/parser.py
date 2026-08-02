@@ -30,7 +30,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("tb", help="Show Thunderbolt hardware info")
 
-    p_init = sub.add_parser("init", help="Write cluster.toml template")
+    p_init = sub.add_parser(
+        "init",
+        help="Write cluster.toml (checks macOS Keychain first for shared config)",
+    )
     p_init.add_argument("--force", action="store_true", help="Overwrite existing (with backup)")
     p_init.add_argument("--name", default="studio-cluster", help="Cluster name")
     p_init.add_argument(
@@ -39,6 +42,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=4,
         choices=[2, 3, 4],
         help="Number of node stubs (2–4)",
+    )
+    p_init.add_argument(
+        "--no-keychain",
+        action="store_true",
+        help="Skip Keychain check/save (local template only)",
     )
 
     p_cfg = sub.add_parser("config", help="Show or validate config")
@@ -227,5 +235,32 @@ def build_parser() -> argparse.ArgumentParser:
         help="Write OpenSSH config so 10.42.0.* uses BindAddress on TB bridge only",
     )
     p_sshc.add_argument("--user", default=None, help="SSH user (default $USER)")
+
+    p_kc = sub.add_parser(
+        "keychain",
+        help=(
+            "macOS Keychain store for cluster.toml + SSH user/password "
+            "(iCloud Keychain → peer can pull on init)"
+        ),
+    )
+    kc_sub = p_kc.add_subparsers(dest="keychain_action", metavar="ACTION")
+    kc_sub.add_parser("show", help="Show what is stored (password never printed)")
+    p_push = kc_sub.add_parser("push", help="Push local cluster.toml (+SSH user) into Keychain")
+    p_push.add_argument("--ssh-user", default=None, help="SSH user for peers (e.g. mafoe)")
+    p_push.add_argument(
+        "--ssh-password",
+        default=None,
+        help="Optional peer SSH password for bootstrap (stored in Keychain only)",
+    )
+    p_pull = kc_sub.add_parser(
+        "pull", help="Pull Keychain config → ~/.config/maccluster/cluster.toml"
+    )
+    p_pull.add_argument("--force", action="store_true", help="Overwrite existing file")
+    kc_sub.add_parser("delete", help="Remove MacCluster items from Keychain")
+    p_kc.add_argument(
+        "--account",
+        default=None,
+        help="Keychain account label (default: default)",
+    )
 
     return parser

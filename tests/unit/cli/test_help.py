@@ -24,6 +24,7 @@ def test_parser_has_commands():
         "remote-install",
         "ssh-config",
         "speedtest",
+        "keychain",
     ):
         assert cmd in help_text
 

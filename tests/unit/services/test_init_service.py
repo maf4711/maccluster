@@ -49,8 +49,9 @@ def _ctx(path: Path) -> AppContext:
 def test_init_writes(tmp_path: Path):
     path = tmp_path / "cluster.toml"
     ctx = _ctx(path)
-    out = init_cluster(ctx)
+    out, source = init_cluster(ctx, from_keychain=False, save_keychain=False)
     assert out.exists()
+    assert source == "template"
     text = out.read_text()
     assert "schema_version = 1" in text
     assert "10.42.0.0/24" in text
@@ -61,4 +62,4 @@ def test_init_no_overwrite(tmp_path: Path):
     path.write_text("existing")
     ctx = _ctx(path)
     with pytest.raises(ConfigError):
-        init_cluster(ctx, force=False)
+        init_cluster(ctx, force=False, from_keychain=False, save_keychain=False)

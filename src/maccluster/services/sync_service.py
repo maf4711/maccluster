@@ -816,7 +816,12 @@ def sync_home(
     t0 = time.monotonic()
 
     cfg, self_node = load_and_bind_self(ctx)
-    default_user = (user or os.environ.get("USER") or getpass.getuser()).strip()
+    try:
+        from maccluster.services.keychain_service import resolve_ssh_user
+
+        default_user = resolve_ssh_user(ctx, explicit=user)
+    except Exception:
+        default_user = (user or os.environ.get("USER") or getpass.getuser() or "").strip()
     if not default_user:
         raise CliError("cannot determine local username for SSH", exit_code=1)
 

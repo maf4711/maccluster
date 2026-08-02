@@ -43,7 +43,7 @@ def test_init_roundtrip(tmp_path: Path):
         platform=FakePlatform(),
         audit=NullAudit(),
     )
-    init_cluster(ctx, node_count=2)
+    init_cluster(ctx, node_count=2, from_keychain=False, save_keychain=False)
     cfg = load_toml_text(path.read_text())
     assert cfg.schema_version == 1
     assert 2 <= len(cfg.nodes) <= 4
