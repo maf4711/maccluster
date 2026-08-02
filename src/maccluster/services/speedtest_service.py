@@ -76,6 +76,18 @@ def run_speedtest(
                     )
                 try:
                     br = ctx.bench.run(peer_ip, duration=duration, bind_ip=bind_ip)
+                    if not br.success:
+                        # Peer firewall may block inbound data connections;
+                        # retry with the peer as client (all outbound).
+                        rev = _reverse_iperf(
+                            ctx,
+                            bind_ip=bind_ip,
+                            peer_ip=peer_ip,
+                            user=node_ssh_user(n),
+                            duration=duration,
+                        )
+                        if rev is not None:
+                            br = rev
                     iperf_ok = br.success
                     iperf_mbps = br.mbps
                     iperf_msg = (
@@ -135,6 +147,65 @@ def run_speedtest(
         peers=tuple(results),
         bind_ip=bind_ip,
         duration_s=duration,
+    )
+
+
+def reverse_iperf_remote_cmd(bind_ip: str, duration: int) -> str:
+    """Remote shell command: peer runs the iperf3 client toward Self."""
+    return (
+        'export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; '
+        "command -v iperf3 >/dev/null || exit 66; "
+        f"iperf3 -c {bind_ip} -t {int(duration)} -J --connect-timeout 5000"
+    )
+
+
+def _reverse_iperf(
+    ctx: AppContext,
+    *,
+    bind_ip: str,
+    peer_ip: str,
+    user: str | None,
+    duration: int,
+):
+    """Peer-initiated bench (peer client → local server). Works when the
+    peer's application firewall blocks inbound iperf3 data connections."""
+    from maccluster.adapters.iperf3 import _parse_iperf_json
+    from maccluster.domain.models import BenchResult
+
+    try:
+        abs_iperf = ctx.runner.resolve("iperf3")
+        abs_ssh = ctx.runner.resolve("ssh")
+    except Exception:
+        return None
+    # Local one-off server; ignore failure (port already served)
+    try:
+        ctx.runner.run([abs_iperf, "-s", "-D", "-1", "-B", bind_ip], timeout=5.0)
+    except Exception:
+        pass
+    try:
+        res = ctx.runner.run(
+            ssh_bind_argv(
+                abs_ssh,
+                bind_ip=bind_ip,
+                peer_ip=peer_ip,
+                user=user,
+                connect_timeout=4,
+                remote=(reverse_iperf_remote_cmd(bind_ip, duration),),
+            ),
+            timeout=30.0 + duration,
+        )
+    except Exception:
+        return None
+    if res.returncode != 0:
+        return None
+    mbps = _parse_iperf_json(res.stdout)
+    if mbps is None:
+        return None
+    return BenchResult(
+        target=peer_ip,
+        mbps=mbps,
+        success=True,
+        message="ok (reverse: peer→self)",
     )
 
 
