@@ -99,3 +99,27 @@ maccluster doctor       # diagnostics
 | `sudo maccluster up` fails | Run in Terminal with admin rights; or `open scripts/up-with-admin.command` |
 | Peers DOWN | Plug TB cables · same `cluster.toml` on all nodes · `maccluster doctor` |
 | Rates show `n/a` | Run `status` twice (Δ ≥ ~0.5 s) or use `monitor` |
+
+---
+
+## Remote install (peer Mac mini)
+
+On **this** Mac (node-a), after TB peer has IP `10.42.0.2` and Remote Login enabled:
+
+```bash
+# one-time: allow SSH key (enter peer password once)
+ssh-copy-id -i ~/.ssh/id_ed25519.pub a321@10.42.0.2
+
+# install + copy config + up + service
+cd /path/to/maccluster
+./scripts/remote-install.sh a321@10.42.0.2 --copy-config
+```
+
+Or on the peer itself:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/maf4711/maccluster/main/install.sh | bash
+# place same cluster.toml, then:
+sudo maccluster up
+maccluster service install
+```
