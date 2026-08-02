@@ -276,3 +276,11 @@ protokolliert. Eine handschriftliche Unterschrift ist nicht erforderlich.
 | `sudo maccluster up` | **Operator einmalig** (Admin-Passwort GUI/Terminal) — Bridge-IP 10.42.0.1 |
 | Peer node-b | Hostname `CM-KWFVR7JGW3` vorbereitet; UUID auf Peer nachziehen; TB-Kabel stecken |
 | node-c/d | Platzhalter bis Hardware da |
+
+---
+
+## Nachtrag 2026-08-02 (Fabrik-Daten aktualisiert)
+
+Betriebsinventar und Session-Chronik unter `_fabrik/70-betrieb/`.
+Produktversion **0.1.3**, Skill `maccluster-status`, GitHub Releases v0.1.0–v0.1.3.
+Peer node-b: Monitoring oft erreichbar (tcp:22), Software-Install remote per SSH noch offen (AirDrop-Bootstrap dokumentiert).

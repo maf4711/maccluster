@@ -17,6 +17,57 @@
     "gesamt": 6,
     "fertig": 6
   },
+  "produkt": {
+    "version": "0.1.3",
+    "github": "https://github.com/maf4711/maccluster",
+    "install_raw": "https://raw.githubusercontent.com/maf4711/maccluster/main/install.sh",
+    "releases": [
+      "v0.1.0",
+      "v0.1.1",
+      "v0.1.2",
+      "v0.1.3"
+    ],
+    "cli_path": "~/.local/bin/maccluster",
+    "repo_path": "projects/maccluster"
+  },
+  "skill": {
+    "name": "maccluster-status",
+    "user_path": "~/.grok/skills/maccluster-status/",
+    "fabrik_archive": "projects/maccluster/_fabrik/skills/maccluster-status/",
+    "slash": ["/maccluster-status", "/maccluster"],
+    "report": "~/.grok/skills/maccluster-status/scripts/maccluster-report.sh"
+  },
+  "ops": {
+    "cluster_name": "studio-cluster",
+    "subnet": "10.42.0.0/24",
+    "bridge": "bridge0",
+    "updated": "2026-08-02",
+    "node_a": {
+      "id": "node-a",
+      "hostname": "CM-CFMQ2D029F",
+      "ip": "10.42.0.1",
+      "hw_uuid": "409C591A-9803-5203-B8C9-E72E73A3EF6E",
+      "pipx": true,
+      "version": "0.1.3",
+      "service": true,
+      "service_label": "com.maccluster.heal",
+      "bridge_ip_set": true,
+      "config": "~/.config/maccluster/cluster.toml"
+    },
+    "node_b": {
+      "id": "node-b",
+      "hostname_hint": "CM-KWFVR7JGW3",
+      "ip": "10.42.0.2",
+      "hw_uuid": "00000000-0000-0000-0000-0000000000B2",
+      "hw_uuid_placeholder": true,
+      "ssh_login": "blocked",
+      "ssh_note": "Connection closed after password; publickey denied; remote-install not done",
+      "maccluster_cli_installed": false,
+      "reachability_note": "often UP via tcp:22 when peer online; ICMP may fail"
+    },
+    "copy_clone_policy": "MacCluster never auto-clones or silent-copies to peers. install.sh is per-host. remote-install.sh copies config only with working SSH. Without SSH use AirDrop + peer-bootstrap-local.sh.",
+    "fabrik_betrieb": "projects/maccluster/_fabrik/70-betrieb/"
+  },
   "verlauf": [
     {
       "phase": "ANALYSE",
@@ -61,23 +112,19 @@
       "tokens": null,
       "agenten": 0,
       "dauerMin": null,
-      "notiz": "Finale Abnahme durch Fabrik-GF (Auftraggeber: entscheide selber). Empfehlung freigeben mit Auflagen O-1…O-5 akzeptiert; Live-Mesh best-effort, User-LaunchAgent ohne Root-Helper dokumentiert."
+      "notiz": "Finale Abnahme freigegeben; phase FERTIG"
+    },
+    {
+      "phase": "BETRIEB",
+      "datum": "2026-08-02",
+      "tokens": null,
+      "agenten": null,
+      "dauerMin": null,
+      "notiz": "GitHub+Releases v0.1.0–0.1.3; Live node-a; Traffic/Reachability; Skill maccluster-status; Peer-SSH blockiert; Fabrik 70-betrieb Inventar geschrieben"
     }
   ],
   "aufwand": {
     "tokens": 0,
     "agenten": 17
-  },
-  "ops": {
-    "node_a": {
-      "hostname": "CM-CFMQ2D029F",
-      "ip": "10.42.0.1",
-      "hw_uuid": "409C591A-9803-5203-B8C9-E72E73A3EF6E",
-      "pipx": true,
-      "service": true,
-      "bridge_ip_pending_sudo": true
-    },
-    "node_b_mdns": "CM-KWFVR7JGW3",
-    "updated": "2026-08-01"
   }
 }
