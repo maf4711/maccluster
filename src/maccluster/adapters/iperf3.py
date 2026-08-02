@@ -94,9 +94,7 @@ class FakeBench:
     def available(self) -> bool:
         return self._available
 
-    def run(
-        self, target: str, *, duration: int = 5, bind_ip: str | None = None
-    ) -> BenchResult:
+    def run(self, target: str, *, duration: int = 5, bind_ip: str | None = None) -> BenchResult:
         if not self._available:
             return BenchResult(
                 target=target,

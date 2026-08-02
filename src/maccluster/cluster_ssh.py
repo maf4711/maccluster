@@ -50,7 +50,9 @@ def is_cluster_ip(ip: str | IPv4Address, subnet: IPv4Network | str | None = None
     return addr in net and addr.version == 4
 
 
-def require_cluster_ip(ip: str | IPv4Address, subnet: IPv4Network | str | None = None) -> IPv4Address:
+def require_cluster_ip(
+    ip: str | IPv4Address, subnet: IPv4Network | str | None = None
+) -> IPv4Address:
     net = parse_subnet(subnet if not isinstance(subnet, IPv4Network) else subnet)
     try:
         addr = IPv4Address(str(ip))

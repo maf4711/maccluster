@@ -9,7 +9,7 @@ from maccluster.domain.cable import (
     grade_link_speed,
     iperf_verdict,
 )
-from maccluster.domain.enums import LinkState, NodeRole
+from maccluster.domain.enums import NodeRole
 from maccluster.domain.models import SpeedtestPeerResult, SpeedtestReport
 from maccluster.errors import CliError
 from maccluster.services.config_service import load_and_bind_self
@@ -81,7 +81,8 @@ def run_speedtest(
                 except Exception as exc:
                     iperf_msg = str(exc)[:200]
         good = cable.good_enough and (
-            skip_iperf or (iperf_ok and iperf_mbps is not None and iperf_mbps >= 1000)
+            skip_iperf
+            or (iperf_ok and iperf_mbps is not None and iperf_mbps >= 1000)
             or (not iperf_ok and cable.good_enough)  # cable ok even if iperf needs server
         )
         # For "good enough" on cable-only: use cable; if iperf ran successfully use both
@@ -140,7 +141,7 @@ def _try_start_remote_iperf(ctx: AppContext, *, bind_ip: str, peer_ip: str) -> N
         return
     # daemonize server; ignore failure (already running / no key / no iperf)
     remote = (
-        "export PATH=\"$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH\"; "
+        'export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; '
         "command -v iperf3 >/dev/null || exit 0; "
         "pgrep -x iperf3 >/dev/null || iperf3 -s -D"
     )
@@ -175,12 +176,9 @@ def format_speedtest_report(report: SpeedtestReport) -> str:
         link = f"{p.link_speed_gbps:g}G" if p.link_speed_gbps is not None else "?"
         thr = f"{p.iperf_mbps:.0f} Mbit/s" if p.iperf_mbps is not None else "n/a"
         lines.append(
-            f"  peer {p.peer_id} ({p.peer_ip}): link={link}  iperf={thr}  "
-            f"good_enough={ge}"
+            f"  peer {p.peer_id} ({p.peer_ip}): link={link}  iperf={thr}  good_enough={ge}"
         )
         lines.append(f"    cable: {p.cable_summary}")
         lines.append(f"    iperf: {p.iperf_message}")
-    lines.append(
-        f"overall good_enough_for_cluster: {'YES' if report.good_enough else 'NO'}"
-    )
+    lines.append(f"overall good_enough_for_cluster: {'YES' if report.good_enough else 'NO'}")
     return "\n".join(lines)

@@ -12,8 +12,7 @@ def run(ctx: AppContext, args) -> int:
     peer = getattr(args, "peer", None) or getattr(args, "target", None)
     if not peer:
         raise CliError(
-            "remote-install requires peer id or cluster IP "
-            "(e.g. maccluster remote-install node-b)",
+            "remote-install requires peer id or cluster IP (e.g. maccluster remote-install node-b)",
             exit_code=2,
         )
     result = remote_install(

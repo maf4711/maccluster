@@ -529,9 +529,7 @@ def _transfer_push(
             direction="push",
             path=f"→ {ssh_target}:{remote_arch}",
             bytes_done=bytes_base + done,
-            bytes_total=bytes_base + (total or arch_size)
-            if bytes_total <= 0
-            else bytes_total,
+            bytes_total=bytes_base + (total or arch_size) if bytes_total <= 0 else bytes_total,
         )
 
     # Prefer scp (reliable over TB); stream_stdin is optional progress path
@@ -618,9 +616,7 @@ def _transfer_pull(
 
     prog.phase("prepare", direction="pull", detail="upload file list")
     scp1 = ctx.runner.run(
-        _scp_argv(
-            abs_scp, str(list_path), f"{ssh_target}:{remote_list}", bind_ip=bind_ip
-        ),
+        _scp_argv(abs_scp, str(list_path), f"{ssh_target}:{remote_list}", bind_ip=bind_ip),
         timeout=min(timeout, 120.0),
     )
     if scp1.returncode != 0:
@@ -629,9 +625,7 @@ def _transfer_pull(
     remote_py = work / "remote_stage.py"
     remote_py.write_text(_REMOTE_STAGE_PY, encoding="utf-8")
     scp_py = ctx.runner.run(
-        _scp_argv(
-            abs_scp, str(remote_py), f"{ssh_target}:{remote_py_path}", bind_ip=bind_ip
-        ),
+        _scp_argv(abs_scp, str(remote_py), f"{ssh_target}:{remote_py_path}", bind_ip=bind_ip),
         timeout=min(timeout, 60.0),
     )
     if scp_py.returncode != 0:
@@ -687,9 +681,7 @@ def _transfer_pull(
             direction="pull",
             path=f"← {ssh_target}:{remote_arch}",
             bytes_done=bytes_base + done,
-            bytes_total=bytes_base + (total or arch_size)
-            if bytes_total <= 0
-            else bytes_total,
+            bytes_total=bytes_base + (total or arch_size) if bytes_total <= 0 else bytes_total,
         )
 
     scp2 = ctx.runner.run(
@@ -761,9 +753,7 @@ def _remote_inventory(
 
     for local, remote in ((script, remote_script), (excl_file, remote_excl)):
         scp = ctx.runner.run(
-            _scp_argv(
-                abs_scp, str(local), f"{ssh_target}:{remote}", bind_ip=bind_ip
-            ),
+            _scp_argv(abs_scp, str(local), f"{ssh_target}:{remote}", bind_ip=bind_ip),
             timeout=min(timeout, 60.0),
         )
         if scp.returncode != 0:
@@ -838,7 +828,9 @@ def sync_home(
     try:
         abs_ditto = ctx.runner.resolve("ditto")
     except CliError as exc:
-        raise CliError("ditto not found (required Apple system tool in /usr/bin)", exit_code=1) from exc
+        raise CliError(
+            "ditto not found (required Apple system tool in /usr/bin)", exit_code=1
+        ) from exc
     try:
         abs_ssh = ctx.runner.resolve("ssh")
         abs_scp = ctx.runner.resolve("scp")
@@ -865,9 +857,7 @@ def sync_home(
         )
         prog.note(format_speedtest_report(st))
         if not st.good_enough:
-            prog.note(
-                "warning: TB path below ideal (want 40 Gb/s cable; 20 Gb/s is minimum OK)"
-            )
+            prog.note("warning: TB path below ideal (want 40 Gb/s cable; 20 Gb/s is minimum OK)")
     except Exception as exc:
         prog.note(f"warning: speedtest preflight skipped: {exc}")
 

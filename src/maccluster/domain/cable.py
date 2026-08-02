@@ -86,7 +86,9 @@ def cable_hint_for(gbps: float | None, peer_mode: str | None) -> str:
             return "TB4/USB4 40 Gb/s cable (or better) — ideal for cluster"
         if "thunderbolt 3" in mode:
             return "Link at 40 Gb/s (TB3 mode on peer device string) — full dual-lane TB3/40G cable"
-        return "40 Gb/s trained link — use certified TB4/USB4 40G or TB5 cable (current path is good)"
+        return (
+            "40 Gb/s trained link — use certified TB4/USB4 40G or TB5 cable (current path is good)"
+        )
     if gbps is not None and gbps >= 20:
         return (
             "20 Gb/s trained link — often TB3/USB-C 20G or long passive cable; "

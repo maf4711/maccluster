@@ -146,7 +146,9 @@ def test_sync_home_ditto_dry_run_ok(fake_ctx, tmp_path: Path):
     assert result.peers[0].ok
     assert exit_code_for_sync(result) == 0
     # remote inv empty → all local files planned for push
-    assert "push dry-run" in result.peers[0].push_stdout or "push dry-run" in result.peers[0].message
+    assert (
+        "push dry-run" in result.peers[0].push_stdout or "push dry-run" in result.peers[0].message
+    )
 
 
 def test_sync_home_with_progress_object(fake_ctx, tmp_path: Path):
