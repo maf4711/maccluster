@@ -58,7 +58,9 @@ def show_keychain(ctx: AppContext, *, account: str = KEYCHAIN_ACCOUNT_DEFAULT) -
         path_on_disk=str(disk),
         disk_exists=ctx.fs.exists(disk),
         note=(
-            "login keychain; with iCloud Keychain + same Apple ID, peers can pull the same items"
+            "local login keychain (this Mac only) — `security` cannot create "
+            "iCloud-synchronizable items; use `maccluster remote-install` to put "
+            "the config on a peer"
         ),
     )
 

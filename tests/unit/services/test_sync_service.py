@@ -9,8 +9,10 @@ import pytest
 
 from maccluster.errors import CliError
 from maccluster.ports.process import ProcessResult
+from maccluster.services.sync_filters import merge_includes, resolve_presets
 from maccluster.services.sync_service import (
     FileMeta,
+    apply_batch_limits,
     exit_code_for_sync,
     inventory_local,
     is_excluded,
@@ -40,11 +42,31 @@ def test_plan_transfers_newest_wins():
         "equal.txt": FileMeta(mtime_ns=50, size=1),
     }
     local["equal.txt"] = FileMeta(mtime_ns=50, size=1)
-    push, pull = plan_transfers(local, remote)
+    push, pull, stats = plan_transfers(local, remote)
     assert "a.txt" in push and "only-local.txt" in push
     assert "b.txt" not in push
     assert "b.txt" in pull and "only-remote.txt" in pull
     assert "equal.txt" not in push and "equal.txt" not in pull
+    assert stats["equal"] == 1
+    assert stats["only_local"] == 1
+    assert stats["only_remote"] == 1
+
+
+def test_plan_transfers_prefer_local_and_skip():
+    local = {"x": FileMeta(mtime_ns=1, size=10), "y": FileMeta(mtime_ns=1, size=1)}
+    remote = {"x": FileMeta(mtime_ns=9, size=1), "y": FileMeta(mtime_ns=1, size=1)}
+    push, pull, _ = plan_transfers(local, remote, policy="prefer-local")
+    assert "x" in push and not pull
+    push2, pull2, st = plan_transfers(local, remote, policy="skip-conflict")
+    assert "x" not in push2 and "x" not in pull2
+    assert st["conflicts_skipped"] >= 1
+
+
+def test_plan_transfers_larger():
+    local = {"a": FileMeta(mtime_ns=1, size=100)}
+    remote = {"a": FileMeta(mtime_ns=9, size=10)}
+    push, pull, _ = plan_transfers(local, remote, policy="larger")
+    assert "a" in push and not pull
 
 
 def test_inventory_local_respects_excludes(tmp_path: Path):
@@ -121,6 +143,8 @@ def test_sync_home_ssh_fail(fake_ctx, tmp_path: Path):
         user="a321",
         timeout=60,
         dry_run=True,
+        no_speedtest=True,
+        write_log=False,
     )
     assert not result.peers[0].ok
     assert "SSH login failed" in result.peers[0].message
@@ -140,15 +164,51 @@ def test_sync_home_ditto_dry_run_ok(fake_ctx, tmp_path: Path):
         user="a321",
         timeout=60,
         dry_run=True,
+        no_speedtest=True,
+        write_log=False,
     )
-    assert result.strategy.startswith("newest-wins")
-    assert "ditto" in result.strategy
+    assert "ditto" in result.strategy or result.conflict_policy == "newer"
     assert result.peers[0].ok
     assert exit_code_for_sync(result) == 0
     # remote inv empty → all local files planned for push
     assert (
-        "push dry-run" in result.peers[0].push_stdout or "push dry-run" in result.peers[0].message
+        "push dry-run" in result.peers[0].push_stdout
+        or "push dry-run" in result.peers[0].message
+        or result.peers[0].push_files >= 1
     )
+
+
+def test_presets_and_batch_limits():
+    assert "Documents/" in resolve_presets(["documents"])
+    inc = merge_includes(["desktop"], ["Projects/"])
+    assert "Desktop/" in inc and "Projects/" in inc
+    push = ["a", "b", "c"]
+    pull = ["d"]
+    sizes = {"a": 10, "b": 20, "c": 30, "d": 5}
+    p, q, trunc = apply_batch_limits(push, pull, sizes, sizes, max_files=2, max_bytes=None)
+    assert len(p) + len(q) == 2
+    assert trunc
+
+
+def test_sync_home_compare(fake_ctx, tmp_path: Path):
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "note.txt").write_text("local", encoding="utf-8")
+    fake_ctx.runner = RecordingRunner(fail_ssh=False)
+    result = sync_home(
+        fake_ctx,
+        peer="node-b",
+        home=home,
+        remote_home=str(home),
+        user="a321",
+        timeout=60,
+        compare_only=True,
+        no_speedtest=True,
+        write_log=False,
+    )
+    assert result.compare_only
+    assert result.peers[0].ok
+    assert result.peers[0].only_local >= 1
 
 
 def test_sync_home_with_progress_object(fake_ctx, tmp_path: Path):

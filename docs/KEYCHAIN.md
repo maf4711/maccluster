@@ -3,8 +3,14 @@
 MacCluster can store **cluster.toml** and the **SSH peer user** (optional password)
 in the **login Keychain**.
 
-With **iCloud Keychain** enabled and the **same Apple ID** on node-a and node-b,
-those items can sync so the peer sees them and can `init` / `keychain pull` without AirDrop.
+**Scope: this Mac only.** The `security` CLI has no option to create
+iCloud-synchronizable items, so pushed items land in the local
+`login.keychain-db` and do **not** sync to a peer — even with iCloud Keychain
+on and the same Apple ID. Use `maccluster remote-install <peer>` to put the
+config on a peer (it copies `cluster.toml` over the TB bridge).
+
+The Keychain is therefore a **per-Mac** store: a local backup of the config
+plus the SSH user/password, so commands do not have to guess `$USER`.
 
 ## Service names
 
@@ -25,7 +31,7 @@ maccluster keychain push --ssh-user mafoe
 
 maccluster keychain show
 
-# On peer Mac (same Apple ID, after Keychain sync):
+# On the peer Mac (after its own `keychain push`, or after remote-install):
 maccluster init                 # checks Keychain first → writes cluster.toml
 # or:
 maccluster keychain pull --force
@@ -48,9 +54,8 @@ maccluster init --no-keychain    # local only
 
 | Setup | Peer sees Keychain items? |
 |-------|---------------------------|
-| Same Apple ID + iCloud Keychain on | Yes (after sync) |
-| Different Apple ID | No — use AirDrop zip or `keychain push` on each Mac |
-| Local Keychain only | Only on that Mac |
+| Any Apple ID / iCloud Keychain state | **No** — `security` items are not synchronizable |
+| Getting config to a peer | `maccluster remote-install <peer>` (TB bridge), then `keychain push` there |
 
 ## Security
 

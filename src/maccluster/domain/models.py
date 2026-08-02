@@ -197,6 +197,25 @@ class SyncPeerResult:
     ok: bool = False
     skipped: bool = False
     message: str = ""
+    push_files: int = 0
+    pull_files: int = 0
+    push_bytes: int = 0
+    pull_bytes: int = 0
+    only_local: int = 0
+    only_remote: int = 0
+    local_newer: int = 0
+    remote_newer: int = 0
+    equal: int = 0
+    conflicts_skipped: int = 0
+    sample_push: tuple[str, ...] = ()
+    sample_pull: tuple[str, ...] = ()
+    verify_ok: bool | None = None
+    verify_checked: int = 0
+    verify_mismatches: int = 0
+    safetynet_backed_up: int = 0
+    free_bytes_local: int | None = None
+    free_bytes_remote: int | None = None
+    truncated: bool = False  # batch limit hit
 
 
 @dataclass(frozen=True)
@@ -205,9 +224,19 @@ class SyncHomeResult:
 
     local_home: str
     dry_run: bool
-    strategy: str  # newest-wins
+    strategy: str  # newest-wins / conflict policy label
     peers: tuple[SyncPeerResult, ...]
     excludes: tuple[str, ...] = ()
+    includes: tuple[str, ...] = ()
+    conflict_policy: str = "newer"
+    compare_only: bool = False
+    safetynet: bool = False
+    verify: bool = False
+    quick: bool = False
+    log_path: str | None = None
+    apfs_snapshot: str | None = None
+    max_files: int | None = None
+    max_bytes: int | None = None
 
     @property
     def ok(self) -> bool:

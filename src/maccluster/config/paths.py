@@ -36,3 +36,19 @@ def resolve_config_path(
 
 def default_audit_log_path() -> Path:
     return Path.home() / ".local" / "state" / CONFIG_DIR_NAME / "actions.log"
+
+
+def default_sync_exclude_file() -> Path:
+    return default_config_dir() / "sync-excludes"
+
+
+def default_sync_log_dir() -> Path:
+    return Path.home() / "Library" / "Logs" / CONFIG_DIR_NAME
+
+
+def default_sync_state_path() -> Path:
+    return Path.home() / "Library" / "Caches" / CONFIG_DIR_NAME / "sync_state.json"
+
+
+def default_safetynet_root() -> Path:
+    return Path.home() / ".maccluster-safetynet"

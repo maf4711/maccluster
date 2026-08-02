@@ -44,3 +44,46 @@ def render_heal_plist(
 </dict>
 </plist>
 """
+
+
+def render_sync_plist(
+    *,
+    label: str,
+    program: str,
+    config_path: str,
+    interval_seconds: int = 3600,
+) -> str:
+    """User LaunchAgent for periodic ``maccluster sync home`` (CCC schedule analogue)."""
+    label_e = html.escape(label)
+    program_e = html.escape(program)
+    config_e = html.escape(config_path)
+    interval = max(300, int(interval_seconds))
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>{label_e}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{program_e}</string>
+    <string>--config</string>
+    <string>{config_e}</string>
+    <string>sync</string>
+    <string>home</string>
+    <string>--no-progress</string>
+    <string>--safetynet</string>
+    <string>--verify</string>
+    <string>--notify</string>
+  </array>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>StartInterval</key>
+  <integer>{interval}</integer>
+  <key>StandardOutPath</key>
+  <string>/tmp/maccluster-sync-home.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/maccluster-sync-home.err</string>
+</dict>
+</plist>
+"""

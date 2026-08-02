@@ -33,7 +33,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "config" and not getattr(args, "config_action", None):
         args.config_action = "show"
     if args.command == "service" and not getattr(args, "service_action", None):
-        print("error: service requires install|uninstall|status", file=sys.stderr)
+        print(
+            "error: service requires install|uninstall|status|"
+            "sync-install|sync-uninstall|sync-status",
+            file=sys.stderr,
+        )
         return USAGE
     if args.command == "sync" and not getattr(args, "sync_action", None):
         print("error: sync requires a target (e.g. home)", file=sys.stderr)

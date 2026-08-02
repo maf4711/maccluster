@@ -21,6 +21,10 @@ CONFIG_FILE_NAME = "cluster.toml"
 LOCK_FILE_NAME = "mutate.lock"
 LAUNCH_AGENT_LABEL = "com.maccluster.heal"
 LAUNCH_AGENT_PLIST = "com.maccluster.heal.plist"
+LAUNCH_AGENT_SYNC_LABEL = "com.maccluster.sync-home"
+LAUNCH_AGENT_SYNC_PLIST = "com.maccluster.sync-home.plist"
+DEFAULT_SYNC_INTERVAL_S = 3600
+MIN_SYNC_INTERVAL_S = 300
 
 # Interface name: letter first, then alnum/._- up to 16 chars total.
 IFACE_NAME_RE = r"^[A-Za-z][A-Za-z0-9_.-]{0,15}$"
@@ -58,6 +62,8 @@ ALLOWLIST_BASENAMES = frozenset(
         "scp",
         "ditto",  # Apple metadata-complete copy (sync home)
         "security",  # macOS Keychain
+        "tmutil",  # optional APFS local snapshot before pull
+        "osascript",  # optional Notification Center on sync fail
     }
 )
 
@@ -83,7 +89,41 @@ SYNC_HOME_EXCLUDES: tuple[str, ...] = (
     "**/.venv/",
     "**/venv/",
     ".DS_Store",
+    ".maccluster-safetynet/",  # never re-sync SafetyNet undo tree
 )
+
+# CCC-style path presets → include roots under $HOME (comma-separated via --preset)
+SYNC_PATH_PRESETS: dict[str, tuple[str, ...]] = {
+    "documents": ("Documents/",),
+    "desktop": ("Desktop/",),
+    "downloads": ("Downloads/",),
+    "developer": ("Developer/",),
+    "pictures": ("Pictures/",),
+    "movies": ("Movies/",),
+    "music": ("Music/",),
+    "library-app": ("Library/Application Support/",),
+    "ssh": (".ssh/",),
+    "config": (".config/",),
+}
+
+# Conflict policies (CCC-inspired; default newer = mtime newest-wins)
+SYNC_CONFLICT_POLICIES = frozenset(
+    {
+        "newer",
+        "larger",
+        "prefer-local",
+        "prefer-remote",
+        "skip-conflict",
+    }
+)
+
+SYNC_EXCLUDE_FILE_NAME = "sync-excludes"
+SYNC_SAFETYNET_DIR_NAME = ".maccluster-safetynet"
+SYNC_LOG_DIR_PARTS = ("Library", "Logs", "maccluster")
+SYNC_CACHE_DIR_NAME = "maccluster"
+SYNC_STATE_FILE_NAME = "sync_state.json"
+SYNC_VERIFY_SAMPLE_DEFAULT = 20
+SYNC_QUICK_SLACK_S = 120  # re-check files touched in last N seconds beyond cache
 
 # Traffic sampling (status/monitor TX/RX rates)
 TRAFFIC_CACHE_DIR_NAME = "maccluster"

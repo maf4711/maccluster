@@ -7,7 +7,12 @@ import sys
 from pathlib import Path
 
 from maccluster.app_factory import AppContext
-from maccluster.constants import LAUNCH_AGENT_LABEL
+from maccluster.constants import (
+    DEFAULT_SYNC_INTERVAL_S,
+    LAUNCH_AGENT_LABEL,
+    LAUNCH_AGENT_SYNC_LABEL,
+    MIN_SYNC_INTERVAL_S,
+)
 from maccluster.domain.models import ServiceState
 from maccluster.errors import CliError
 from maccluster.services.config_service import load_config
@@ -60,3 +65,37 @@ def uninstall_service(ctx: AppContext) -> ServiceState:
 
 def service_status(ctx: AppContext) -> ServiceState:
     return ctx.service.status(label=LAUNCH_AGENT_LABEL)
+
+
+def install_sync_service(ctx: AppContext, *, interval_seconds: int | None = None) -> ServiceState:
+    """Install LaunchAgent for periodic ``sync home`` (CCC schedule analogue)."""
+    interval = int(interval_seconds or DEFAULT_SYNC_INTERVAL_S)
+    if interval < MIN_SYNC_INTERVAL_S:
+        raise CliError(
+            f"sync interval must be >= {MIN_SYNC_INTERVAL_S} seconds",
+            exit_code=2,
+        )
+    program = resolve_program()
+    if program.name.startswith("python"):
+        candidate = Path(sys.prefix) / "bin" / "maccluster"
+        if candidate.is_file():
+            program = candidate
+        else:
+            raise CliError(
+                "maccluster entry point not found on PATH; install package first",
+                exit_code=1,
+            )
+    return ctx.service.install(
+        program=program,
+        config_path=ctx.config_path,
+        interval_seconds=interval,
+        label=LAUNCH_AGENT_SYNC_LABEL,
+    )
+
+
+def uninstall_sync_service(ctx: AppContext) -> ServiceState:
+    return ctx.service.uninstall(label=LAUNCH_AGENT_SYNC_LABEL)
+
+
+def sync_service_status(ctx: AppContext) -> ServiceState:
+    return ctx.service.status(label=LAUNCH_AGENT_SYNC_LABEL)

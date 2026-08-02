@@ -347,21 +347,174 @@ def parse_inventory_text(text: str) -> dict[str, FileMeta]:
 def plan_transfers(
     local: dict[str, FileMeta],
     remote: dict[str, FileMeta],
-) -> tuple[list[str], list[str]]:
-    """Return (to_push, to_pull) — strict newer mtime wins; equal → skip."""
+    *,
+    policy: str = "newer",
+) -> tuple[list[str], list[str], dict[str, int]]:
+    """
+    Return (to_push, to_pull, stats).
+
+    Policies (CCC-inspired):
+      newer          — mtime newest-wins (default)
+      larger         — larger size wins (mtime tie-break)
+      prefer-local   — on conflict always push local
+      prefer-remote  — on conflict always pull remote
+      skip-conflict  — only missing files; never overwrite
+    """
     to_push: list[str] = []
     to_pull: list[str] = []
-    for rel, lm in local.items():
-        rm = remote.get(rel)
-        if rm is None or lm.mtime_ns > rm.mtime_ns:
-            to_push.append(rel)
-    for rel, rm in remote.items():
+    stats = {
+        "only_local": 0,
+        "only_remote": 0,
+        "local_newer": 0,
+        "remote_newer": 0,
+        "equal": 0,
+        "conflicts_skipped": 0,
+    }
+    all_rels = set(local) | set(remote)
+    for rel in all_rels:
         lm = local.get(rel)
-        if lm is None or rm.mtime_ns > lm.mtime_ns:
+        rm = remote.get(rel)
+        if lm is not None and rm is None:
+            to_push.append(rel)
+            stats["only_local"] += 1
+            continue
+        if rm is not None and lm is None:
             to_pull.append(rel)
+            stats["only_remote"] += 1
+            continue
+        if lm is None or rm is None:
+            continue
+        # both exist
+        same = lm.mtime_ns == rm.mtime_ns and lm.size == rm.size
+        if same or (lm.mtime_ns == rm.mtime_ns and policy == "newer"):
+            if lm.mtime_ns == rm.mtime_ns and lm.size == rm.size:
+                stats["equal"] += 1
+                continue
+            if lm.mtime_ns == rm.mtime_ns and policy == "newer":
+                stats["equal"] += 1
+                continue
+
+        if policy == "skip-conflict":
+            stats["conflicts_skipped"] += 1
+            continue
+
+        if policy == "prefer-local":
+            if lm.mtime_ns != rm.mtime_ns or lm.size != rm.size:
+                to_push.append(rel)
+                if lm.mtime_ns >= rm.mtime_ns:
+                    stats["local_newer"] += 1
+                else:
+                    stats["local_newer"] += 1  # forced
+            continue
+
+        if policy == "prefer-remote":
+            if lm.mtime_ns != rm.mtime_ns or lm.size != rm.size:
+                to_pull.append(rel)
+                stats["remote_newer"] += 1
+            continue
+
+        if policy == "larger":
+            if lm.size > rm.size:
+                to_push.append(rel)
+                stats["local_newer"] += 1
+            elif rm.size > lm.size:
+                to_pull.append(rel)
+                stats["remote_newer"] += 1
+            elif lm.mtime_ns > rm.mtime_ns:
+                to_push.append(rel)
+                stats["local_newer"] += 1
+            elif rm.mtime_ns > lm.mtime_ns:
+                to_pull.append(rel)
+                stats["remote_newer"] += 1
+            else:
+                stats["equal"] += 1
+            continue
+
+        # newer (default)
+        if lm.mtime_ns > rm.mtime_ns:
+            to_push.append(rel)
+            stats["local_newer"] += 1
+        elif rm.mtime_ns > lm.mtime_ns:
+            to_pull.append(rel)
+            stats["remote_newer"] += 1
+        else:
+            stats["equal"] += 1
+
     to_push.sort()
     to_pull.sort()
-    return to_push, to_pull
+    return to_push, to_pull, stats
+
+
+def apply_batch_limits(
+    to_push: list[str],
+    to_pull: list[str],
+    push_sizes: dict[str, int],
+    pull_sizes: dict[str, int],
+    *,
+    max_files: int | None,
+    max_bytes: int | None,
+) -> tuple[list[str], list[str], bool]:
+    """Cap transfer lists; prefer smaller files first so many finish per run."""
+    if max_files is None and max_bytes is None:
+        return to_push, to_pull, False
+
+    # Merge candidates ordered by size, tag direction
+    cands: list[tuple[int, str, str]] = []
+    for r in to_push:
+        cands.append((push_sizes.get(r, 0), "push", r))
+    for r in to_pull:
+        cands.append((pull_sizes.get(r, 0), "pull", r))
+    cands.sort(key=lambda t: (t[0], t[1], t[2]))
+
+    out_push: list[str] = []
+    out_pull: list[str] = []
+    files = 0
+    bytes_ = 0
+    for sz, direction, rel in cands:
+        if max_files is not None and files >= max_files:
+            return sorted(out_push), sorted(out_pull), True
+        if max_bytes is not None and files > 0 and bytes_ + sz > max_bytes:
+            return sorted(out_push), sorted(out_pull), True
+        if direction == "push":
+            out_push.append(rel)
+        else:
+            out_pull.append(rel)
+        files += 1
+        bytes_ += sz
+    truncated = len(out_push) + len(out_pull) < len(to_push) + len(to_pull)
+    return sorted(out_push), sorted(out_pull), truncated
+
+
+def classify_compare(
+    local: dict[str, FileMeta],
+    remote: dict[str, FileMeta],
+) -> dict[str, list[str]]:
+    """Buckets for --compare (no transfer)."""
+    only_local: list[str] = []
+    only_remote: list[str] = []
+    local_newer: list[str] = []
+    remote_newer: list[str] = []
+    equal: list[str] = []
+    for rel in sorted(set(local) | set(remote)):
+        lm, rm = local.get(rel), remote.get(rel)
+        if lm and not rm:
+            only_local.append(rel)
+        elif rm and not lm:
+            only_remote.append(rel)
+        elif lm and rm:
+            if lm.mtime_ns > rm.mtime_ns:
+                local_newer.append(rel)
+            elif rm.mtime_ns > lm.mtime_ns:
+                remote_newer.append(rel)
+            else:
+                equal.append(rel)
+    return {
+        "only_local": only_local,
+        "only_remote": only_remote,
+        "local_newer": local_newer,
+        "remote_newer": remote_newer,
+        "equal": equal,
+    }
 
 
 def _bytes_for_rels(inv: dict[str, FileMeta], rels: list[str]) -> int:
@@ -788,6 +941,71 @@ def _remote_inventory(
     return parse_inventory_text(r.stdout or ""), ""
 
 
+def _free_bytes(path: Path) -> int | None:
+    try:
+        return int(shutil.disk_usage(path).free)
+    except OSError:
+        return None
+
+
+def _remote_free_bytes(
+    ctx: AppContext,
+    abs_ssh: str,
+    ssh_target: str,
+    remote_home: str,
+    *,
+    bind_ip: str | None,
+) -> int | None:
+    # Pure python on peer for free space of volume containing remote_home
+    py = (
+        "import os,sys;"
+        f"p={remote_home!r};"
+        "st=os.statvfs(p if os.path.isdir(p) else os.path.dirname(p) or '/');"
+        "print(st.f_bavail*st.f_frsize)"
+    )
+    r = ctx.runner.run(
+        _ssh_argv(abs_ssh, ssh_target, "/usr/bin/python3", "-c", py, bind_ip=bind_ip),
+        timeout=30.0,
+    )
+    if r.returncode != 0:
+        return None
+    try:
+        return int((r.stdout or "").strip().split()[0])
+    except (ValueError, IndexError):
+        return None
+
+
+def _maybe_apfs_snapshot(ctx: AppContext, *, enabled: bool) -> str | None:
+    if not enabled:
+        return None
+    try:
+        abs_tm = ctx.runner.resolve("tmutil")
+    except CliError:
+        return None
+    r = ctx.runner.run([abs_tm, "localsnapshot"], timeout=120.0)
+    if r.returncode != 0:
+        return None
+    out = (r.stdout or r.stderr or "").strip()
+    return out[:200] or "localsnapshot ok"
+
+
+def _notify_fail(ctx: AppContext, title: str, body: str) -> None:
+    try:
+        abs_osa = ctx.runner.resolve("osascript")
+    except CliError:
+        return
+    safe_title = title.replace("\\", "\\\\").replace('"', '\\"')
+    safe_body = body.replace("\\", "\\\\").replace('"', '\\"')[:180]
+    ctx.runner.run(
+        [
+            abs_osa,
+            "-e",
+            f'display notification "{safe_body}" with title "{safe_title}"',
+        ],
+        timeout=15.0,
+    )
+
+
 def sync_home(
     ctx: AppContext,
     *,
@@ -799,18 +1017,62 @@ def sync_home(
     home: str | Path | None = None,
     remote_home: str | Path | None = None,
     extra_excludes: tuple[str, ...] = (),
+    exclude_from: str | Path | None = None,
+    presets: tuple[str, ...] = (),
+    includes: tuple[str, ...] = (),
+    conflict_policy: str = "newer",
+    compare_only: bool = False,
+    safetynet: bool = False,
+    verify: bool = False,
+    verify_sample: int = 20,
+    quick: bool = False,
+    max_files: int | None = None,
+    max_bytes: int | None = None,
+    apfs_snapshot: bool = False,
+    notify: bool = False,
+    no_speedtest: bool = False,
+    min_free_bytes: int | None = None,
     timeout: float = TIMEOUT_SYNC,
     skip_ssh_check: bool = False,
     progress: ProgressLike | None = None,
+    write_log: bool = True,
 ) -> SyncHomeResult:
     """
     Two-way Home sync via Apple ``ditto`` (metadata-complete) over SSH.
 
-    Strategy: newest-wins by mtime (no deletes). Per peer: inventory → push
-    newer local files → pull newer remote files.
+    CCC-inspired options: compare, presets/includes, exclude-from, conflict
+    policy, SafetyNet-lite, post-verify, quick update, batch limits, APFS
+    snapshot, notifications, run history.
     """
+    from maccluster.constants import (
+        SYNC_CONFLICT_POLICIES,
+        SYNC_QUICK_SLACK_S,
+        SYNC_VERIFY_SAMPLE_DEFAULT,
+    )
+    from maccluster.services.sync_filters import (
+        filter_inventory,
+        load_exclude_file,
+        merge_includes,
+    )
+    from maccluster.services.sync_history import (
+        load_sync_state,
+        save_sync_state,
+        write_run_log,
+    )
+    from maccluster.services.sync_safetynet import backup_before_overwrite, new_run_dir
+    from maccluster.services.sync_verify import verify_local_sample
+
     if push_only and pull_only:
         raise CliError("use only one of --push-only / --pull-only", exit_code=2)
+    policy = (conflict_policy or "newer").strip().lower()
+    if policy not in SYNC_CONFLICT_POLICIES:
+        raise CliError(
+            f"invalid --conflict-policy {conflict_policy!r}; "
+            f"choose from {', '.join(sorted(SYNC_CONFLICT_POLICIES))}",
+            exit_code=2,
+        )
+    if compare_only:
+        dry_run = True
 
     prog: ProgressLike = progress if progress is not None else NullProgress()
     t0 = time.monotonic()
@@ -842,33 +1104,62 @@ def sync_home(
     except CliError as exc:
         raise CliError(f"ssh/scp not found: {exc.message}", exit_code=1) from exc
 
-    excludes = tuple(SYNC_HOME_EXCLUDES) + tuple(extra_excludes)
+    # Filters
+    from maccluster.config.paths import default_sync_exclude_file
+
+    file_excludes = load_exclude_file(
+        Path(exclude_from) if exclude_from else default_sync_exclude_file()
+    )
+    includes_resolved = merge_includes(presets, includes)
+    excludes = tuple(SYNC_HOME_EXCLUDES) + file_excludes + tuple(extra_excludes)
     peers = _resolve_peers(cfg.nodes, self_node, peer_filter=peer, default_user=default_user)
     bind_ip = str(self_node.ip)  # TB bridge Self-IP only — never Wi‑Fi
 
-    # Startup: TB cable grade + short speedtest (non-fatal)
-    try:
-        from maccluster.services.speedtest_service import (
-            format_speedtest_report,
-            run_speedtest,
+    snap_label = _maybe_apfs_snapshot(ctx, enabled=apfs_snapshot and not dry_run)
+    if snap_label:
+        prog.note(f"APFS local snapshot: {snap_label}")
+
+    if not no_speedtest and not compare_only:
+        try:
+            from maccluster.services.speedtest_service import (
+                format_speedtest_report,
+                run_speedtest,
+            )
+
+            st = run_speedtest(
+                ctx,
+                peer=peer,
+                duration=3,
+                skip_iperf=False,
+                try_start_server=True,
+            )
+            prog.note(format_speedtest_report(st))
+            if not st.good_enough:
+                prog.note(
+                    "warning: TB path below ideal (want 40 Gb/s cable; 20 Gb/s is minimum OK)"
+                )
+        except Exception as exc:
+            prog.note(f"warning: speedtest preflight skipped: {exc}")
+
+    free_local = _free_bytes(local_home)
+    if min_free_bytes is not None and free_local is not None and free_local < min_free_bytes:
+        raise CliError(
+            f"local free space {format_bytes(free_local)} below --min-free "
+            f"{format_bytes(min_free_bytes)}",
+            exit_code=1,
         )
 
-        st = run_speedtest(
-            ctx,
-            peer=peer,
-            duration=3,
-            skip_iperf=False,
-            try_start_server=True,
+    state = load_sync_state()
+    last_ts_ns = int(state.get("last_success_mtime_ns") or 0)
+    if quick and last_ts_ns > 0:
+        prog.note(
+            f"quick update: prefer files newer than last success (slack {SYNC_QUICK_SLACK_S}s)"
         )
-        prog.note(format_speedtest_report(st))
-        if not st.good_enough:
-            prog.note("warning: TB path below ideal (want 40 Gb/s cable; 20 Gb/s is minimum OK)")
-    except Exception as exc:
-        prog.note(f"warning: speedtest preflight skipped: {exc}")
 
-    # Lazy: only walk $HOME after at least one peer passes SSH (homes are huge).
     local_inv: dict[str, FileMeta] | None = None
     peer_results: list[SyncPeerResult] = []
+    sample_n = verify_sample if verify_sample > 0 else SYNC_VERIFY_SAMPLE_DEFAULT
+    sn_run: Path | None = None
 
     for node, ssh_target in peers:
         prog.note(f"peer {node.id} ({node.ip}) via {ssh_target} bind={bind_ip}")
@@ -889,14 +1180,42 @@ def sync_home(
                             f"ssh-copy-id {ssh_target} — see docs/PEER-SSH.md. "
                             f"detail: {fail}"
                         ),
+                        free_bytes_local=free_local,
                     )
                 )
                 prog.note(f"  FAIL SSH: {fail[:120]}")
                 continue
 
+        free_remote = _remote_free_bytes(
+            ctx, abs_ssh, ssh_target, remote_home_path, bind_ip=bind_ip
+        )
+        if min_free_bytes is not None and free_remote is not None and free_remote < min_free_bytes:
+            peer_results.append(
+                SyncPeerResult(
+                    peer_id=node.id,
+                    peer_ip=str(node.ip),
+                    ssh_target=ssh_target,
+                    push_rc=-1,
+                    pull_rc=-1,
+                    ok=False,
+                    message=(
+                        f"peer free space {format_bytes(free_remote)} below "
+                        f"--min-free {format_bytes(min_free_bytes)}"
+                    ),
+                    free_bytes_local=free_local,
+                    free_bytes_remote=free_remote,
+                )
+            )
+            continue
+
         if local_inv is None:
             prog.phase("inventory", direction="local", detail=str(local_home))
             local_inv = inventory_local(local_home, excludes)
+            local_inv = filter_inventory(local_inv, includes_resolved)
+            if quick and last_ts_ns > 0:
+                cutoff = last_ts_ns - SYNC_QUICK_SLACK_S * 1_000_000_000
+                # Keep recently touched + will still plan missing via remote side
+                local_inv = {k: v for k, v in local_inv.items() if v.mtime_ns >= cutoff}
             prog.note(f"  local inventory: {len(local_inv)} files")
 
         with tempfile.TemporaryDirectory(prefix="maccluster-sync-") as tmp:
@@ -923,29 +1242,102 @@ def sync_home(
                         pull_rc=-1,
                         ok=False,
                         message=f"remote inventory failed: {inv_err}",
+                        free_bytes_local=free_local,
+                        free_bytes_remote=free_remote,
                     )
                 )
                 prog.note(f"  FAIL inventory: {inv_err[:120]}")
                 continue
 
-            to_push, to_pull = plan_transfers(local_inv, remote_inv)
+            remote_inv = filter_inventory(remote_inv, includes_resolved)
+            # For quick mode we still need full remote for pull of new remote files
+            # but local is reduced — re-walk missing remote-only is fine
+
+            to_push, to_pull, plan_stats = plan_transfers(local_inv, remote_inv, policy=policy)
             if push_only:
                 to_pull = []
             if pull_only:
                 to_push = []
 
             push_sizes = {r: local_inv[r].size for r in to_push if r in local_inv}
+            # If quick dropped local files that remote needs, sizes only for known
+            for r in to_push:
+                if r not in push_sizes and r in local_inv:
+                    push_sizes[r] = local_inv[r].size
             pull_sizes = {r: remote_inv[r].size for r in to_pull if r in remote_inv}
+
+            to_push, to_pull, truncated = apply_batch_limits(
+                to_push,
+                to_pull,
+                push_sizes,
+                pull_sizes,
+                max_files=max_files,
+                max_bytes=max_bytes,
+            )
+            push_sizes = {r: push_sizes[r] for r in to_push if r in push_sizes}
+            pull_sizes = {r: pull_sizes[r] for r in to_pull if r in pull_sizes}
             push_bytes = sum(push_sizes.values())
             pull_bytes = sum(pull_sizes.values())
             total_bytes = push_bytes + pull_bytes
             total_files = len(to_push) + len(to_pull)
 
+            # Free-space headroom: need room for incoming pull on local / push on remote
+            if not dry_run and free_local is not None and pull_bytes > free_local:
+                peer_results.append(
+                    SyncPeerResult(
+                        peer_id=node.id,
+                        peer_ip=str(node.ip),
+                        ssh_target=ssh_target,
+                        push_rc=-1,
+                        pull_rc=-1,
+                        ok=False,
+                        message=(
+                            f"not enough local free space for pull "
+                            f"({format_bytes(pull_bytes)} needed, "
+                            f"{format_bytes(free_local)} free)"
+                        ),
+                        pull_files=len(to_pull),
+                        pull_bytes=pull_bytes,
+                        free_bytes_local=free_local,
+                        free_bytes_remote=free_remote,
+                        only_local=plan_stats.get("only_local", 0),
+                        only_remote=plan_stats.get("only_remote", 0),
+                        local_newer=plan_stats.get("local_newer", 0),
+                        remote_newer=plan_stats.get("remote_newer", 0),
+                        equal=plan_stats.get("equal", 0),
+                        conflicts_skipped=plan_stats.get("conflicts_skipped", 0),
+                    )
+                )
+                continue
+            if not dry_run and free_remote is not None and push_bytes > free_remote:
+                peer_results.append(
+                    SyncPeerResult(
+                        peer_id=node.id,
+                        peer_ip=str(node.ip),
+                        ssh_target=ssh_target,
+                        push_rc=-1,
+                        pull_rc=-1,
+                        ok=False,
+                        message=(
+                            f"not enough peer free space for push "
+                            f"({format_bytes(push_bytes)} needed, "
+                            f"{format_bytes(free_remote)} free)"
+                        ),
+                        push_files=len(to_push),
+                        push_bytes=push_bytes,
+                        free_bytes_local=free_local,
+                        free_bytes_remote=free_remote,
+                    )
+                )
+                continue
+
             prog.reset_timer()
             prog.set_totals(files=total_files, bytes_=total_bytes)
+            mode = "compare" if compare_only else ("dry-run" if dry_run else "sync")
             prog.note(
-                f"  plan: push {len(to_push)} files ({format_bytes(push_bytes)}) · "
-                f"pull {len(to_pull)} files ({format_bytes(pull_bytes)})"
+                f"  {mode} plan [{policy}]: push {len(to_push)} "
+                f"({format_bytes(push_bytes)}) · pull {len(to_pull)} "
+                f"({format_bytes(pull_bytes)})" + (" [truncated]" if truncated else "")
             )
             if to_push and prog.enabled:
                 for sample in to_push[:5]:
@@ -963,66 +1355,120 @@ def sync_home(
             messages: list[str] = []
             done_bytes = 0
             t_peer = time.monotonic()
+            sn_count = 0
+            v_ok: bool | None = None
+            v_checked = v_mis = 0
 
-            if not pull_only:
-                push_rc, push_out, push_err, _pb = _transfer_push(
-                    ctx,
-                    abs_ditto=abs_ditto,
-                    abs_ssh=abs_ssh,
-                    abs_scp=abs_scp,
-                    ssh_target=ssh_target,
-                    local_home=local_home,
-                    remote_home=remote_home_path,
-                    rels=to_push,
-                    sizes=push_sizes,
-                    dry_run=dry_run,
-                    timeout=timeout,
-                    work=work,
-                    progress=prog,
-                    bytes_base=0,
-                    bytes_total=total_bytes,
-                    bind_ip=bind_ip,
+            if compare_only:
+                buckets = classify_compare(local_inv, remote_inv)
+                messages.append(
+                    f"compare only_local={len(buckets['only_local'])} "
+                    f"only_remote={len(buckets['only_remote'])} "
+                    f"local_newer={len(buckets['local_newer'])} "
+                    f"remote_newer={len(buckets['remote_newer'])} "
+                    f"equal={len(buckets['equal'])}"
                 )
-                done_bytes = push_bytes
-                if push_rc != 0:
-                    messages.append(f"push failed rc={push_rc}")
-                elif push_out:
-                    messages.append(push_out.split("\n", 1)[0])
-
-            if not push_only:
-                pull_rc, pull_out, pull_err, _plb = _transfer_pull(
-                    ctx,
-                    abs_ditto=abs_ditto,
-                    abs_ssh=abs_ssh,
-                    abs_scp=abs_scp,
-                    ssh_target=ssh_target,
-                    local_home=local_home,
-                    remote_home=remote_home_path,
-                    rels=to_pull,
-                    sizes=pull_sizes,
-                    dry_run=dry_run,
-                    timeout=timeout,
-                    work=work,
-                    progress=prog,
-                    bytes_base=done_bytes,
-                    bytes_total=total_bytes,
-                    bind_ip=bind_ip,
+                push_out = _sample_list(
+                    buckets["only_local"] + buckets["local_newer"],
+                    label="would push",
                 )
-                if pull_rc != 0:
-                    messages.append(f"pull failed rc={pull_rc}")
-                elif pull_out:
-                    messages.append(pull_out.split("\n", 1)[0])
+                pull_out = _sample_list(
+                    buckets["only_remote"] + buckets["remote_newer"],
+                    label="would pull",
+                )
+            else:
+                if safetynet and not dry_run and not push_only and to_pull:
+                    if sn_run is None:
+                        sn_run = new_run_dir()
+                    overwrite = [r for r in to_pull if r in local_inv]
+                    sn_count = backup_before_overwrite(
+                        local_home,
+                        overwrite,
+                        run_dir=sn_run,
+                        abs_ditto=abs_ditto,
+                        runner=ctx.runner,
+                        timeout=timeout,
+                    )
+                    if sn_count:
+                        prog.note(f"  SafetyNet: backed up {sn_count} files → {sn_run}")
 
-            ok = push_rc == 0 and pull_rc == 0
+                if not pull_only:
+                    push_rc, push_out, push_err, _pb = _transfer_push(
+                        ctx,
+                        abs_ditto=abs_ditto,
+                        abs_ssh=abs_ssh,
+                        abs_scp=abs_scp,
+                        ssh_target=ssh_target,
+                        local_home=local_home,
+                        remote_home=remote_home_path,
+                        rels=to_push,
+                        sizes=push_sizes,
+                        dry_run=dry_run,
+                        timeout=timeout,
+                        work=work,
+                        progress=prog,
+                        bytes_base=0,
+                        bytes_total=total_bytes,
+                        bind_ip=bind_ip,
+                    )
+                    done_bytes = push_bytes
+                    if push_rc != 0:
+                        messages.append(f"push failed rc={push_rc}")
+                    elif push_out:
+                        messages.append(push_out.split("\n", 1)[0])
+
+                if not push_only:
+                    pull_rc, pull_out, pull_err, _plb = _transfer_pull(
+                        ctx,
+                        abs_ditto=abs_ditto,
+                        abs_ssh=abs_ssh,
+                        abs_scp=abs_scp,
+                        ssh_target=ssh_target,
+                        local_home=local_home,
+                        remote_home=remote_home_path,
+                        rels=to_pull,
+                        sizes=pull_sizes,
+                        dry_run=dry_run,
+                        timeout=timeout,
+                        work=work,
+                        progress=prog,
+                        bytes_base=done_bytes,
+                        bytes_total=total_bytes,
+                        bind_ip=bind_ip,
+                    )
+                    if pull_rc != 0:
+                        messages.append(f"pull failed rc={pull_rc}")
+                    elif pull_out:
+                        messages.append(pull_out.split("\n", 1)[0])
+
+                if verify and not dry_run and pull_rc == 0 and to_pull:
+                    # Expected meta from remote inventory for pulled files
+                    expected = {r: remote_inv[r] for r in to_pull if r in remote_inv}
+                    v_ok, v_checked, v_mis, bad = verify_local_sample(
+                        local_home, expected, to_pull, sample=sample_n
+                    )
+                    if not v_ok:
+                        messages.append(
+                            f"verify FAIL {v_mis}/{v_checked} mismatches"
+                            + (f" e.g. {bad[0]}" if bad else "")
+                        )
+                    else:
+                        messages.append(f"verify OK ({v_checked} samples)")
+
+            ok = push_rc == 0 and pull_rc == 0 and (v_ok is not False)
             elapsed = max(1e-6, time.monotonic() - t_peer)
-            rate = (push_bytes + pull_bytes) / elapsed if not dry_run else 0.0
+            rate = (push_bytes + pull_bytes) / elapsed if not dry_run and not compare_only else 0.0
             if not messages:
-                messages.append("ok" if not dry_run else "dry-run ok")
-            if total_files:
+                messages.append(
+                    "compare ok" if compare_only else ("dry-run ok" if dry_run else "ok")
+                )
+            if total_files and not compare_only:
                 messages.append(
                     f"{format_bytes(push_bytes + pull_bytes)} in {elapsed:.1f}s"
                     + (f" ({format_rate(rate)})" if rate > 0 else "")
                 )
+            if truncated:
+                messages.append("batch limit — re-run for remainder")
 
             peer_results.append(
                 SyncPeerResult(
@@ -1037,6 +1483,25 @@ def sync_home(
                     pull_stderr=pull_err,
                     ok=ok,
                     message="; ".join(messages),
+                    push_files=len(to_push),
+                    pull_files=len(to_pull),
+                    push_bytes=push_bytes,
+                    pull_bytes=pull_bytes,
+                    only_local=plan_stats.get("only_local", 0),
+                    only_remote=plan_stats.get("only_remote", 0),
+                    local_newer=plan_stats.get("local_newer", 0),
+                    remote_newer=plan_stats.get("remote_newer", 0),
+                    equal=plan_stats.get("equal", 0),
+                    conflicts_skipped=plan_stats.get("conflicts_skipped", 0),
+                    sample_push=tuple(to_push[:15]),
+                    sample_pull=tuple(to_pull[:15]),
+                    verify_ok=v_ok,
+                    verify_checked=v_checked,
+                    verify_mismatches=v_mis,
+                    safetynet_backed_up=sn_count,
+                    free_bytes_local=free_local,
+                    free_bytes_remote=free_remote,
+                    truncated=truncated,
                 )
             )
             status = "OK" if ok else "FAIL"
@@ -1044,13 +1509,67 @@ def sync_home(
 
     total_elapsed = time.monotonic() - t0
     prog.finish(f"sync finished in {total_elapsed:.1f}s")
-    return SyncHomeResult(
+
+    strategy = f"compare ({policy})" if compare_only else f"{policy} (Apple ditto)"
+    result = SyncHomeResult(
         local_home=str(local_home),
         dry_run=dry_run,
-        strategy="newest-wins (Apple ditto)",
+        strategy=strategy,
         peers=tuple(peer_results),
         excludes=excludes,
+        includes=includes_resolved,
+        conflict_policy=policy,
+        compare_only=compare_only,
+        safetynet=safetynet,
+        verify=verify,
+        quick=quick,
+        apfs_snapshot=snap_label,
+        max_files=max_files,
+        max_bytes=max_bytes,
     )
+
+    log_path: str | None = None
+    if write_log and not compare_only:
+        try:
+            log_path = str(write_run_log(result))
+        except OSError as exc:
+            prog.note(f"warning: could not write sync log: {exc}")
+    if log_path:
+        result = SyncHomeResult(
+            local_home=result.local_home,
+            dry_run=result.dry_run,
+            strategy=result.strategy,
+            peers=result.peers,
+            excludes=result.excludes,
+            includes=result.includes,
+            conflict_policy=result.conflict_policy,
+            compare_only=result.compare_only,
+            safetynet=result.safetynet,
+            verify=result.verify,
+            quick=result.quick,
+            log_path=log_path,
+            apfs_snapshot=result.apfs_snapshot,
+            max_files=result.max_files,
+            max_bytes=result.max_bytes,
+        )
+
+    if result.ok and not dry_run and not compare_only:
+        # Advance quick-update watermark
+        now_ns = time.time_ns()
+        st = load_sync_state()
+        st["last_success_mtime_ns"] = now_ns
+        st["last_success_ts"] = time.time()
+        save_sync_state(st)
+
+    if notify and not result.ok:
+        fails = [p.peer_id for p in result.peers if not p.ok]
+        _notify_fail(
+            ctx,
+            "MacCluster sync failed",
+            f"peers: {', '.join(fails) or 'unknown'}",
+        )
+
+    return result
 
 
 def exit_code_for_sync(result: SyncHomeResult) -> int:

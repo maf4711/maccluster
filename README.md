@@ -78,7 +78,8 @@ targets are refused for write/lock paths.
 | `bench` | no | Optional `iperf3` to a peer IP (bound to TB Self-IP) |
 | `speedtest` | no | TB **cable grade** (40G ideal) + iperf3 over bridge; also runs at start of `sync home` / `remote-install` |
 | `service install\|uninstall\|status` | plist | User LaunchAgent → `heal --loop` |
-| `sync home` | files via SSH | Two-way **Home** sync via **Apple ditto** (newest-wins by mtime, full xattrs/ACLs); no deletes. See [`docs/SYNC-HOME.md`](docs/SYNC-HOME.md) |
+| `service sync-install\|sync-uninstall\|sync-status` | plist | Scheduled `sync home` (CCC schedule analogue) |
+| `sync home` | files via SSH | Two-way **Home** via **Apple ditto** + CCC-inspired options (compare, presets, SafetyNet, verify, policies). See [`docs/SYNC-HOME.md`](docs/SYNC-HOME.md) |
 | `remote-install` | peer install | Install wheel+config on peer over **TB bridge only** (`10.42.0.x`, BindAddress Self-IP). See [`docs/REMOTE-INSTALL.md`](docs/REMOTE-INSTALL.md) |
 | `ssh-config` | OpenSSH | Write `~/.ssh/config.d/maccluster` so `10.42.0.*` uses bridge BindAddress |
 | `keychain show\|push\|pull\|delete` | Keychain | Store/restore `cluster.toml` + SSH user (iCloud → peer). See [`docs/KEYCHAIN.md`](docs/KEYCHAIN.md) |
@@ -95,9 +96,13 @@ with **newest-wins** by mtime — not Homebrew rsync, not iCloud:
 
 ```bash
 # needs: ssh key login to peers (stock macOS ditto + scp)
-maccluster sync home --dry-run    # preview
-maccluster sync home              # push then pull per peer (newest wins)
-maccluster sync home --peer node-b
+maccluster sync home --compare              # CCC-style diff only
+maccluster sync home --dry-run              # preview transfers
+maccluster sync home --safetynet --verify   # SafetyNet + sample verify
+maccluster sync home --preset documents,developer
+maccluster sync home --conflict-policy prefer-local
+maccluster service sync-install --interval 3600   # hourly schedule
+maccluster sync home --last                 # last run log
 ```
 
 Requires working SSH (`ssh-copy-id user@10.42.0.x`). Details: [`docs/SYNC-HOME.md`](docs/SYNC-HOME.md),

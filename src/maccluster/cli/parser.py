@@ -124,28 +124,53 @@ def build_parser() -> argparse.ArgumentParser:
         help="Do not try to start remote iperf3 -s via SSH",
     )
 
-    p_svc = sub.add_parser("service", help="User LaunchAgent for heal --loop")
+    p_svc = sub.add_parser(
+        "service",
+        help="User LaunchAgents: heal --loop and optional sync home schedule",
+    )
     svc_sub = p_svc.add_subparsers(dest="service_action", metavar="ACTION")
-    svc_sub.add_parser("install", help="Install LaunchAgent")
-    svc_sub.add_parser("uninstall", help="Remove LaunchAgent")
-    svc_sub.add_parser("status", help="Show LaunchAgent status")
+    svc_sub.add_parser("install", help="Install heal LaunchAgent")
+    svc_sub.add_parser("uninstall", help="Remove heal LaunchAgent")
+    svc_sub.add_parser("status", help="Show heal LaunchAgent status")
+    p_svc_sync_i = svc_sub.add_parser(
+        "sync-install",
+        help="Install LaunchAgent for periodic sync home (CCC schedule analogue)",
+    )
+    p_svc_sync_i.add_argument(
+        "--interval",
+        type=int,
+        default=3600,
+        help="Seconds between sync runs (default 3600, min 300)",
+    )
+    svc_sub.add_parser("sync-uninstall", help="Remove sync home LaunchAgent")
+    svc_sub.add_parser("sync-status", help="Show sync home LaunchAgent status")
 
     p_sync = sub.add_parser(
         "sync",
-        help="Sync data with peers over TB/SSH (separate from mesh bring-up)",
+        help="Sync data with peers over TB/SSH (CCC-inspired Home sync layer)",
     )
     sync_sub = p_sync.add_subparsers(dest="sync_action", metavar="TARGET")
     p_home = sync_sub.add_parser(
         "home",
         help=(
-            "Two-way Home sync via Apple ditto (newest-wins by mtime, full "
-            "xattrs/ACLs). No deletes. Needs SSH key login to peers."
+            "Two-way Home sync via Apple ditto (conflict policy default: newer "
+            "mtime). Full xattrs/ACLs. No deletes. Needs SSH key login to peers."
         ),
     )
     p_home.add_argument(
         "--dry-run",
         action="store_true",
         help="Show what ditto would transfer (no writes)",
+    )
+    p_home.add_argument(
+        "--compare",
+        action="store_true",
+        help="CCC Compare: Diff-Report only (counts + sample paths, no transfer)",
+    )
+    p_home.add_argument(
+        "--last",
+        action="store_true",
+        help="Show last sync run log (no transfer)",
     )
     p_home.add_argument(
         "--peer",
@@ -156,12 +181,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_home.add_argument(
         "--push-only",
         action="store_true",
-        help="Only push local → peer (still newest-wins by mtime)",
+        help="Only push local → peer",
     )
     p_home.add_argument(
         "--pull-only",
         action="store_true",
-        help="Only pull peer → local (still newest-wins by mtime)",
+        help="Only pull peer → local",
     )
     p_home.add_argument(
         "--user",
@@ -187,6 +212,90 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         metavar="PATTERN",
         help="Extra exclude pattern (repeatable); defaults already skip Caches/Trash/…",
+    )
+    p_home.add_argument(
+        "--exclude-from",
+        metavar="FILE",
+        default=None,
+        help="Exclude patterns file (default: ~/.config/maccluster/sync-excludes)",
+    )
+    p_home.add_argument(
+        "--preset",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help=(
+            "Include preset (repeatable/comma): documents,desktop,downloads,"
+            "developer,pictures,movies,music,library-app,ssh,config"
+        ),
+    )
+    p_home.add_argument(
+        "--include",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="Only sync this path under Home (repeatable), e.g. Documents/",
+    )
+    p_home.add_argument(
+        "--conflict-policy",
+        choices=["newer", "larger", "prefer-local", "prefer-remote", "skip-conflict"],
+        default="newer",
+        help="On both-sides exist: newer (default) | larger | prefer-local | prefer-remote | skip-conflict",
+    )
+    p_home.add_argument(
+        "--safetynet",
+        action="store_true",
+        help="Before overwrite on pull: backup local file to ~/.maccluster-safetynet/",
+    )
+    p_home.add_argument(
+        "--verify",
+        action="store_true",
+        help="After pull: sample-check size/mtime of transferred files",
+    )
+    p_home.add_argument(
+        "--verify-sample",
+        type=int,
+        default=20,
+        help="Max files to verify after pull (default 20)",
+    )
+    p_home.add_argument(
+        "--quick",
+        action="store_true",
+        help="Quick update: prefer local files touched since last successful sync",
+    )
+    p_home.add_argument(
+        "--max-files",
+        type=int,
+        default=None,
+        help="Batch limit: max files this run (remainder next run)",
+    )
+    p_home.add_argument(
+        "--max-bytes",
+        type=int,
+        default=None,
+        help="Batch limit: max payload bytes this run",
+    )
+    p_home.add_argument(
+        "--min-free",
+        type=int,
+        default=None,
+        metavar="BYTES",
+        help="Abort if free space on local or peer is below this many bytes",
+    )
+    p_home.add_argument(
+        "--apfs-snapshot",
+        action="store_true",
+        help="Opt-in: tmutil localsnapshot before transfer (APFS, may need privileges)",
+    )
+    p_home.add_argument(
+        "--notify",
+        action="store_true",
+        help="macOS Notification Center on failure",
+    )
+    p_home.add_argument(
+        "--no-speedtest",
+        action="store_true",
+        help="Skip TB cable/speedtest preflight",
     )
     p_home.add_argument(
         "--timeout",

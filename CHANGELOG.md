@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.0 — 2026-08-02
+
+### Added — CCC-inspired `sync home` features
+- **`--compare`** — Diff report only (only_local / only_remote / newer / equal)
+- **`--preset` / `--include`** — Path presets (documents, desktop, developer, …)
+- **`--exclude-from`** — Pattern file (`~/.config/maccluster/sync-excludes` default)
+- **`--conflict-policy`** — `newer` | `larger` | `prefer-local` | `prefer-remote` | `skip-conflict`
+- **`--safetynet`** — Backup overwritten local files to `~/.maccluster-safetynet/<ts>/`
+- **`--verify` / `--verify-sample`** — Post-pull size/mtime sample check
+- **`--quick`** — Prefer files touched since last successful run
+- **`--max-files` / `--max-bytes`** — Batch limits / resume next run
+- **`--min-free`** — Free-space preflight (local + peer)
+- **`--apfs-snapshot`** — Opt-in `tmutil localsnapshot` before transfer
+- **`--notify`** — Notification Center on failure
+- **`--last`** — Show last run log (`~/Library/Logs/maccluster/sync-*.json`)
+- **`service sync-install|sync-uninstall|sync-status`** — Scheduled sync LaunchAgent
+- Helpers: `sync_filters`, `sync_history`, `sync_safetynet`, `sync_verify`
+
 ## 0.1.9 — 2026-08-02
 
 ### Fixed

@@ -5,8 +5,14 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from maccluster.adapters.plist_template import render_heal_plist
-from maccluster.constants import LAUNCH_AGENT_LABEL, LAUNCH_AGENT_PLIST, TIMEOUT_GENERIC
+from maccluster.adapters.plist_template import render_heal_plist, render_sync_plist
+from maccluster.constants import (
+    LAUNCH_AGENT_LABEL,
+    LAUNCH_AGENT_PLIST,
+    LAUNCH_AGENT_SYNC_LABEL,
+    LAUNCH_AGENT_SYNC_PLIST,
+    TIMEOUT_GENERIC,
+)
 from maccluster.domain.models import ServiceState
 from maccluster.errors import CliError
 from maccluster.ports.process import ProcessRunnerPort
@@ -26,6 +32,8 @@ class LaunchAgentService:
         name = f"{label}.plist" if not label.endswith(".plist") else label
         if label == LAUNCH_AGENT_LABEL:
             name = LAUNCH_AGENT_PLIST
+        elif label == LAUNCH_AGENT_SYNC_LABEL:
+            name = LAUNCH_AGENT_SYNC_PLIST
         return launch_agents_dir() / name
 
     def install(
@@ -44,12 +52,20 @@ class LaunchAgentService:
         plist_path.parent.mkdir(parents=True, exist_ok=True)
         if plist_path.is_symlink():
             raise CliError(f"refusing to write through symlink: {plist_path}", exit_code=2)
-        content = render_heal_plist(
-            label=label,
-            program=str(program),
-            config_path=str(config_path),
-            throttle_interval=max(10, interval_seconds),
-        )
+        if label == LAUNCH_AGENT_SYNC_LABEL:
+            content = render_sync_plist(
+                label=label,
+                program=str(program),
+                config_path=str(config_path),
+                interval_seconds=max(300, interval_seconds),
+            )
+        else:
+            content = render_heal_plist(
+                label=label,
+                program=str(program),
+                config_path=str(config_path),
+                throttle_interval=max(10, interval_seconds),
+            )
         plist_path.write_text(content, encoding="utf-8")
         os.chmod(plist_path, 0o644)
 
