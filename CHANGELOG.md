@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.2.1 — 2026-08-02
+
+### Fixed — Keychain honesty + CLI bugs
+- **`--account` works after subcommands**: `keychain show --account X` and
+  `keychain --account X show` both parse (shared parent args)
+- **No fake iCloud share**: help/messages/docs state login Keychain is **local only**
+  (`security` cannot create synchronizable items)
+- **`init` no longer errors** when disk + Keychain both exist: keeps disk unless
+  `--force` (returns source `disk` | `keychain` | `template`)
+- **`FakeKeychainStore`** accepts `raw=` / `label=` for API parity
+- **Sync run logs follow the synced home**, not the caller's real home — test
+  runs no longer write into `~/Library/Logs/maccluster/`
+- **Keychain writes never use `-U`**: updating an existing item rewrites its
+  ACL, blocks on a Keychain UI prompt (rc 124) and loses the item; delete +
+  fresh add instead. Write failures now name their cause (locked login keychain
+  over SSH vs. pending prompt)
+- **`speedtest` reverse fallback**: when the peer's application firewall blocks
+  inbound iperf3 data connections, run the peer as client toward a local server
+
+### Added
+- **`maccluster keychain push-peer <peer>`** — plant `cluster.toml` on peer over
+  TB bridge SSH; attempt remote `keychain push` (file still planted if peer
+  Keychain is locked over SSH)
+
 ## 0.2.0 — 2026-08-02
 
 ### Added — CCC-inspired `sync home` features

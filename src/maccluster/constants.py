@@ -67,7 +67,7 @@ ALLOWLIST_BASENAMES = frozenset(
     }
 )
 
-# Keychain (login keychain; syncs via iCloud Keychain if enabled for passwords)
+# Keychain (local login keychain only — security cannot create iCloud-sync items)
 KEYCHAIN_SERVICE_CONFIG = "ai.maccluster.cluster-config"
 KEYCHAIN_SERVICE_SSH_USER = "ai.maccluster.ssh.user"
 KEYCHAIN_SERVICE_SSH_PASSWORD = "ai.maccluster.ssh.password"

@@ -42,12 +42,14 @@ def default_sync_exclude_file() -> Path:
     return default_config_dir() / "sync-excludes"
 
 
-def default_sync_log_dir() -> Path:
-    return Path.home() / "Library" / "Logs" / CONFIG_DIR_NAME
+def default_sync_log_dir(home: Path | None = None) -> Path:
+    """Run logs live under the home being synced, so syncing a throwaway
+    home (tests) never writes into the real ~/Library/Logs."""
+    return Path(home or Path.home()) / "Library" / "Logs" / CONFIG_DIR_NAME
 
 
-def default_sync_state_path() -> Path:
-    return Path.home() / "Library" / "Caches" / CONFIG_DIR_NAME / "sync_state.json"
+def default_sync_state_path(home: Path | None = None) -> Path:
+    return Path(home or Path.home()) / "Library" / "Caches" / CONFIG_DIR_NAME / "sync_state.json"
 
 
 def default_safetynet_root() -> Path:

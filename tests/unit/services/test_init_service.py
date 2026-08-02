@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from maccluster.adapters.clock import FakeClock
 from maccluster.adapters.filesystem import FileSystem
 from maccluster.adapters.identity_macos import FakeIdentity
@@ -20,7 +18,6 @@ from maccluster.adapters.process import ProcessRunner
 from maccluster.adapters.tb_ioreg import FakeTB
 from maccluster.app_factory import AppContext
 from maccluster.audit.log import NullAudit
-from maccluster.errors import ConfigError
 from maccluster.services.init_service import init_cluster
 
 
@@ -57,9 +54,12 @@ def test_init_writes(tmp_path: Path):
     assert "10.42.0.0/24" in text
 
 
-def test_init_no_overwrite(tmp_path: Path):
+def test_init_keeps_existing_disk(tmp_path: Path):
+    """When disk config exists and not --force, keep it (no error)."""
     path = tmp_path / "cluster.toml"
     path.write_text("existing")
     ctx = _ctx(path)
-    with pytest.raises(ConfigError):
-        init_cluster(ctx, force=False, from_keychain=False, save_keychain=False)
+    out, source = init_cluster(ctx, force=False, from_keychain=False, save_keychain=False)
+    assert out == path
+    assert source == "disk"
+    assert path.read_text() == "existing"

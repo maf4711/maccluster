@@ -345,16 +345,35 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_sshc.add_argument("--user", default=None, help="SSH user (default $USER)")
 
+    # Shared flags for keychain parent + every subcommand so both
+    # `keychain --account X show` and `keychain show --account X` work.
+    # SUPPRESS: subparser must not overwrite parent value with default None.
+    kc_common = argparse.ArgumentParser(add_help=False)
+    kc_common.add_argument(
+        "--account",
+        default=argparse.SUPPRESS,
+        help="Keychain account label (default: default)",
+    )
+
     p_kc = sub.add_parser(
         "keychain",
+        parents=[kc_common],
         help=(
-            "macOS Keychain store for cluster.toml + SSH user/password "
-            "(iCloud Keychain → peer can pull on init)"
+            "Local macOS Keychain store for cluster.toml + SSH user/password "
+            "(this Mac only; use push-peer / remote-install for peers)"
         ),
     )
     kc_sub = p_kc.add_subparsers(dest="keychain_action", metavar="ACTION")
-    kc_sub.add_parser("show", help="Show what is stored (password never printed)")
-    p_push = kc_sub.add_parser("push", help="Push local cluster.toml (+SSH user) into Keychain")
+    kc_sub.add_parser(
+        "show",
+        parents=[kc_common],
+        help="Show what is stored (password never printed)",
+    )
+    p_push = kc_sub.add_parser(
+        "push",
+        parents=[kc_common],
+        help="Push local cluster.toml (+SSH user) into this Mac's Keychain",
+    )
     p_push.add_argument("--ssh-user", default=None, help="SSH user for peers (e.g. mafoe)")
     p_push.add_argument(
         "--ssh-password",
@@ -362,14 +381,42 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional peer SSH password for bootstrap (stored in Keychain only)",
     )
     p_pull = kc_sub.add_parser(
-        "pull", help="Pull Keychain config → ~/.config/maccluster/cluster.toml"
+        "pull",
+        parents=[kc_common],
+        help="Pull Keychain config → ~/.config/maccluster/cluster.toml",
     )
     p_pull.add_argument("--force", action="store_true", help="Overwrite existing file")
-    kc_sub.add_parser("delete", help="Remove MacCluster items from Keychain")
-    p_kc.add_argument(
-        "--account",
+    kc_sub.add_parser(
+        "delete",
+        parents=[kc_common],
+        help="Remove MacCluster items from Keychain",
+    )
+    p_push_peer = kc_sub.add_parser(
+        "push-peer",
+        parents=[kc_common],
+        help=(
+            "Copy cluster.toml to a peer over the TB bridge and try "
+            "`keychain push` there (Keychain is local-only; not iCloud)"
+        ),
+    )
+    p_push_peer.add_argument(
+        "peer",
+        help="Peer node id or cluster IP (e.g. node-b or 10.42.0.2)",
+    )
+    p_push_peer.add_argument(
+        "--user",
         default=None,
-        help="Keychain account label (default: default)",
+        help="SSH user on peer (default: ssh_target user / Keychain / $USER)",
+    )
+    p_push_peer.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite peer cluster.toml if it already exists",
+    )
+    p_push_peer.add_argument(
+        "--no-keychain",
+        action="store_true",
+        help="Only plant cluster.toml; skip remote keychain push attempt",
     )
 
     return parser

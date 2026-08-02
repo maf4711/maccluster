@@ -12,6 +12,12 @@ from maccluster.config.paths import default_sync_log_dir, default_sync_state_pat
 from maccluster.domain.models import SyncHomeResult
 
 
+def _home_of(result: SyncHomeResult) -> Path | None:
+    """Home whose sync this log describes (None → real home)."""
+    home = getattr(result, "local_home", None)
+    return Path(home) if home else None
+
+
 def _utc_stamp() -> str:
     return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
 
@@ -21,8 +27,8 @@ def write_run_log(
     *,
     log_dir: Path | None = None,
 ) -> Path:
-    """Write one JSON run log under ~/Library/Logs/maccluster/."""
-    d = log_dir or default_sync_log_dir()
+    """Write one JSON run log under <synced home>/Library/Logs/maccluster/."""
+    d = log_dir or default_sync_log_dir(_home_of(result))
     d.mkdir(parents=True, exist_ok=True)
     path = d / f"sync-{_utc_stamp()}.json"
     payload = _result_to_dict(result)

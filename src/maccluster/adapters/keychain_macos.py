@@ -1,10 +1,11 @@
 """macOS Keychain access via `security` (login keychain).
 
-Items use the login keychain. With **iCloud Keychain** enabled and the same
-Apple ID on peer Macs, generic passwords can sync so peers see the same
-MacCluster config after Keychain sync.
+Items are stored in the **local** login keychain only. The ``security`` CLI
+cannot create iCloud-synchronizable generic-password items, so peers do **not**
+see these entries automatically. Use ``maccluster keychain push-peer`` or
+``remote-install`` to put config on another Mac.
 
-Note: `security -w` hex-encodes secrets that contain newlines. We store config
+Note: ``security -w`` hex-encodes secrets that contain newlines. We store config
 as ``b64:…`` (base64 UTF-8) so TOML round-trips cleanly.
 """
 
@@ -206,7 +207,9 @@ class FakeKeychainStore:
         password: str,
         account: str = KEYCHAIN_ACCOUNT_DEFAULT,
         label: str | None = None,
+        raw: bool = False,
     ) -> None:
+        del label, raw  # API parity with KeychainStore; in-memory stores plaintext
         self._data[(service, account)] = password
 
     def delete_password(self, *, service: str, account: str = KEYCHAIN_ACCOUNT_DEFAULT) -> bool:
@@ -218,19 +221,27 @@ class FakeKeychainStore:
     def set_cluster_config_toml(
         self, text: str, *, account: str = KEYCHAIN_ACCOUNT_DEFAULT, cluster_name: str = ""
     ) -> None:
+        del cluster_name
         self.set_password(service=KEYCHAIN_SERVICE_CONFIG, password=text, account=account)
 
     def get_ssh_user(self, account: str = KEYCHAIN_ACCOUNT_DEFAULT) -> str | None:
         return self.get_password(service=KEYCHAIN_SERVICE_SSH_USER, account=account)
 
     def set_ssh_user(self, user: str, *, account: str = KEYCHAIN_ACCOUNT_DEFAULT) -> None:
-        self.set_password(service=KEYCHAIN_SERVICE_SSH_USER, password=user, account=account)
+        self.set_password(
+            service=KEYCHAIN_SERVICE_SSH_USER, password=user, account=account, raw=True
+        )
 
     def get_ssh_password(self, account: str = KEYCHAIN_ACCOUNT_DEFAULT) -> str | None:
         return self.get_password(service=KEYCHAIN_SERVICE_SSH_PASSWORD, account=account)
 
     def set_ssh_password(self, password: str, *, account: str = KEYCHAIN_ACCOUNT_DEFAULT) -> None:
-        self.set_password(service=KEYCHAIN_SERVICE_SSH_PASSWORD, password=password, account=account)
+        self.set_password(
+            service=KEYCHAIN_SERVICE_SSH_PASSWORD,
+            password=password,
+            account=account,
+            raw=True,
+        )
 
     def delete_all(self, account: str = KEYCHAIN_ACCOUNT_DEFAULT) -> list[str]:
         removed = []

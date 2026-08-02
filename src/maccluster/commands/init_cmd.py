@@ -36,9 +36,22 @@ def run(ctx: AppContext, args) -> int:
     if ctx.json_mode:
         print(dumps("init", {"path": str(path), "source": source}))
     else:
-        print(f"wrote {path}  (source={source})")
-        if source == "keychain":
-            print("restored from macOS Keychain (iCloud Keychain shares this with peer if enabled)")
+        if source == "disk":
+            print(f"kept existing {path}  (source=disk)")
+            print(
+                "use --force to overwrite from Keychain/template; "
+                "peer: maccluster keychain push-peer <peer>"
+            )
         else:
-            print("template written; saved to Keychain for peer pull (maccluster keychain pull)")
+            print(f"wrote {path}  (source={source})")
+            if source == "keychain":
+                print(
+                    "restored from this Mac's Keychain "
+                    "(local only — peers: keychain push-peer / remote-install)"
+                )
+            else:
+                print(
+                    "template written; saved to local Keychain "
+                    "(peers: maccluster keychain push-peer <peer>)"
+                )
     return OK

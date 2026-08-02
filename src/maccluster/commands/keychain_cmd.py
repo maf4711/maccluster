@@ -1,4 +1,4 @@
-"""keychain — store/load MacCluster config in macOS Keychain."""
+"""keychain — store/load MacCluster config in macOS Keychain (local + push-peer)."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from maccluster.services.keychain_service import (
     format_keychain_snapshot,
     pull_config_from_keychain,
     push_config_to_keychain,
+    push_config_to_peer,
     show_keychain,
 )
 
@@ -40,9 +41,12 @@ def run(ctx: AppContext, args) -> int:
         if ctx.json_mode:
             print(dumps("keychain", to_jsonable(snap)))
         else:
-            print("pushed local config → Keychain")
+            print("pushed local config → this Mac's Keychain (local only, not iCloud)")
             print(format_keychain_snapshot(snap))
-            print("Peers with same Apple ID + iCloud Keychain: maccluster init / keychain pull")
+            print(
+                "Peer access: maccluster keychain push-peer <peer>  "
+                "(or remote-install). Keychain items do not sync via Apple ID."
+            )
         return OK
 
     if action == "pull":
@@ -67,7 +71,39 @@ def run(ctx: AppContext, args) -> int:
             print("deleted Keychain items: " + (", ".join(removed) if removed else "(none)"))
         return OK
 
+    if action == "push-peer":
+        peer = getattr(args, "peer", None)
+        if not peer:
+            raise CliError(
+                "keychain push-peer requires peer id or cluster IP "
+                "(e.g. maccluster keychain push-peer node-b)",
+                exit_code=2,
+            )
+        result = push_config_to_peer(
+            ctx,
+            peer,
+            account=account,
+            user=getattr(args, "user", None),
+            force=bool(getattr(args, "force", False)),
+            plant_keychain=not bool(getattr(args, "no_keychain", False)),
+        )
+        if ctx.json_mode:
+            print(dumps("keychain-push-peer", to_jsonable(result)))
+        else:
+            status = "ok" if result.config_planted else "fail"
+            print(f"keychain push-peer [{status}]")
+            print(f"  peer={result.peer_id} ({result.peer_ip}) via {result.ssh_target}")
+            print(f"  bind={result.bind_ip}")
+            print(f"  config_planted={result.config_planted}")
+            print(f"  keychain_pushed={result.keychain_pushed}")
+            print(f"  {result.message}")
+            if result.log and getattr(args, "verbose", False):
+                print("--- remote log ---")
+                print(result.log)
+        # Config plant is success even if peer Keychain stayed locked
+        return OK if result.config_planted else 1
+
     raise CliError(
-        "keychain requires show|push|pull|delete",
+        "keychain requires show|push|pull|delete|push-peer",
         exit_code=2,
     )

@@ -82,7 +82,7 @@ targets are refused for write/lock paths.
 | `sync home` | files via SSH | Two-way **Home** via **Apple ditto** + CCC-inspired options (compare, presets, SafetyNet, verify, policies). See [`docs/SYNC-HOME.md`](docs/SYNC-HOME.md) |
 | `remote-install` | peer install | Install wheel+config on peer over **TB bridge only** (`10.42.0.x`, BindAddress Self-IP). See [`docs/REMOTE-INSTALL.md`](docs/REMOTE-INSTALL.md) |
 | `ssh-config` | OpenSSH | Write `~/.ssh/config.d/maccluster` so `10.42.0.*` uses bridge BindAddress |
-| `keychain show\|push\|pull\|delete` | Keychain | Store/restore `cluster.toml` + SSH user (iCloud → peer). See [`docs/KEYCHAIN.md`](docs/KEYCHAIN.md) |
+| `keychain show\|push\|pull\|delete\|push-peer` | Keychain | Local store + TB `push-peer`. See [`docs/KEYCHAIN.md`](docs/KEYCHAIN.md) |
 
 Global flags: `--config`, `--json`, `-v` / `--verbose`.  
 Env: `NO_COLOR`, `MACCLUSTER_CONFIG`, `MACCLUSTER_SKIP_PLATFORM_GUARD=1` (tests only),

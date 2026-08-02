@@ -1,9 +1,15 @@
-"""MacCluster Keychain orchestration — shared cluster config + SSH user/password."""
+"""MacCluster Keychain orchestration — local cluster config + SSH user/password.
+
+The login Keychain is **per-Mac**. Peers get config via ``push-peer`` (TB SSH)
+or ``remote-install``, never via iCloud Keychain (``security`` cannot create
+synchronizable items).
+"""
 
 from __future__ import annotations
 
 import getpass
 import os
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -26,6 +32,18 @@ class KeychainSnapshot:
     path_on_disk: str | None
     disk_exists: bool
     note: str
+
+
+@dataclass(frozen=True)
+class PushPeerResult:
+    peer_id: str
+    peer_ip: str
+    bind_ip: str
+    ssh_target: str
+    config_planted: bool
+    keychain_pushed: bool
+    message: str
+    log: str = ""
 
 
 def _kc(ctx: AppContext) -> KeychainStore:
@@ -59,8 +77,8 @@ def show_keychain(ctx: AppContext, *, account: str = KEYCHAIN_ACCOUNT_DEFAULT) -
         disk_exists=ctx.fs.exists(disk),
         note=(
             "local login keychain (this Mac only) — `security` cannot create "
-            "iCloud-synchronizable items; use `maccluster remote-install` to put "
-            "the config on a peer"
+            "iCloud-synchronizable items; use `maccluster keychain push-peer` "
+            "or `remote-install` for peers"
         ),
     )
 
@@ -142,6 +160,281 @@ def pull_config_from_keychain(
 
 def delete_keychain(ctx: AppContext, *, account: str = KEYCHAIN_ACCOUNT_DEFAULT) -> list[str]:
     return _kc(ctx).delete_all(account=account)
+
+
+def push_config_to_peer(
+    ctx: AppContext,
+    peer: str,
+    *,
+    account: str = KEYCHAIN_ACCOUNT_DEFAULT,
+    user: str | None = None,
+    force: bool = False,
+    plant_keychain: bool = True,
+    timeout: float = 60.0,
+) -> PushPeerResult:
+    """Copy cluster.toml to a peer over the TB bridge; optionally run keychain push there.
+
+    Keychain items never cross Macs via iCloud. This is the supported peer path:
+    SCP the config file, then try ``maccluster keychain push`` on the peer.
+    Remote Keychain writes need an unlocked login keychain (local GUI session or
+    ``security unlock-keychain``); file plant still succeeds if Keychain is locked.
+    """
+    from maccluster.cluster_ssh import (
+        cluster_target,
+        is_cluster_ip,
+        node_ssh_user,
+        require_cluster_ip,
+        scp_bind_argv,
+        ssh_bind_argv,
+        write_cluster_ssh_config,
+    )
+    from maccluster.services.config_service import load_and_bind_self
+
+    cfg_path = ctx.config_path
+    if not ctx.fs.exists(cfg_path):
+        # Prefer Keychain as source if disk missing
+        text = _kc(ctx).get_cluster_config_toml(account=account)
+        if not text:
+            raise CliError(
+                f"no local config at {cfg_path} and nothing in Keychain — "
+                "run maccluster init / keychain push first",
+                exit_code=2,
+            )
+        load_toml_text(text)
+        cfg_path.parent.mkdir(parents=True, exist_ok=True)
+        ctx.fs.write_text_atomic(cfg_path, text, mode=0o600, backup=False)
+
+    cfg, self_node = load_and_bind_self(ctx)
+    subnet = cfg.subnet
+    self_ip = str(self_node.ip)
+    require_cluster_ip(self_ip, subnet)
+
+    peer_node = None
+    for n in cfg.nodes:
+        if n.id == self_node.id:
+            continue
+        if peer in (n.id, str(n.ip)):
+            peer_node = n
+            break
+    if peer_node is None:
+        if is_cluster_ip(peer, subnet):
+            from maccluster.domain.enums import NodeRole
+            from maccluster.domain.models import Node
+
+            peer_node = Node(
+                id=f"ip-{peer}",
+                hostnames=(),
+                ip=require_cluster_ip(peer, subnet),
+                hw_uuid="",
+                role=NodeRole.PEER,
+            )
+        else:
+            raise CliError(
+                f"peer {peer!r} not in cluster.toml and not a cluster IP in {subnet}",
+                exit_code=2,
+            )
+
+    peer_ip = str(require_cluster_ip(peer_node.ip, subnet))
+    # Prefer CLI --user, then node ssh_target, then Keychain ssh user, then $USER
+    u = (user or "").strip() or None
+    if not u:
+        tgt = getattr(peer_node, "ssh_target", None) or ""
+        if "@" in tgt:
+            u = tgt.split("@", 1)[0].strip() or None
+    if not u:
+        try:
+            ku = _kc(ctx).get_ssh_user(account=account)
+            if ku and ku.strip():
+                u = ku.strip()
+        except Exception:
+            pass
+    if not u:
+        u = node_ssh_user(peer_node, override=None)
+    target = cluster_target(u, peer_ip)
+
+    try:
+        write_cluster_ssh_config(self_ip=self_ip, subnet=subnet, user=u)
+    except Exception:
+        pass
+
+    abs_ssh = ctx.runner.resolve("ssh")
+    abs_scp = ctx.runner.resolve("scp")
+    logs: list[str] = []
+
+    # Preflight
+    probe = ctx.runner.run(
+        ssh_bind_argv(
+            abs_ssh,
+            bind_ip=self_ip,
+            peer_ip=peer_ip,
+            user=u,
+            connect_timeout=8,
+            remote=("/usr/bin/true",),
+        ),
+        timeout=15.0,
+        check=False,
+    )
+    if probe.returncode != 0:
+        detail = (probe.stderr or probe.stdout or "").strip()
+        raise CliError(
+            f"SSH preflight to {target} failed (rc={probe.returncode}): {detail}",
+            exit_code=1,
+        )
+
+    # Optional refuse-if-exists (shell expands $HOME)
+    if not force:
+        check = ctx.runner.run(
+            ssh_bind_argv(
+                abs_ssh,
+                bind_ip=self_ip,
+                peer_ip=peer_ip,
+                user=u,
+                connect_timeout=8,
+                remote=(
+                    "bash",
+                    "-lc",
+                    'test ! -f "$HOME/.config/maccluster/cluster.toml"',
+                ),
+            ),
+            timeout=15.0,
+            check=False,
+        )
+        if check.returncode != 0:
+            raise CliError(
+                f"peer already has cluster.toml (use --force to overwrite): {target}",
+                exit_code=2,
+            )
+
+    mkdir = ctx.runner.run(
+        ssh_bind_argv(
+            abs_ssh,
+            bind_ip=self_ip,
+            peer_ip=peer_ip,
+            user=u,
+            connect_timeout=8,
+            remote=(
+                "bash",
+                "-lc",
+                'mkdir -p "$HOME/.config/maccluster" && chmod 700 "$HOME/.config/maccluster"',
+            ),
+        ),
+        timeout=15.0,
+        check=False,
+    )
+    if mkdir.returncode != 0:
+        raise CliError(
+            f"cannot create config dir on peer: {(mkdir.stderr or mkdir.stdout or '').strip()}",
+            exit_code=1,
+        )
+
+    # scp needs a concrete remote path (no $HOME). Expand via remote printenv.
+    home_r = ctx.runner.run(
+        ssh_bind_argv(
+            abs_ssh,
+            bind_ip=self_ip,
+            peer_ip=peer_ip,
+            user=u,
+            connect_timeout=8,
+            remote=("bash", "-lc", 'printf %s "$HOME"'),
+        ),
+        timeout=15.0,
+        check=False,
+    )
+    if home_r.returncode != 0 or not (home_r.stdout or "").strip():
+        raise CliError("cannot resolve remote $HOME", exit_code=1)
+    remote_home = (home_r.stdout or "").strip()
+    remote_abs = f"{remote_home}/.config/maccluster/cluster.toml"
+
+    scp = ctx.runner.run(
+        scp_bind_argv(
+            abs_scp,
+            bind_ip=self_ip,
+            local_path=cfg_path,
+            peer_ip=peer_ip,
+            remote_path=remote_abs,
+            user=u,
+            connect_timeout=8,
+            to_remote=True,
+        ),
+        timeout=max(30.0, timeout),
+        check=False,
+    )
+    if scp.returncode != 0:
+        raise CliError(
+            f"scp to peer failed: {(scp.stderr or scp.stdout or '').strip()}",
+            exit_code=1,
+        )
+    logs.append(f"planted {remote_abs}")
+
+    # chmod
+    ctx.runner.run(
+        ssh_bind_argv(
+            abs_ssh,
+            bind_ip=self_ip,
+            peer_ip=peer_ip,
+            user=u,
+            connect_timeout=8,
+            remote=("bash", "-lc", f"chmod 600 {shlex.quote(remote_abs)}"),
+        ),
+        timeout=15.0,
+        check=False,
+    )
+
+    keychain_ok = False
+    msg_parts = [f"config planted on {target}:{remote_abs}"]
+    if plant_keychain:
+        # Prefer installed maccluster; fall back to python -m if on PATH
+        remote_push = (
+            'export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; '
+            "if command -v maccluster >/dev/null 2>&1; then "
+            f"maccluster keychain push --account {shlex.quote(account)}; "
+            "else "
+            "echo 'maccluster not on PATH — skip keychain push "
+            "(install first: maccluster remote-install)'; "
+            "exit 3; "
+            "fi"
+        )
+        kc_r = ctx.runner.run(
+            ssh_bind_argv(
+                abs_ssh,
+                bind_ip=self_ip,
+                peer_ip=peer_ip,
+                user=u,
+                connect_timeout=8,
+                remote=("bash", "-lc", remote_push),
+            ),
+            timeout=max(30.0, timeout),
+            check=False,
+        )
+        out = ((kc_r.stdout or "") + "\n" + (kc_r.stderr or "")).strip()
+        logs.append(out or f"keychain push rc={kc_r.returncode}")
+        if kc_r.returncode == 0:
+            keychain_ok = True
+            msg_parts.append("peer Keychain updated")
+        elif kc_r.returncode == 3:
+            msg_parts.append(
+                "peer has no maccluster CLI — config file only; "
+                "run remote-install, then on peer: maccluster keychain push"
+            )
+        else:
+            msg_parts.append(
+                "peer Keychain write failed (login keychain often locked over SSH) — "
+                "config file is on disk; on peer GUI session run: "
+                "maccluster keychain push"
+            )
+    else:
+        msg_parts.append("skipped remote keychain (--no-keychain)")
+
+    return PushPeerResult(
+        peer_id=peer_node.id,
+        peer_ip=peer_ip,
+        bind_ip=self_ip,
+        ssh_target=target,
+        config_planted=True,
+        keychain_pushed=keychain_ok,
+        message="; ".join(msg_parts),
+        log="\n".join(logs),
+    )
 
 
 def resolve_ssh_user(

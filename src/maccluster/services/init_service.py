@@ -32,47 +32,51 @@ def init_cluster(
     Create or restore cluster.toml.
 
     Order:
-      1) If Keychain has config → pull to disk (unless --no-keychain)
-      2) Else write template from local identity
-      3) Optionally push result back to Keychain (iCloud-syncable login keychain)
+      1) Peek Keychain (unless --no-keychain)
+      2) If disk config exists and not --force → keep disk (do not error)
+      3) If Keychain has config and disk missing (or --force) → pull to disk
+      4) Else write template from local identity
+      5) Optionally push result back to local login Keychain
 
-    Returns (path, source) where source is 'keychain' | 'template'.
+    Returns (path, source) where source is 'disk' | 'keychain' | 'template'.
     """
     cfg_path = path or ctx.config_path
 
-    # --- 1) Keychain first ---
+    # --- 1) Keychain peek ---
+    snap = None
     if from_keychain:
         try:
             snap = show_keychain(ctx, account=account)
         except Exception:
             snap = None
-        if (
-            snap is not None
-            and snap.has_config
-            and snap.cluster_name not in (None, "(unparseable)")
-        ):
-            if ctx.fs.exists(cfg_path) and not force:
-                raise ConfigError(
-                    f"config already exists: {cfg_path} "
-                    f"(Keychain also has cluster={snap.cluster_name!r}; "
-                    f"use --force to pull from Keychain, or maccluster keychain pull --force)"
-                )
-            try:
-                out, _ = pull_config_from_keychain(
-                    ctx,
-                    account=account,
-                    force=force or not ctx.fs.exists(cfg_path),
-                    path=cfg_path,
-                )
-                return out, "keychain"
-            except ConfigError as exc:
-                # Corrupt keychain → fall through to template
-                if "no MacCluster config" not in str(exc):
-                    pass
-            except Exception:
-                pass
+
+    # --- 2) Disk already present: keep it unless --force ---
+    if ctx.fs.exists(cfg_path) and not force:
+        return cfg_path, "disk"
+
+    # --- 3) Keychain restore when empty disk or forced ---
+    if (
+        from_keychain
+        and snap is not None
+        and snap.has_config
+        and snap.cluster_name not in (None, "(unparseable)")
+    ):
+        try:
+            out, _ = pull_config_from_keychain(
+                ctx,
+                account=account,
+                force=True,  # we already decided overwrite or empty
+                path=cfg_path,
+            )
+            return out, "keychain"
+        except ConfigError:
+            # Corrupt keychain → fall through to template
+            pass
+        except Exception:
+            pass
 
     if ctx.fs.exists(cfg_path) and not force:
+        # Defensive (should have returned 'disk' above)
         raise ConfigError(
             f"config already exists: {cfg_path} (use --force to overwrite with backup)"
         )

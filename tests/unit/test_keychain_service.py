@@ -158,3 +158,58 @@ def test_locked_keychain_error_explains_ssh_session():
         kc.set_password(service="svc", password="x", account="acct")
     msg = exc.value.message
     assert "unlock-keychain" in msg or "log in on that Mac" in msg
+
+
+def test_init_disk_wins_when_keychain_also_present(fake_ctx, tmp_path: Path, monkeypatch):
+    """Disk exists + Keychain has config + no --force → keep disk, no error."""
+    from maccluster.services import keychain_service as ks
+    from maccluster.services.init_service import init_cluster
+
+    fake = FakeKeychainStore()
+    toml = """schema_version = 1
+name = "from-kc"
+subnet = "10.42.0.0/24"
+bridge_interface = "bridge0"
+heal_interval_seconds = 30
+ssh_probes_enabled = false
+
+[[nodes]]
+id = "node-a"
+hostnames = ["mac-mini-a"]
+ip = "10.42.0.1"
+hw_uuid = "00000000-0000-0000-0000-000000000001"
+
+[[nodes]]
+id = "node-b"
+hostnames = ["mac-mini-b"]
+ip = "10.42.0.2"
+hw_uuid = "00000000-0000-0000-0000-000000000002"
+"""
+    fake.set_cluster_config_toml(toml, cluster_name="from-kc")
+    monkeypatch.setattr(ks, "_kc", lambda ctx: fake)
+    monkeypatch.setattr(
+        "maccluster.services.init_service.show_keychain",
+        lambda ctx, account="default": ks.show_keychain(ctx, account=account),
+    )
+    monkeypatch.setattr(
+        "maccluster.services.init_service.pull_config_from_keychain",
+        ks.pull_config_from_keychain,
+    )
+
+    cfg_path = tmp_path / "cluster.toml"
+    cfg_path.write_text('schema_version = 1\nname = "on-disk"\n')
+    fake_ctx.config_path = cfg_path
+    path, source = init_cluster(fake_ctx, force=False, from_keychain=True, save_keychain=False)
+    assert source == "disk"
+    assert "on-disk" in path.read_text()
+
+
+def test_show_note_mentions_push_peer_not_icloud_share(fake_ctx, monkeypatch):
+    from maccluster.services import keychain_service as ks
+
+    fake = FakeKeychainStore()
+    monkeypatch.setattr(ks, "_kc", lambda ctx: fake)
+    snap = ks.show_keychain(fake_ctx)
+    assert "push-peer" in snap.note or "remote-install" in snap.note
+    assert "this Mac only" in snap.note
+    assert "cannot create" in snap.note
