@@ -201,10 +201,29 @@ def test_sync_home_push_pull_mutex(fake_ctx, tmp_path: Path):
     assert ei.value.exit_code == 2
 
 
-def test_ditto_allowlisted():
-    from maccluster.adapters.process import ProcessRunner
+def test_ditto_allowlisted(tmp_path):
+    """ditto is on the ProcessRunner allowlist (macOS archive tool).
 
-    runner = ProcessRunner()
+    On Linux CI there is no /usr/bin/ditto — only check allowlist membership
+    and that resolve() finds a stub when present on the search path.
+    """
+    from maccluster.adapters.process import ProcessRunner
+    from maccluster.constants import ALLOWLIST_BASENAMES
+    from maccluster.errors import CliError
+
+    assert "ditto" in ALLOWLIST_BASENAMES
+
+    stub = tmp_path / "ditto"
+    stub.write_text("#!/bin/sh\nexit 0\n")
+    stub.chmod(0o755)
+
+    runner = ProcessRunner(search_paths=(str(tmp_path),))
     path = runner.resolve("ditto")
-    assert path.endswith("ditto")
-    assert path.startswith("/")
+    assert path == str(stub)
+
+    # Non-allowlisted basename still refused
+    try:
+        ProcessRunner(search_paths=(str(tmp_path),)).resolve("not-a-tool")
+        raise AssertionError("expected CliError")
+    except CliError as e:
+        assert e.exit_code == 1
