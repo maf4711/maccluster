@@ -281,45 +281,32 @@ def push_config_to_peer(
             exit_code=1,
         )
 
-    # Optional refuse-if-exists (shell expands $HOME)
-    if not force:
-        check = ctx.runner.run(
+    # One remote argv only — OpenSSH joins multiple args with spaces and breaks bash -lc
+    def _ssh_one(remote_cmd: str, *, timeout_s: float = 15.0):
+        return ctx.runner.run(
             ssh_bind_argv(
                 abs_ssh,
                 bind_ip=self_ip,
                 peer_ip=peer_ip,
                 user=u,
                 connect_timeout=8,
-                remote=(
-                    "bash",
-                    "-lc",
-                    'test ! -f "$HOME/.config/maccluster/cluster.toml"',
-                ),
+                remote=(remote_cmd,),
             ),
-            timeout=15.0,
+            timeout=timeout_s,
             check=False,
         )
+
+    # Optional refuse-if-exists (shell expands $HOME)
+    if not force:
+        check = _ssh_one('test ! -f "$HOME/.config/maccluster/cluster.toml"')
         if check.returncode != 0:
             raise CliError(
                 f"peer already has cluster.toml (use --force to overwrite): {target}",
                 exit_code=2,
             )
 
-    mkdir = ctx.runner.run(
-        ssh_bind_argv(
-            abs_ssh,
-            bind_ip=self_ip,
-            peer_ip=peer_ip,
-            user=u,
-            connect_timeout=8,
-            remote=(
-                "bash",
-                "-lc",
-                'mkdir -p "$HOME/.config/maccluster" && chmod 700 "$HOME/.config/maccluster"',
-            ),
-        ),
-        timeout=15.0,
-        check=False,
+    mkdir = _ssh_one(
+        '/bin/mkdir -p "$HOME/.config/maccluster" && /bin/chmod 700 "$HOME/.config/maccluster"'
     )
     if mkdir.returncode != 0:
         raise CliError(
@@ -328,18 +315,7 @@ def push_config_to_peer(
         )
 
     # scp needs a concrete remote path (no $HOME). Expand via remote printenv.
-    home_r = ctx.runner.run(
-        ssh_bind_argv(
-            abs_ssh,
-            bind_ip=self_ip,
-            peer_ip=peer_ip,
-            user=u,
-            connect_timeout=8,
-            remote=("bash", "-lc", 'printf %s "$HOME"'),
-        ),
-        timeout=15.0,
-        check=False,
-    )
+    home_r = _ssh_one('printf %s "$HOME"')
     if home_r.returncode != 0 or not (home_r.stdout or "").strip():
         raise CliError("cannot resolve remote $HOME", exit_code=1)
     remote_home = (home_r.stdout or "").strip()
@@ -367,23 +343,12 @@ def push_config_to_peer(
     logs.append(f"planted {remote_abs}")
 
     # chmod
-    ctx.runner.run(
-        ssh_bind_argv(
-            abs_ssh,
-            bind_ip=self_ip,
-            peer_ip=peer_ip,
-            user=u,
-            connect_timeout=8,
-            remote=("bash", "-lc", f"chmod 600 {shlex.quote(remote_abs)}"),
-        ),
-        timeout=15.0,
-        check=False,
-    )
+    _ssh_one(f"/bin/chmod 600 {shlex.quote(remote_abs)}")
 
     keychain_ok = False
     msg_parts = [f"config planted on {target}:{remote_abs}"]
     if plant_keychain:
-        # Prefer installed maccluster; fall back to python -m if on PATH
+        # Prefer installed maccluster on peer PATH
         remote_push = (
             'export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; '
             "if command -v maccluster >/dev/null 2>&1; then "
@@ -394,18 +359,7 @@ def push_config_to_peer(
             "exit 3; "
             "fi"
         )
-        kc_r = ctx.runner.run(
-            ssh_bind_argv(
-                abs_ssh,
-                bind_ip=self_ip,
-                peer_ip=peer_ip,
-                user=u,
-                connect_timeout=8,
-                remote=("bash", "-lc", remote_push),
-            ),
-            timeout=max(30.0, timeout),
-            check=False,
-        )
+        kc_r = _ssh_one(remote_push, timeout_s=max(30.0, timeout))
         out = ((kc_r.stdout or "") + "\n" + (kc_r.stderr or "")).strip()
         logs.append(out or f"keychain push rc={kc_r.returncode}")
         if kc_r.returncode == 0:
