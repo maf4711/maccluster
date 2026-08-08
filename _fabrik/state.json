@@ -34,7 +34,10 @@
     "name": "maccluster-status",
     "user_path": "~/.grok/skills/maccluster-status/",
     "fabrik_archive": "projects/maccluster/_fabrik/skills/maccluster-status/",
-    "slash": ["/maccluster-status", "/maccluster"],
+    "slash": [
+      "/maccluster-status",
+      "/maccluster"
+    ],
     "report": "~/.grok/skills/maccluster-status/scripts/maccluster-report.sh"
   },
   "ops": {
@@ -126,5 +129,6 @@
   "aufwand": {
     "tokens": 0,
     "agenten": 17
-  }
+  },
+  "pmEntscheidungen": []
 }
