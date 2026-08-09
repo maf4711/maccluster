@@ -284,3 +284,14 @@ protokolliert. Eine handschriftliche Unterschrift ist nicht erforderlich.
 Betriebsinventar und Session-Chronik unter `_fabrik/70-betrieb/`.
 Produktversion **0.1.3**, Skill `maccluster-status`, GitHub Releases v0.1.0–v0.1.3.
 Peer node-b: Monitoring oft erreichbar (tcp:22), Software-Install remote per SSH noch offen (AirDrop-Bootstrap dokumentiert).
+
+## Evidenz (real ausgeführte Kommandos)
+
+Nur Ausgeführtes gilt als belegt — kein Eintrag ohne echten Lauf.
+Nachgetragen 2026-08-08 (Roadmap 1.C Evidence-Pflicht).
+
+| Kommando | Exit-Code | Zweck |
+|---|---|---|
+| `python3 company/tools/fabrik_autoheal.py --check --project projects/maccluster` | 0 | Hygiene H1–H5 Portfolio |
+| siehe QA `TESTBERICHT.md` / README Verify | (siehe Bericht) | Produkt-Verify / Suite |
+

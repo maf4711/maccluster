@@ -9,7 +9,7 @@ def test_plist_contains_args():
     xml = render_heal_plist(
         label="com.maccluster.heal",
         program="/usr/local/bin/maccluster",
-        config_path="/Users/x/.config/maccluster/cluster.toml",
+        config_path="/tmp/maccluster-test/cluster.toml",
         throttle_interval=30,
     )
     assert "com.maccluster.heal" in xml
