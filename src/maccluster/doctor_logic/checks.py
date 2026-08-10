@@ -123,6 +123,109 @@ def check_peers(
     return DoctorFinding("peers", CheckSeverity.OK, "all peers reachable", "")
 
 
+def check_mesh(mesh) -> DoctorFinding:
+    """Fabric mesh: fully meshed vs partial/isolated (alive ≠ meshed)."""
+    from maccluster.domain.enums import MeshVerdict
+    from maccluster.domain.models import MeshHealth
+
+    if mesh is None or not isinstance(mesh, MeshHealth):
+        return DoctorFinding("mesh", CheckSeverity.INFO, "mesh not assessed", "")
+    if mesh.verdict == MeshVerdict.OK:
+        return DoctorFinding("mesh", CheckSeverity.OK, mesh.summary, "fully meshed")
+    if mesh.verdict == MeshVerdict.SINGLE:
+        return DoctorFinding("mesh", CheckSeverity.INFO, mesh.summary, "")
+    if mesh.verdict == MeshVerdict.PARTIAL:
+        return DoctorFinding(
+            "mesh",
+            CheckSeverity.WARN,
+            mesh.summary,
+            "some peers down — self may still be alive (bridge/TB)",
+        )
+    if mesh.verdict == MeshVerdict.ISOLATED:
+        return DoctorFinding(
+            "mesh",
+            CheckSeverity.WARN,
+            mesh.summary,
+            "HTTP/process alive on self does not mean cluster is meshed",
+        )
+    return DoctorFinding("mesh", CheckSeverity.INFO, mesh.summary, "")
+
+
+def check_rdma(rdma) -> DoctorFinding:
+    from maccluster.domain.models import RdmaStatus
+
+    if rdma is None or not isinstance(rdma, RdmaStatus):
+        return DoctorFinding("rdma", CheckSeverity.INFO, "rdma not probed", "")
+    if not rdma.tool_available:
+        return DoctorFinding(
+            "rdma",
+            CheckSeverity.INFO,
+            "rdma_ctl unavailable",
+            rdma.detail,
+        )
+    if rdma.enabled is True:
+        return DoctorFinding("rdma", CheckSeverity.OK, "RDMA enabled", rdma.detail)
+    if rdma.enabled is False:
+        return DoctorFinding(
+            "rdma",
+            CheckSeverity.INFO,
+            "RDMA disabled",
+            "enable only in Recovery OS: rdma_ctl enable (not via maccluster)",
+        )
+    return DoctorFinding("rdma", CheckSeverity.INFO, "RDMA status unknown", rdma.detail)
+
+
+def check_heal_heartbeat(hb, *, service_installed: bool = False) -> DoctorFinding:
+    from maccluster.domain.models import HealHeartbeat
+
+    if hb is None or not isinstance(hb, HealHeartbeat):
+        return DoctorFinding("heal_heartbeat", CheckSeverity.INFO, "heartbeat n/a", "")
+    if not service_installed and hb.age_seconds is None:
+        return DoctorFinding(
+            "heal_heartbeat",
+            CheckSeverity.INFO,
+            "heal service not installed",
+            "maccluster service install",
+        )
+    if hb.stale and service_installed:
+        return DoctorFinding(
+            "heal_heartbeat",
+            CheckSeverity.WARN,
+            "heal heartbeat stale",
+            hb.detail,
+        )
+    if hb.stale:
+        return DoctorFinding(
+            "heal_heartbeat",
+            CheckSeverity.INFO,
+            "no fresh heal heartbeat",
+            hb.detail,
+        )
+    return DoctorFinding("heal_heartbeat", CheckSeverity.OK, "heal loop fresh", hb.detail)
+
+
+def check_exo(exo) -> DoctorFinding:
+    from maccluster.domain.models import ExoCorrelation
+
+    if exo is None or not isinstance(exo, ExoCorrelation):
+        return DoctorFinding("exo", CheckSeverity.SKIPPED, "exo not probed", "pass --exo")
+    if not exo.http_ok:
+        return DoctorFinding(
+            "exo",
+            CheckSeverity.INFO,
+            "exo not reachable",
+            exo.error or exo.summary,
+        )
+    if exo.mesh_ok is False:
+        return DoctorFinding(
+            "exo",
+            CheckSeverity.WARN,
+            "exo http-alive but mesh incomplete/stale",
+            exo.summary,
+        )
+    return DoctorFinding("exo", CheckSeverity.OK, exo.summary, exo.instances_summary or "")
+
+
 def check_iperf(available: bool) -> DoctorFinding:
     if available:
         return DoctorFinding("iperf3", CheckSeverity.INFO, "iperf3 available", "")

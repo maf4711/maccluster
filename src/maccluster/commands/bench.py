@@ -15,5 +15,11 @@ def run(ctx: AppContext, args) -> int:
     if ctx.json_mode:
         print(dumps("bench", to_jsonable(result)))
     else:
-        print(f"target={result.target} throughput={result.mbps:.2f} Mbit/s")
+        bits = [f"target={result.target} throughput={result.mbps:.2f} Mbit/s"]
+        bits.append(f"quality={result.quality.value}")
+        if result.retransmits is not None:
+            bits.append(f"retransmits={result.retransmits}")
+        if result.flags:
+            bits.append("flags=" + ",".join(result.flags))
+        print(" ".join(bits))
     return OK

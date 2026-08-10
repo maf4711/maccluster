@@ -59,7 +59,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_heal = sub.add_parser(
         "heal",
-        help="Ensure bridge/IP once, or --loop (best-effort, not HA)",
+        help="Ensure bridge/IP once, or --loop / --watchdog (best-effort, not HA)",
     )
     p_heal.add_argument(
         "--loop",
@@ -72,8 +72,24 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Loop interval seconds (default from config, min 5)",
     )
+    p_heal.add_argument(
+        "--watchdog",
+        action="store_true",
+        help="One-shot: if heal heartbeat stale, kickstart heal LaunchAgent",
+    )
 
-    sub.add_parser("status", help="Cluster status snapshot")
+    p_status = sub.add_parser("status", help="Cluster status snapshot")
+    p_status.add_argument(
+        "--exo",
+        action="store_true",
+        help="Correlate with local exo API (http://127.0.0.1:52415/state)",
+    )
+    p_status.add_argument(
+        "--exo-url",
+        default=None,
+        metavar="URL",
+        help="exo base URL (default http://127.0.0.1:52415)",
+    )
 
     p_mon = sub.add_parser("monitor", help="Live status refresh")
     p_mon.add_argument(
@@ -84,7 +100,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     sub.add_parser("topo", help="Topology / cable map (no rewiring advice)")
-    sub.add_parser("doctor", help="Diagnostics")
+    p_doc = sub.add_parser("doctor", help="Diagnostics")
+    p_doc.add_argument(
+        "--exo",
+        action="store_true",
+        help="Include optional exo mesh correlation (:52415)",
+    )
+    p_doc.add_argument(
+        "--exo-url",
+        default=None,
+        metavar="URL",
+        help="exo base URL (default http://127.0.0.1:52415)",
+    )
 
     p_bench = sub.add_parser("bench", help="Bandwidth test via iperf3")
     p_bench.add_argument("target", nargs="?", help="Peer IP or node id")
@@ -307,6 +334,36 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-progress",
         action="store_true",
         help="Disable live progress bar (percent / path / speed)",
+    )
+    p_home.add_argument(
+        "--force-icloud",
+        action="store_true",
+        help=(
+            "Before sync: materialize iCloud dataless stubs on local + peer "
+            "(brctl download + timed open). Skips remaining stubs in inventory."
+        ),
+    )
+    p_home.add_argument(
+        "--identical",
+        action="store_true",
+        help=(
+            "Best-effort 1:1: --force-icloud + both directions + --verify. "
+            "Cloud-only stubs that cannot materialize are skipped and reported."
+        ),
+    )
+    p_home.add_argument(
+        "--icloud-timeout",
+        type=float,
+        default=20.0,
+        metavar="SEC",
+        help="Per-file timeout when force-materializing iCloud stubs (default 20)",
+    )
+    p_home.add_argument(
+        "--icloud-max-seconds",
+        type=float,
+        default=900.0,
+        metavar="SEC",
+        help="Max seconds per tree (Desktop/Documents) for iCloud materialize (default 900)",
     )
 
     p_ri = sub.add_parser(

@@ -44,3 +44,27 @@ def test_sync_bare_requires_action_in_main():
     from maccluster.cli.main import main
 
     assert main(["sync"]) == 2
+
+
+def test_parse_identical_and_force_icloud():
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "sync",
+            "home",
+            "--identical",
+            "--force-icloud",
+            "--icloud-timeout",
+            "15",
+            "--icloud-max-seconds",
+            "120",
+            "--peer",
+            "node-b",
+            "--no-speedtest",
+        ]
+    )
+    assert args.identical is True
+    assert args.force_icloud is True
+    assert args.icloud_timeout == 15.0
+    assert args.icloud_max_seconds == 120.0
+    assert args.peer == "node-b"

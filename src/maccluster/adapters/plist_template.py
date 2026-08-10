@@ -46,6 +46,45 @@ def render_heal_plist(
 """
 
 
+def render_watchdog_plist(
+    *,
+    label: str,
+    program: str,
+    config_path: str,
+    interval_seconds: int = 60,
+) -> str:
+    """User LaunchAgent: periodic ``maccluster heal --watchdog`` (hang detector)."""
+    label_e = html.escape(label)
+    program_e = html.escape(program)
+    config_e = html.escape(config_path)
+    interval = max(30, int(interval_seconds))
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>{label_e}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{program_e}</string>
+    <string>--config</string>
+    <string>{config_e}</string>
+    <string>heal</string>
+    <string>--watchdog</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StartInterval</key>
+  <integer>{interval}</integer>
+  <key>StandardOutPath</key>
+  <string>/tmp/maccluster-heal-watchdog.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/maccluster-heal-watchdog.err</string>
+</dict>
+</plist>
+"""
+
+
 def render_sync_plist(
     *,
     label: str,

@@ -141,6 +141,10 @@ def run(ctx: AppContext, args) -> int:
         min_free_bytes=getattr(args, "min_free", None),
         timeout=timeout,
         progress=progress,
+        force_icloud=bool(getattr(args, "force_icloud", False)),
+        identical=bool(getattr(args, "identical", False)),
+        icloud_timeout_per_file=float(getattr(args, "icloud_timeout", 20.0) or 20.0),
+        icloud_max_seconds=float(getattr(args, "icloud_max_seconds", 900.0) or 900.0),
     )
     code = exit_code_for_sync(result)
     if ctx.json_mode:

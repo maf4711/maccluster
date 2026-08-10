@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.2.4 — 2026-08-11
+
+### Added — fabric mesh health, RDMA probe, exo correlator, heal keepalive
+- **Mesh health** on `status` / `doctor`: verdict `ok|partial|isolated|single`
+  with peer up/down counts — **alive ≠ fully meshed** (bridge/TB self-alive
+  vs all peers reachable)
+- **RDMA read-only** in `tb`, `status`, `doctor` via `rdma_ctl status` (never
+  enables; Recovery-OS only for `rdma_ctl enable`)
+- **Optional exo correlation**: `status --exo` / `doctor --exo` probes local
+  `http://127.0.0.1:52415/state` (topology nodes, lastSeen stale, runners,
+  RDMA nodes, instances). Distinguishes http-alive vs exo mesh incomplete
+- **Heal heartbeat + watchdog**: `heal --loop` writes
+  `~/Library/Caches/maccluster/heal_heartbeat.json`; `service install` also
+  installs `com.maccluster.heal-watchdog` (`heal --watchdog`) to kickstart
+  a hung heal agent; doctor checks heartbeat freshness
+- **Bench path quality**: iperf3 parses retransmits; reports
+  `quality=excellent|good|marginal|poor` and flags (low throughput /
+  retransmits) for TB fabric grading
+
+## 0.2.3 — 2026-08-09
+
+### Fixed — reliable Desktop/Documents sync over TB
+- **Remote inventory no longer hard-fails** on iCloud/FileProvider hangs: killable
+  per-directory scandir (subprocess timeout), unbuffered stdout (`PYTHONUNBUFFERED`
+  + periodic flush), soft-empty inventory so push can still proceed
+- **Stage skips dataless/unreadable** files; empty stage is soft-ok (nothing to pull)
+- **Auto-batch ditto CPIO** transfers (~2 GiB / 120 files) — multi-10 GiB archives
+  often failed with `ditto: cpio read error`
+- **Direct `scp` for files ≥3 GiB** (e.g. 14 GiB Desktop screen recording, multi-GB
+  PDFs, huge backup zips) instead of packing them into CPIO
+- **Timeout stdout decode** uses `errors=replace` so partial inventory survives
+  non-UTF8 noise
+
+## 0.2.2 — 2026-08-09
+
+### Added — iCloud force-materialize + 1:1 sync
+- **`maccluster sync home --force-icloud`**: materialize iCloud `UF_DATALESS`
+  stubs on local + peer (`brctl download` + timed open) before inventory
+- **`maccluster sync home --identical`**: best-effort 1:1 — force-icloud +
+  bidirectional transfer + verify; remaining cloud-only stubs skipped
+- **`--icloud-timeout` / `--icloud-max-seconds`**: tune materialize budget
+- Inventory (local + remote) **skips dataless stubs** so ditto/rsync no longer
+  hang on un-materialized placeholders
+
 ## 0.2.1 — 2026-08-02
 
 ### Fixed — Keychain honesty + CLI bugs

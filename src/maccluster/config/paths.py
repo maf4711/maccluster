@@ -54,3 +54,10 @@ def default_sync_state_path(home: Path | None = None) -> Path:
 
 def default_safetynet_root() -> Path:
     return Path.home() / ".maccluster-safetynet"
+
+
+def default_heal_heartbeat_path() -> Path:
+    """Heal-loop heartbeat for hang detection (Caches, not config)."""
+    from maccluster.constants import HEAL_HEARTBEAT_FILE_NAME, TRAFFIC_CACHE_DIR_NAME
+
+    return Path.home() / "Library" / "Caches" / TRAFFIC_CACHE_DIR_NAME / HEAL_HEARTBEAT_FILE_NAME

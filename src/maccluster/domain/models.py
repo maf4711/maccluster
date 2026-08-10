@@ -8,9 +8,11 @@ from ipaddress import IPv4Address, IPv4Network
 from typing import Any
 
 from maccluster.domain.enums import (
+    BenchQuality,
     CheckSeverity,
     HealActionKind,
     LinkState,
+    MeshVerdict,
     NodeRole,
     OverallHealth,
     ReachabilityState,
@@ -130,6 +132,62 @@ class NodeHealth:
 
 
 @dataclass(frozen=True)
+class MeshHealth:
+    """Fabric mesh: peer reachability matrix summary (not app-layer exo mesh)."""
+
+    expected_peers: int
+    peers_up: int
+    peers_down: int
+    peers_unknown: int
+    fully_meshed: bool
+    verdict: MeshVerdict
+    summary: str
+    # Self fabric "alive" signals
+    bridge_ok: bool = False
+    tb_links: int = 0
+
+
+@dataclass(frozen=True)
+class RdmaStatus:
+    """Read-only OS RDMA state (`rdma_ctl status`). Never enables RDMA."""
+
+    tool_available: bool
+    enabled: bool | None  # None if unknown / tool missing
+    raw: str = ""
+    detail: str = ""
+
+
+@dataclass(frozen=True)
+class HealHeartbeat:
+    """Last successful heal-loop tick (for hang detection)."""
+
+    path: str
+    age_seconds: float | None
+    last_ok: bool | None
+    last_exit_code: int | None
+    stale: bool
+    detail: str = ""
+
+
+@dataclass(frozen=True)
+class ExoCorrelation:
+    """Optional correlation with local exo API (:52415). Fabric-neutral."""
+
+    probed: bool
+    http_ok: bool
+    base_url: str
+    topology_nodes: int | None = None
+    stale_seconds: float | None = None
+    runners: int | None = None
+    downloads: int | None = None
+    rdma_enabled_nodes: int | None = None
+    instances_summary: str = ""
+    mesh_ok: bool | None = None  # topology matches expected cluster size when known
+    summary: str = ""
+    error: str | None = None
+
+
+@dataclass(frozen=True)
 class HealthSnapshot:
     timestamp: datetime
     cluster_name: str
@@ -139,6 +197,10 @@ class HealthSnapshot:
     bridge: BridgeInterface | None = None
     tb: ThunderboltSnapshot | None = None
     traffic: tuple[InterfaceTraffic, ...] = ()
+    mesh: MeshHealth | None = None
+    rdma: RdmaStatus | None = None
+    heal_heartbeat: HealHeartbeat | None = None
+    exo: ExoCorrelation | None = None
 
 
 @dataclass(frozen=True)
@@ -249,6 +311,9 @@ class BenchResult:
     mbps: float | None
     success: bool
     message: str
+    retransmits: int | None = None
+    quality: BenchQuality = BenchQuality.UNKNOWN
+    flags: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

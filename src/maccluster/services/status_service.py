@@ -70,6 +70,8 @@ def collect_status(
     *,
     sampler: TrafficSampler | None = None,
     persist_traffic: bool = True,
+    include_exo: bool = False,
+    exo_base_url: str | None = None,
 ) -> tuple[HealthSnapshot, int]:
     cfg, self_node = load_and_bind_self(ctx)
     try:
@@ -161,6 +163,28 @@ def collect_status(
             )
         )
 
+    from maccluster.adapters.rdma_ctl import probe_rdma
+    from maccluster.services.heal_heartbeat import read_heartbeat
+
+    try:
+        rdma = probe_rdma(ctx.runner)
+    except Exception:
+        rdma = None
+
+    try:
+        heal_hb = read_heartbeat(interval_seconds=float(cfg.heal_interval_seconds))
+    except Exception:
+        heal_hb = None
+
+    exo = None
+    if include_exo:
+        from maccluster.services.exo_correlator import probe_exo
+
+        exo = probe_exo(
+            base_url=exo_base_url,
+            expected_nodes=len(cfg.nodes),
+        )
+
     snap = build_snapshot(
         timestamp=ctx.clock.now(),
         cfg=cfg,
@@ -169,5 +193,8 @@ def collect_status(
         bridge=bridge,
         tb=tb,
         traffic=traffic,
+        rdma=rdma,
+        heal_heartbeat=heal_hb,
+        exo=exo,
     )
     return snap, exit_code_for_snapshot(snap)

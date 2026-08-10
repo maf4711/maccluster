@@ -70,12 +70,13 @@ targets are refused for write/lock paths.
 | `config validate` | no | Validate + self-match |
 | `up` | yes (local) | Ensure bridge + fixed Self-IP; often needs admin |
 | `heal` | yes (local) | One-shot ensure (same path as `up`) |
-| `heal --loop` | yes | Periodic heal (default 30 s, min 5 s); **best-effort**, not HA |
-| `status` | no | Nodes + reachability + TB link + **live TX/RX rates** (netstat deltas) |
+| `heal --loop` | yes | Periodic heal (default 30 s, min 5 s); **best-effort**, not HA; writes heartbeat |
+| `heal --watchdog` | no* | If heal heartbeat stale → `launchctl kickstart` heal agent (*installs with service) |
+| `status` | no | Nodes + **mesh** (alive≠meshed) + TB + RDMA + heal heartbeat + TX/RX rates; `--exo` correlates local exo `:52415` |
 | `monitor` | no | Live refresh (`--interval`) with TX/RX Mb/s, pps, errors; Ctrl+C → exit 0 |
 | `topo` | no | Cable / topology map (no rewiring advice) |
-| `doctor` | no | Diagnostics (config, self, TB, bridge, peers) |
-| `bench` | no | Optional `iperf3` to a peer IP (bound to TB Self-IP) |
+| `doctor` | no | Diagnostics (config, self, TB, cable, bridge, peers, **mesh**, RDMA, heal heartbeat); `--exo` optional |
+| `bench` | no | Optional `iperf3` to a peer IP (bound to TB Self-IP) + **path quality** / retransmits |
 | `speedtest` | no | TB **cable grade** (40G ideal) + iperf3 over bridge; also runs at start of `sync home` / `remote-install` |
 | `service install\|uninstall\|status` | plist | User LaunchAgent → `heal --loop` |
 | `service sync-install\|sync-uninstall\|sync-status` | plist | Scheduled `sync home` (CCC schedule analogue) |
@@ -92,7 +93,8 @@ Env: `NO_COLOR`, `MACCLUSTER_CONFIG`, `MACCLUSTER_SKIP_PLATFORM_GUARD=1` (tests 
 
 Mesh bring-up does **not** copy files. To keep `~/` aligned across minis over TB,
 MacCluster uses **Apple `ditto`** (metadata-complete: xattrs, ACLs, resource forks)
-with **newest-wins** by mtime — not Homebrew rsync, not iCloud:
+with **newest-wins** by mtime — not Homebrew rsync. iCloud Desktop/Documents
+placeholders (`UF_DATALESS`) hang open/ditto until materialised:
 
 ```bash
 # needs: ssh key login to peers (stock macOS ditto + scp)
@@ -101,9 +103,16 @@ maccluster sync home --dry-run              # preview transfers
 maccluster sync home --safetynet --verify   # SafetyNet + sample verify
 maccluster sync home --preset documents,developer
 maccluster sync home --conflict-policy prefer-local
+# 1:1 best-effort (force iCloud download on both Macs, then bi-sync + verify)
+maccluster sync home --identical --peer node-b
+maccluster sync home --force-icloud         # materialize only (then normal sync)
 maccluster service sync-install --interval 3600   # hourly schedule
 maccluster sync home --last                 # last run log
 ```
+
+`--identical` runs **force-icloud** (local + peer: `brctl download` + timed open)
+then bidirectional ditto + sample verify. Inventory **skips remaining dataless
+stubs** so the transfer cannot hang. True cloud-only files need online iCloud.
 
 Requires working SSH (`ssh-copy-id user@10.42.0.x`). Details: [`docs/SYNC-HOME.md`](docs/SYNC-HOME.md),
 SSH troubles: [`docs/PEER-SSH.md`](docs/PEER-SSH.md).

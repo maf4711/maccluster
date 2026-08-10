@@ -93,6 +93,8 @@ class ProcessRunner:
                 full_argv,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=timeout,
                 shell=False,
                 env=env,
@@ -106,15 +108,18 @@ class ProcessRunner:
                 timed_out=False,
             )
         except subprocess.TimeoutExpired as exc:
+            def _decode(blob: object) -> str:
+                if blob is None:
+                    return ""
+                if isinstance(blob, bytes):
+                    return blob.decode("utf-8", errors="replace")
+                return str(blob)
+
             result = ProcessResult(
                 argv=tuple(full_argv),
                 returncode=124,
-                stdout=(exc.stdout or b"").decode()
-                if isinstance(exc.stdout, bytes)
-                else (exc.stdout or ""),
-                stderr=(exc.stderr or b"").decode()
-                if isinstance(exc.stderr, bytes)
-                else (exc.stderr or ""),
+                stdout=_decode(exc.stdout),
+                stderr=_decode(exc.stderr),
                 timed_out=True,
             )
         if check and result.returncode != 0:

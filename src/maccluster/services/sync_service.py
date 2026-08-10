@@ -35,101 +35,9 @@ from maccluster.render.progress import NullProgress, ProgressLike, format_bytes,
 from maccluster.services.config_service import load_and_bind_self
 
 # Remote inventory: argv home excludes_file → lines relpath\\tmtime_ns\\tsize
-_REMOTE_INVENTORY_PY = """\
-import fnmatch, os, stat, sys
-root, ex_path = sys.argv[1], sys.argv[2]
-ex = open(ex_path, encoding="utf-8").read().splitlines() if os.path.isfile(ex_path) else []
+_REMOTE_INVENTORY_PY = 'import fnmatch, json, os, signal, stat, subprocess, sys, time\n\n# Unbuffered inventory lines (SSH non-TTY otherwise loses stdout on kill/timeout)\ntry:\n    sys.stdout.reconfigure(line_buffering=True)\nexcept Exception:\n    pass\ntry:\n    sys.stderr.reconfigure(line_buffering=True)\nexcept Exception:\n    pass\n\nroot, ex_path = sys.argv[1], sys.argv[2]\nincludes = [x.strip().strip("/") for x in sys.argv[3:] if x.strip()]\nex = open(ex_path, encoding="utf-8").read().splitlines() if os.path.isfile(ex_path) else []\nPREF = ("Developer", "Downloads", ".ssh", ".config", "Desktop", "Documents")\nincludes.sort(key=lambda x: PREF.index(x.split("/")[0]) if x.split("/")[0] in PREF else 99)\nt0 = time.time()\nMAX_SEC = float(os.environ.get("MACCLUSTER_INV_MAX_SEC", "240"))\nDIR_SEC = float(os.environ.get("MACCLUSTER_INV_DIR_SEC", "6"))\nSKIP_NAMES = {\n    "imessage_export", "node_modules", ".git", "DerivedData",\n    "__pycache__", ".venv", "venv", ".Trash", "Library",\n}\nUF_DATALESS = 0x40000000\nn_emitted = 0\n\n\ndef excl(rel):\n    rel = rel.replace("\\\\", "/").lstrip("./")\n    parts = rel.split("/")\n    for pat in ex:\n        if not pat:\n            continue\n        p = pat.replace("\\\\", "/")\n        if p.endswith("/"):\n            b = p.rstrip("/")\n            if rel == b or rel.startswith(b + "/"):\n                return True\n            if b.startswith("**/") and (b[3:] in parts or any(fnmatch.fnmatch(x, b[3:]) for x in parts)):\n                return True\n        elif p.startswith("**/"):\n            rest = p[3:]\n            if any(x == rest or fnmatch.fnmatch(x, rest) for x in parts):\n                return True\n            if fnmatch.fnmatch(rel, p) or fnmatch.fnmatch(os.path.basename(rel), rest):\n                return True\n        else:\n            if fnmatch.fnmatch(rel, p) or fnmatch.fnmatch(os.path.basename(rel), p):\n                return True\n            b = p.rstrip("/")\n            if rel == b or rel.startswith(b + "/"):\n                return True\n    return False\n\n\ndef safe_scandir(path):\n    """List dir in a killable child — iCloud/FP hangs ignore SIGALRM."""\n    code = (\n        "import os,json,sys\\n"\n        "p=sys.argv[1]\\n"\n        "o=[]\\n"\n        "try:\\n"\n        "  for e in os.scandir(p):\\n"\n        "    try:\\n"\n        "      o.append([e.name,e.path,e.is_dir(follow_symlinks=False),e.is_file(follow_symlinks=False)])\\n"\n        "    except OSError:\\n"\n        "      pass\\n"\n        "except Exception:\\n"\n        "  sys.exit(2)\\n"\n        "print(json.dumps(o))\\n"\n    )\n    try:\n        r = subprocess.run(\n            [sys.executable, "-c", code, path],\n            capture_output=True,\n            text=True,\n            timeout=DIR_SEC,\n        )\n    except subprocess.TimeoutExpired:\n        print("# skip-hang %s" % path, file=sys.stderr, flush=True)\n        return None\n    if r.returncode != 0:\n        return None\n    try:\n        return json.loads(r.stdout or "[]")\n    except Exception:\n        return None\n\n\ndef emit_file(home, path):\n    global n_emitted\n    try:\n        st = os.lstat(path)\n    except OSError:\n        return False\n    if not (stat.S_ISREG(st.st_mode) or stat.S_ISLNK(st.st_mode)):\n        return False\n    if getattr(st, "st_flags", 0) & UF_DATALESS:\n        return False\n    rel = os.path.relpath(path, home).replace("\\\\", "/")\n    if excl(rel):\n        return False\n    sys.stdout.write("%s\\t%d\\t%d\\n" % (rel, st.st_mtime_ns, st.st_size))\n    n_emitted += 1\n    if n_emitted % 200 == 0:\n        sys.stdout.flush()\n    return True\n\n\ndef walk_safe(home, start):\n    n = 0\n    stack = [start]\n    while stack:\n        if time.time() - t0 > MAX_SEC:\n            print("# inventory time budget", file=sys.stderr, flush=True)\n            break\n        cur = stack.pop()\n        entries = safe_scandir(cur)\n        if entries is None:\n            try:\n                label = os.path.relpath(cur, home)\n            except Exception:\n                label = cur\n            print("# skip-hang %s" % label, file=sys.stderr, flush=True)\n            continue\n        for name, path, is_dir, is_file in entries:\n            if time.time() - t0 > MAX_SEC:\n                break\n            if name in SKIP_NAMES:\n                continue\n            if name == ".DS_Store":\n                continue\n            # skip heavy/hidden dirs except .ssh / .config\n            if name.startswith(".") and name not in (".ssh", ".config"):\n                if is_dir:\n                    continue\n            if is_dir:\n                rel = os.path.relpath(path, home).replace("\\\\", "/")\n                if excl(rel) or excl(rel + "/"):\n                    continue\n                stack.append(path)\n            elif is_file or True:\n                if emit_file(home, path):\n                    n += 1\n                    if n % 20000 == 0:\n                        print("# listed %d" % n, file=sys.stderr, flush=True)\n    return n\n\n\nwalk_roots = []\nif includes:\n    for inc in includes:\n        if not inc or ".." in inc.split("/"):\n            continue\n        p0 = os.path.join(root, inc)\n        if not os.path.lexists(p0):\n            continue\n        base = inc.split("/")[0]\n        if base in ("Documents", "Desktop") and "/" not in inc.rstrip("/"):\n            kids = safe_scandir(p0)\n            if kids is None:\n                print("# skip-hang %s" % inc, file=sys.stderr, flush=True)\n                continue\n            for name, path, is_dir, is_file in kids:\n                if name in SKIP_NAMES or name == ".DS_Store":\n                    continue\n                if is_dir:\n                    walk_roots.append((path, "%s/%s" % (inc.rstrip("/"), name)))\n                elif is_file:\n                    emit_file(root, path)\n        else:\n            walk_roots.append((p0, inc))\nelse:\n    walk_roots.append((root, ""))\n\nn = 0\nfor walk_root, label in walk_roots:\n    if time.time() - t0 > MAX_SEC:\n        break\n    print("# walk %s" % label, file=sys.stderr, flush=True)\n    n += walk_safe(root, walk_root)\n\nsys.stdout.flush()\nprint("# inventory done n=%d sec=%d" % (n_emitted, int(time.time() - t0)), file=sys.stderr, flush=True)\nsys.exit(0)\n'
 
-def excl(rel):
-    rel = rel.replace("\\\\", "/")
-    while rel.startswith("./"):
-        rel = rel[2:]
-    rel = rel.lstrip("/")
-    parts = rel.split("/")
-    for pat in ex:
-        if not pat:
-            continue
-        p = pat.replace("\\\\", "/")
-        if p.endswith("/"):
-            b = p.rstrip("/")
-            if rel == b or rel.startswith(b + "/"):
-                return True
-            if b.startswith("**/") and (
-                b[3:] in parts or any(fnmatch.fnmatch(x, b[3:]) for x in parts)
-            ):
-                return True
-        elif p.startswith("**/"):
-            rest = p[3:]
-            if any(x == rest or fnmatch.fnmatch(x, rest) for x in parts):
-                return True
-            if fnmatch.fnmatch(rel, p) or fnmatch.fnmatch(os.path.basename(rel), rest):
-                return True
-        else:
-            if fnmatch.fnmatch(rel, p) or fnmatch.fnmatch(os.path.basename(rel), p):
-                return True
-            b = p.rstrip("/")
-            if rel == b or rel.startswith(b + "/"):
-                return True
-    return False
-
-for dp, dns, fns in os.walk(root):
-    rel_d = os.path.relpath(dp, root)
-    if rel_d == ".":
-        rel_d = ""
-    keep = []
-    for d in dns:
-        r = (rel_d + "/" + d) if rel_d else d
-        if not excl(r) and not excl(r + "/"):
-            keep.append(d)
-    dns[:] = keep
-    for f in fns:
-        r = ((rel_d + "/" + f) if rel_d else f).replace("\\\\", "/")
-        if excl(r):
-            continue
-        p = os.path.join(dp, f)
-        try:
-            st = os.lstat(p)
-        except OSError:
-            continue
-        if not (stat.S_ISREG(st.st_mode) or stat.S_ISLNK(st.st_mode)):
-            continue
-        print(f"{r}\\t{st.st_mtime_ns}\\t{st.st_size}")
-"""
-
-# Remote stage listed paths (hardlink) + ditto -c
-_REMOTE_STAGE_PY = """\
-import os, subprocess, sys
-home, list_path, stage, archive = sys.argv[1:5]
-os.makedirs(stage, exist_ok=True)
-n = 0
-with open(list_path, encoding="utf-8") as fh:
-    for line in fh:
-        rel = line.strip()
-        if not rel or ".." in rel.split("/"):
-            continue
-        src = os.path.join(home, rel)
-        dst = os.path.join(stage, rel)
-        if not os.path.lexists(src):
-            continue
-        os.makedirs(os.path.dirname(dst) or ".", exist_ok=True)
-        if os.path.lexists(dst):
-            try:
-                os.unlink(dst)
-            except OSError:
-                pass
-        try:
-            os.link(src, dst)
-        except OSError:
-            if os.path.islink(src) or os.path.isfile(src):
-                subprocess.run(["/usr/bin/ditto", src, dst], check=False)
-            else:
-                continue
-        n += 1
-rc = subprocess.run(["/usr/bin/ditto", "-c", stage, archive]).returncode
-print(f"staged={n} archive_rc={rc}")
-sys.exit(rc)
-"""
-
+_REMOTE_STAGE_PY = 'import os, stat, subprocess, sys\n\nhome, list_path, stage, archive = sys.argv[1:5]\nos.makedirs(stage, exist_ok=True)\nUF_DATALESS = 0x40000000\nn = 0\nskipped = 0\nwith open(list_path, encoding="utf-8") as fh:\n    for line in fh:\n        rel = line.strip()\n        if not rel or ".." in rel.split("/"):\n            continue\n        src = os.path.join(home, rel)\n        dst = os.path.join(stage, rel)\n        if not os.path.lexists(src):\n            skipped += 1\n            continue\n        try:\n            st = os.lstat(src)\n        except OSError:\n            skipped += 1\n            continue\n        if getattr(st, "st_flags", 0) & UF_DATALESS:\n            skipped += 1\n            continue\n        if not (stat.S_ISREG(st.st_mode) or stat.S_ISLNK(st.st_mode)):\n            skipped += 1\n            continue\n        # Unreadable dataless-ish edge cases\n        if not os.access(src, os.R_OK) and not stat.S_ISLNK(st.st_mode):\n            skipped += 1\n            continue\n        os.makedirs(os.path.dirname(dst) or ".", exist_ok=True)\n        if os.path.lexists(dst):\n            try:\n                os.unlink(dst)\n            except OSError:\n                pass\n        ok = False\n        try:\n            os.link(src, dst)\n            ok = True\n        except OSError:\n            try:\n                r = subprocess.run(\n                    ["/bin/cp", "-p", src, dst],\n                    stdout=subprocess.DEVNULL,\n                    stderr=subprocess.DEVNULL,\n                    timeout=30,\n                    check=False,\n                )\n                ok = r.returncode == 0 and os.path.lexists(dst)\n            except Exception:\n                ok = False\n        if ok:\n            n += 1\n        else:\n            skipped += 1\n\nif n == 0:\n    print("staged=0 skipped=%d archive_rc=0" % skipped, flush=True)\n    open(archive, "wb").close()\n    sys.exit(0)\n\nrc = 1\ntry:\n    rc = subprocess.run(\n        ["/usr/bin/ditto", "-c", stage, archive],\n        timeout=max(120, min(3600, n // 10 + 60)),\n        check=False,\n    ).returncode\nexcept Exception:\n    rc = 1\n\narch_ok = os.path.isfile(archive) and os.path.getsize(archive) > 0\nif rc != 0 and arch_ok:\n    rc = 0\nprint("staged=%d skipped=%d archive_rc=%d" % (n, skipped, rc), flush=True)\n# Soft-ok empty transfer only when nothing staged; never claim success with missing archive\nif n > 0 and not arch_ok:\n    sys.exit(1)\nsys.exit(0 if arch_ok or n == 0 else rc)\n'
 
 @dataclass(frozen=True)
 class FileMeta:
@@ -294,35 +202,60 @@ def is_excluded(rel: str, patterns: tuple[str, ...]) -> bool:
     return False
 
 
-def inventory_local(root: Path, excludes: tuple[str, ...]) -> dict[str, FileMeta]:
-    """Walk home; regular files + symlinks only."""
+def inventory_local(
+    root: Path,
+    excludes: tuple[str, ...],
+    includes: tuple[str, ...] = (),
+) -> dict[str, FileMeta]:
+    """Walk home (or only ``includes`` roots); regular files + symlinks only.
+
+    Skips iCloud ``UF_DATALESS`` placeholders so open/ditto cannot hang.
+    When *includes* is set, only those subtrees are walked (much faster).
+    """
     out: dict[str, FileMeta] = {}
     root = root.resolve()
-    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
-        rel_dir = os.path.relpath(dirpath, root)
-        if rel_dir == ".":
-            rel_dir = ""
-        keep: list[str] = []
-        for d in dirnames:
-            rel = f"{rel_dir}/{d}" if rel_dir else d
-            rel = rel.replace("\\", "/")
-            if is_excluded(rel, excludes) or is_excluded(rel + "/", excludes):
+    # (walk_path, rel_prefix under home)
+    walk_roots: list[tuple[Path, str]] = []
+    if includes:
+        for inc in includes:
+            base = inc.replace("\\", "/").strip("/").rstrip("/")
+            if not base or ".." in base.split("/"):
                 continue
-            keep.append(d)
-        dirnames[:] = keep
-        for name in filenames:
-            rel = f"{rel_dir}/{name}" if rel_dir else name
-            rel = rel.replace("\\", "/")
-            if is_excluded(rel, excludes):
-                continue
-            path = Path(dirpath) / name
-            try:
-                st = path.lstat()
-            except OSError:
-                continue
-            if not (stat.S_ISREG(st.st_mode) or stat.S_ISLNK(st.st_mode)):
-                continue
-            out[rel] = FileMeta(mtime_ns=st.st_mtime_ns, size=st.st_size)
+            p = root / base
+            if p.exists():
+                walk_roots.append((p, base))
+    else:
+        walk_roots.append((root, ""))
+
+    for walk_path, prefix in walk_roots:
+        for dirpath, dirnames, filenames in os.walk(walk_path, followlinks=False):
+            rel_dir = os.path.relpath(dirpath, root)
+            if rel_dir == ".":
+                rel_dir = ""
+            keep: list[str] = []
+            for d in dirnames:
+                rel = f"{rel_dir}/{d}" if rel_dir else d
+                rel = rel.replace("\\", "/")
+                if is_excluded(rel, excludes) or is_excluded(rel + "/", excludes):
+                    continue
+                keep.append(d)
+            dirnames[:] = keep
+            for name in filenames:
+                rel = f"{rel_dir}/{name}" if rel_dir else name
+                rel = rel.replace("\\", "/")
+                if is_excluded(rel, excludes):
+                    continue
+                path = Path(dirpath) / name
+                try:
+                    st = path.lstat()
+                except OSError:
+                    continue
+                if not (stat.S_ISREG(st.st_mode) or stat.S_ISLNK(st.st_mode)):
+                    continue
+                # Skip iCloud dataless stubs (transfer would hang)
+                if getattr(st, "st_flags", 0) & 0x40000000:
+                    continue
+                out[rel] = FileMeta(mtime_ns=st.st_mtime_ns, size=st.st_size)
     return out
 
 
@@ -517,6 +450,41 @@ def classify_compare(
     }
 
 
+
+# Large ditto CPIO archives (>~2–4 GiB) often fail with "cpio read error" after scp.
+# Auto-split into smaller batches.
+SYNC_CHUNK_BYTES = 2 * 1024 * 1024 * 1024  # 2 GiB payload per archive
+SYNC_CHUNK_FILES = 120
+# Single files above this skip CPIO (ditto -c/-x often fails ~10+ GiB with "cpio read error")
+SYNC_LARGE_FILE_BYTES = 3 * 1024 * 1024 * 1024  # 3 GiB → direct scp
+
+
+def _chunk_rels(
+    rels: list[str],
+    sizes: dict[str, int],
+    *,
+    max_bytes: int = SYNC_CHUNK_BYTES,
+    max_files: int = SYNC_CHUNK_FILES,
+) -> list[list[str]]:
+    """Split transfer list into size/count-limited batches (preserves order)."""
+    if not rels:
+        return []
+    batches: list[list[str]] = []
+    cur: list[str] = []
+    cur_b = 0
+    for r in rels:
+        sz = int(sizes.get(r, 0) or 0)
+        if cur and (len(cur) >= max_files or (max_bytes > 0 and cur_b + sz > max_bytes)):
+            batches.append(cur)
+            cur = []
+            cur_b = 0
+        cur.append(r)
+        cur_b += sz
+    if cur:
+        batches.append(cur)
+    return batches
+
+
 def _bytes_for_rels(inv: dict[str, FileMeta], rels: list[str]) -> int:
     return sum(inv[r].size for r in rels if r in inv)
 
@@ -604,7 +572,157 @@ def _ssh_cat_read_argv(
     return _ssh_argv(abs_ssh, ssh_target, "/bin/sh", "-c", cmd, bind_ip=bind_ip)
 
 
-def _transfer_push(
+
+def _split_large_files(
+    rels: list[str], sizes: dict[str, int]
+) -> tuple[list[str], list[str]]:
+    """Return (normal_rels, large_rels) where large is direct-scp territory."""
+    normal: list[str] = []
+    large: list[str] = []
+    for r in rels:
+        if int(sizes.get(r, 0) or 0) >= SYNC_LARGE_FILE_BYTES:
+            large.append(r)
+        else:
+            normal.append(r)
+    return normal, large
+
+
+def _scp_one_file(
+    ctx: AppContext,
+    *,
+    abs_scp: str,
+    ssh_target: str,
+    remote_path: str,
+    local_path: Path,
+    direction: str,
+    timeout: float,
+    bind_ip: str | None,
+) -> tuple[int, str]:
+    """direction: pull = remote→local, push = local→remote."""
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    if direction == "pull":
+        argv = _scp_argv(
+            abs_scp,
+            f"{ssh_target}:{remote_path}",
+            str(local_path),
+            bind_ip=bind_ip,
+        )
+    else:
+        argv = _scp_argv(
+            abs_scp,
+            str(local_path),
+            f"{ssh_target}:{remote_path}",
+            bind_ip=bind_ip,
+        )
+    r = ctx.runner.run(argv, timeout=timeout)
+    if r.returncode != 0:
+        return r.returncode, (r.stderr or r.stdout or "scp failed")[:400]
+    return 0, ""
+
+
+def _transfer_large_files_pull(
+    ctx: AppContext,
+    *,
+    abs_scp: str,
+    ssh_target: str,
+    local_home: Path,
+    remote_home: str,
+    rels: list[str],
+    sizes: dict[str, int],
+    timeout: float,
+    progress: ProgressLike | None,
+    bytes_base: int,
+    bytes_total: int,
+    bind_ip: str | None,
+) -> tuple[int, str, str, int]:
+    prog = progress or NullProgress()
+    done = 0
+    for i, rel in enumerate(rels, 1):
+        sz = int(sizes.get(rel, 0) or 0)
+        prog.note(f"pull large file {i}/{len(rels)}: {rel} ({format_bytes(sz)})")
+        prog.phase("transfer", direction="pull", detail=f"scp large {format_bytes(sz)}")
+        dest = local_home / rel
+        remote = f"{remote_home.rstrip('/')}/{rel}"
+        rc, err = _scp_one_file(
+            ctx,
+            abs_scp=abs_scp,
+            ssh_target=ssh_target,
+            remote_path=remote,
+            local_path=dest,
+            direction="pull",
+            timeout=timeout,
+            bind_ip=bind_ip,
+        )
+        if rc != 0:
+            return rc, "", f"large pull failed {rel}: {err}", done
+        done += sz
+        prog.update(
+            bytes_done=bytes_base + done,
+            bytes_total=bytes_total or (bytes_base + done),
+            path=rel,
+            force=True,
+        )
+    return 0, f"pull large: {len(rels)} files ({format_bytes(done)}) via scp", "", done
+
+
+def _transfer_large_files_push(
+    ctx: AppContext,
+    *,
+    abs_scp: str,
+    abs_ssh: str,
+    ssh_target: str,
+    local_home: Path,
+    remote_home: str,
+    rels: list[str],
+    sizes: dict[str, int],
+    timeout: float,
+    progress: ProgressLike | None,
+    bytes_base: int,
+    bytes_total: int,
+    bind_ip: str | None,
+) -> tuple[int, str, str, int]:
+    prog = progress or NullProgress()
+    done = 0
+    for i, rel in enumerate(rels, 1):
+        sz = int(sizes.get(rel, 0) or 0)
+        prog.note(f"push large file {i}/{len(rels)}: {rel} ({format_bytes(sz)})")
+        prog.phase("transfer", direction="push", detail=f"scp large {format_bytes(sz)}")
+        src = local_home / rel
+        remote = f"{remote_home.rstrip('/')}/{rel}"
+        # ensure remote parent exists
+        parent = str(Path(remote).parent)
+        ctx.runner.run(
+            _ssh_argv(
+                abs_ssh,
+                ssh_target,
+                f"mkdir -p {shlex.quote(parent)}",
+                bind_ip=bind_ip,
+            ),
+            timeout=60.0,
+        )
+        rc, err = _scp_one_file(
+            ctx,
+            abs_scp=abs_scp,
+            ssh_target=ssh_target,
+            remote_path=remote,
+            local_path=src,
+            direction="push",
+            timeout=timeout,
+            bind_ip=bind_ip,
+        )
+        if rc != 0:
+            return rc, "", f"large push failed {rel}: {err}", done
+        done += sz
+        prog.update(
+            bytes_done=bytes_base + done,
+            bytes_total=bytes_total or (bytes_base + done),
+            path=rel,
+            force=True,
+        )
+    return 0, f"push large: {len(rels)} files ({format_bytes(done)}) via scp", "", done
+
+
+def _transfer_push_once(
     ctx: AppContext,
     *,
     abs_ditto: str,
@@ -732,7 +850,7 @@ def _transfer_push(
     )
 
 
-def _transfer_pull(
+def _transfer_pull_once(
     ctx: AppContext,
     *,
     abs_ditto: str,
@@ -797,7 +915,10 @@ def _transfer_pull(
         _ssh_argv(
             abs_ssh,
             ssh_target,
+            "env",
+            "PYTHONUNBUFFERED=1",
             "/usr/bin/python3",
+            "-u",
             remote_py_path,
             remote_home,
             remote_list,
@@ -808,8 +929,11 @@ def _transfer_pull(
         timeout=timeout,
     )
     out = (stage_r.stdout or "").strip()
+    # staged=0 (all dataless/unreadable skipped) is success — nothing to pull
+    if "staged=0" in out and stage_r.returncode == 0:
+        return 0, f"pull: 0 files staged on peer ({out})", "", 0
     if stage_r.returncode != 0:
-        return stage_r.returncode, out, (stage_r.stderr or "remote stage failed")[:500], 0
+        return stage_r.returncode, out, (stage_r.stderr or out or "remote stage failed")[:500], 0
 
     # Optional remote archive size
     size_r = ctx.runner.run(
@@ -848,8 +972,17 @@ def _transfer_pull(
     )
     if scp2.returncode != 0:
         return scp2.returncode, out, (scp2.stderr or "pull transfer failed")[:500], 0
-    got = local_arch.stat().st_size if local_arch.is_file() else arch_size
+    got = local_arch.stat().st_size if local_arch.is_file() else 0
     on_pull_chunk(got, got if got else arch_size)
+    if arch_size > 0 and got > 0 and abs(got - arch_size) > 1024:
+        return (
+            1,
+            out,
+            f"pull archive size mismatch local={got} remote={arch_size}",
+            got,
+        )
+    if got == 0 and arch_size > 0:
+        return 1, out, f"pull archive empty (remote claimed {arch_size} B)", 0
 
     prog.phase("extract", direction="pull", detail="local ditto -x")
     prog.update(path=f"ditto -x → {local_home}", force=True)
@@ -885,6 +1018,206 @@ def _transfer_pull(
     )
 
 
+
+def _transfer_pull(
+    ctx: AppContext,
+    *,
+    abs_ditto: str,
+    abs_ssh: str,
+    abs_scp: str,
+    ssh_target: str,
+    local_home: Path,
+    remote_home: str,
+    rels: list[str],
+    sizes: dict[str, int],
+    dry_run: bool,
+    timeout: float,
+    work: Path,
+    progress: ProgressLike | None = None,
+    bytes_base: int = 0,
+    bytes_total: int = 0,
+    bind_ip: str | None = None,
+) -> tuple[int, str, str, int]:
+    """Pull with direct scp for huge files + CPIO auto-batching for the rest."""
+    prog = progress or NullProgress()
+    if not rels:
+        return 0, "pull: 0 files", "", 0
+    payload = sum(int(sizes.get(r, 0) or 0) for r in rels)
+    normal, large = _split_large_files(rels, sizes)
+    done = 0
+    outs: list[str] = []
+    if dry_run:
+        msg = _sample_list(rels, label="pull dry-run")
+        if large:
+            msg += f" (large-direct={len(large)})"
+        return 0, msg, "", payload
+
+    if large:
+        rc, out, err, got = _transfer_large_files_pull(
+            ctx,
+            abs_scp=abs_scp,
+            ssh_target=ssh_target,
+            local_home=local_home,
+            remote_home=remote_home,
+            rels=large,
+            sizes=sizes,
+            timeout=timeout,
+            progress=prog,
+            bytes_base=bytes_base,
+            bytes_total=bytes_total or (bytes_base + payload),
+            bind_ip=bind_ip,
+        )
+        if rc != 0:
+            return rc, out, err, done
+        done += got
+        if out:
+            outs.append(out)
+
+    if not normal:
+        return 0, "; ".join(outs) or "pull: 0 files", "", done
+
+    n_sizes = {r: sizes[r] for r in normal if r in sizes}
+    batches = _chunk_rels(normal, n_sizes)
+    for i, batch in enumerate(batches, 1):
+        bsz = {r: n_sizes[r] for r in batch if r in n_sizes}
+        b_payload = sum(bsz.values())
+        if len(batches) > 1:
+            prog.note(
+                f"pull batch {i}/{len(batches)}: {len(batch)} files ({format_bytes(b_payload)})"
+            )
+        bwork = work / f"pull_batch_{i}"
+        bwork.mkdir(parents=True, exist_ok=True)
+        rc, out, err, got = _transfer_pull_once(
+            ctx,
+            abs_ditto=abs_ditto,
+            abs_ssh=abs_ssh,
+            abs_scp=abs_scp,
+            ssh_target=ssh_target,
+            local_home=local_home,
+            remote_home=remote_home,
+            rels=batch,
+            sizes=bsz,
+            dry_run=False,
+            timeout=timeout,
+            work=bwork,
+            progress=prog,
+            bytes_base=bytes_base + done,
+            bytes_total=bytes_total or (bytes_base + payload),
+            bind_ip=bind_ip,
+        )
+        if rc != 0:
+            return rc, out, err or f"pull batch {i}/{len(batches)} failed", done
+        done += got
+        if out:
+            outs.append(out)
+    return (
+        0,
+        f"pull: {len(rels)} files ({format_bytes(payload)}); " + (outs[0] if outs else "ok"),
+        "",
+        done,
+    )
+
+
+def _transfer_push(
+    ctx: AppContext,
+    *,
+    abs_ditto: str,
+    abs_ssh: str,
+    abs_scp: str,
+    ssh_target: str,
+    local_home: Path,
+    remote_home: str,
+    rels: list[str],
+    sizes: dict[str, int],
+    dry_run: bool,
+    timeout: float,
+    work: Path,
+    progress: ProgressLike | None = None,
+    bytes_base: int = 0,
+    bytes_total: int = 0,
+    bind_ip: str | None = None,
+) -> tuple[int, str, str, int]:
+    """Push with direct scp for huge files + CPIO auto-batching for the rest."""
+    prog = progress or NullProgress()
+    if not rels:
+        return 0, "push: 0 files", "", 0
+    payload = sum(int(sizes.get(r, 0) or 0) for r in rels)
+    normal, large = _split_large_files(rels, sizes)
+    done = 0
+    outs: list[str] = []
+    if dry_run:
+        msg = _sample_list(rels, label="push dry-run")
+        if large:
+            msg += f" (large-direct={len(large)})"
+        return 0, msg, "", payload
+
+    if large:
+        rc, out, err, got = _transfer_large_files_push(
+            ctx,
+            abs_scp=abs_scp,
+            abs_ssh=abs_ssh,
+            ssh_target=ssh_target,
+            local_home=local_home,
+            remote_home=remote_home,
+            rels=large,
+            sizes=sizes,
+            timeout=timeout,
+            progress=prog,
+            bytes_base=bytes_base,
+            bytes_total=bytes_total or (bytes_base + payload),
+            bind_ip=bind_ip,
+        )
+        if rc != 0:
+            return rc, out, err, done
+        done += got
+        if out:
+            outs.append(out)
+
+    if not normal:
+        return 0, "; ".join(outs) or "push: 0 files", "", done
+
+    n_sizes = {r: sizes[r] for r in normal if r in sizes}
+    batches = _chunk_rels(normal, n_sizes)
+    for i, batch in enumerate(batches, 1):
+        bsz = {r: n_sizes[r] for r in batch if r in n_sizes}
+        b_payload = sum(bsz.values())
+        if len(batches) > 1:
+            prog.note(
+                f"push batch {i}/{len(batches)}: {len(batch)} files ({format_bytes(b_payload)})"
+            )
+        bwork = work / f"push_batch_{i}"
+        bwork.mkdir(parents=True, exist_ok=True)
+        rc, out, err, got = _transfer_push_once(
+            ctx,
+            abs_ditto=abs_ditto,
+            abs_ssh=abs_ssh,
+            abs_scp=abs_scp,
+            ssh_target=ssh_target,
+            local_home=local_home,
+            remote_home=remote_home,
+            rels=batch,
+            sizes=bsz,
+            dry_run=False,
+            timeout=timeout,
+            work=bwork,
+            progress=prog,
+            bytes_base=bytes_base + done,
+            bytes_total=bytes_total or (bytes_base + payload),
+            bind_ip=bind_ip,
+        )
+        if rc != 0:
+            return rc, out, err or f"push batch {i}/{len(batches)} failed", done
+        done += got
+        if out:
+            outs.append(out)
+    return (
+        0,
+        f"push: {len(rels)} files ({format_bytes(payload)}); " + (outs[0] if outs else "ok"),
+        "",
+        done,
+    )
+
+
 def _remote_inventory(
     ctx: AppContext,
     abs_ssh: str,
@@ -896,6 +1229,7 @@ def _remote_inventory(
     timeout: float,
     work: Path,
     bind_ip: str | None = None,
+    includes: tuple[str, ...] = (),
 ) -> tuple[dict[str, FileMeta] | None, str]:
     script = work / "remote_inv.py"
     script.write_text(_REMOTE_INVENTORY_PY, encoding="utf-8")
@@ -912,14 +1246,19 @@ def _remote_inventory(
         if scp.returncode != 0:
             return None, (scp.stderr or f"scp {local.name} failed")[:300]
 
+    # PYTHONUNBUFFERED so inventory lines are not stuck in libc buffers if SSH dies
     r = ctx.runner.run(
         _ssh_argv(
             abs_ssh,
             ssh_target,
+            "env",
+            "PYTHONUNBUFFERED=1",
             "/usr/bin/python3",
+            "-u",
             remote_script,
             remote_home,
             remote_excl,
+            *[inc.rstrip("/") for inc in includes if inc.strip()],
             bind_ip=bind_ip,
         ),
         timeout=timeout,
@@ -936,9 +1275,31 @@ def _remote_inventory(
         ),
         timeout=30.0,
     )
-    if r.returncode != 0:
-        return None, (r.stderr or r.stdout or "remote inventory failed")[:300]
-    return parse_inventory_text(r.stdout or ""), ""
+    inv = parse_inventory_text(r.stdout or "")
+    err = (r.stderr or "").strip()
+    # Accept partial inventory on timeout/kill if we listed any files
+    if inv:
+        if r.returncode != 0:
+            return inv, f"partial inventory ({len(inv)} files); {err[:120]}"
+        if "# inventory time budget" in err or "# skip-hang" in err:
+            return inv, f"partial inventory ({len(inv)} files); {err[:120]}"
+        return inv, ""
+    # Empty stdout: if remote walk started (stderr markers), soft-empty so push can proceed
+    hangish = any(
+        m in err
+        for m in (
+            "# walk",
+            "# skip-hang",
+            "# inventory",
+            "# listed",
+            "inventory time budget",
+        )
+    )
+    if r.returncode != 0 or hangish:
+        if hangish or r.returncode in (124, -9, -15, 255):
+            return {}, f"empty/partial inventory (peer hang or timeout); {err[:160]}"
+        return None, (err or r.stdout or "remote inventory failed")[:300]
+    return inv, ""
 
 
 def _free_bytes(path: Path) -> int | None:
@@ -1006,6 +1367,89 @@ def _notify_fail(ctx: AppContext, title: str, body: str) -> None:
     )
 
 
+def _run_force_icloud(
+    ctx: AppContext,
+    *,
+    local_home: Path,
+    peers: list[tuple[Node, str]],
+    abs_ssh: str,
+    abs_scp: str,
+    bind_ip: str,
+    timeout_per_file: float,
+    max_seconds: float,
+    prog: ProgressLike,
+) -> None:
+    """Materialize iCloud dataless stubs on local + peers before inventory."""
+    from maccluster.services.icloud_materialize import (
+        REMOTE_MATERIALIZE_PY,
+        default_icloud_roots,
+        materialize_tree,
+    )
+
+    prog.phase("icloud", direction="", detail="materialize local")
+    for root in default_icloud_roots(local_home):
+        mr = materialize_tree(
+            root,
+            timeout_per_file=timeout_per_file,
+            max_seconds=max_seconds,
+            note=prog.note,
+        )
+        prog.note(
+            f"  local {root.name}: mat={mr.materialized} fail={mr.failed} "
+            f"remaining_dataless={mr.remaining_dataless}"
+        )
+
+    for node, ssh_target in peers:
+        prog.phase("icloud", direction="", detail=f"materialize {node.id}")
+        prog.note(f"icloud: materialize on peer {node.id} ({ssh_target})")
+        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as tf:
+            tf.write(REMOTE_MATERIALIZE_PY)
+            local_script = tf.name
+        remote_script = f"/tmp/maccluster_icloud_mat_{os.getpid()}_{node.id}.py"
+        try:
+            scp_r = ctx.runner.run(
+                _scp_argv(
+                    abs_scp,
+                    local_script,
+                    f"{ssh_target}:{remote_script}",
+                    connect_timeout=15,
+                    bind_ip=bind_ip,
+                ),
+                timeout=60.0,
+            )
+            if scp_r.returncode != 0:
+                prog.note(
+                    f"  peer {node.id}: scp materialize script failed: "
+                    f"{(scp_r.stderr or scp_r.stdout or '')[:160]}"
+                )
+                continue
+            mat_r = ctx.runner.run(
+                _ssh_argv(
+                    abs_ssh,
+                    ssh_target,
+                    "python3",
+                    remote_script,
+                    str(timeout_per_file),
+                    str(max_seconds),
+                    "Desktop",
+                    "Documents",
+                    connect_timeout=15,
+                    bind_ip=bind_ip,
+                ),
+                timeout=max_seconds * 2 + 120.0,
+            )
+            out = (mat_r.stdout or mat_r.stderr or "").strip()
+            for line in out.splitlines()[-10:]:
+                prog.note(f"  peer {node.id}: {line}")
+            if mat_r.returncode != 0:
+                prog.note(f"  peer {node.id}: materialize rc={mat_r.returncode}")
+        finally:
+            try:
+                os.unlink(local_script)
+            except OSError:
+                pass
+
+
 def sync_home(
     ctx: AppContext,
     *,
@@ -1036,6 +1480,10 @@ def sync_home(
     skip_ssh_check: bool = False,
     progress: ProgressLike | None = None,
     write_log: bool = True,
+    force_icloud: bool = False,
+    identical: bool = False,
+    icloud_timeout_per_file: float = 20.0,
+    icloud_max_seconds: float = 900.0,
 ) -> SyncHomeResult:
     """
     Two-way Home sync via Apple ``ditto`` (metadata-complete) over SSH.
@@ -1043,6 +1491,11 @@ def sync_home(
     CCC-inspired options: compare, presets/includes, exclude-from, conflict
     policy, SafetyNet-lite, post-verify, quick update, batch limits, APFS
     snapshot, notifications, run history.
+
+    ``force_icloud`` materializes iCloud dataless stubs (brctl + timed open)
+    on local and peer before inventory. ``identical`` implies force_icloud,
+    both directions, and post-verify for best-effort 1:1 (remaining cloud-only
+    stubs are skipped and reported).
     """
     from maccluster.constants import (
         SYNC_CONFLICT_POLICIES,
@@ -1114,6 +1567,29 @@ def sync_home(
     excludes = tuple(SYNC_HOME_EXCLUDES) + file_excludes + tuple(extra_excludes)
     peers = _resolve_peers(cfg.nodes, self_node, peer_filter=peer, default_user=default_user)
     bind_ip = str(self_node.ip)  # TB bridge Self-IP only — never Wi‑Fi
+
+    if identical:
+        force_icloud = True
+        verify = True
+        if push_only or pull_only:
+            raise CliError(
+                "--identical requires both directions (omit --push-only / --pull-only)",
+                exit_code=2,
+            )
+        prog.note("identical mode: force-icloud + bidirectional + verify (1:1)")
+
+    if force_icloud and not dry_run and not compare_only:
+        _run_force_icloud(
+            ctx,
+            local_home=local_home,
+            peers=peers,
+            abs_ssh=abs_ssh,
+            abs_scp=abs_scp,
+            bind_ip=bind_ip,
+            timeout_per_file=icloud_timeout_per_file,
+            max_seconds=icloud_max_seconds,
+            prog=prog,
+        )
 
     snap_label = _maybe_apfs_snapshot(ctx, enabled=apfs_snapshot and not dry_run)
     if snap_label:
@@ -1210,7 +1686,7 @@ def sync_home(
 
         if local_inv is None:
             prog.phase("inventory", direction="local", detail=str(local_home))
-            local_inv = inventory_local(local_home, excludes)
+            local_inv = inventory_local(local_home, excludes, includes_resolved)
             local_inv = filter_inventory(local_inv, includes_resolved)
             if quick and last_ts_ns > 0:
                 cutoff = last_ts_ns - SYNC_QUICK_SLACK_S * 1_000_000_000
@@ -1228,9 +1704,11 @@ def sync_home(
                 ssh_target,
                 remote_home_path,
                 excludes,
-                timeout=timeout,
+                # Cap inventory so iCloud/FP hangs cannot block full --timeout hours
+                timeout=min(timeout, 360.0),
                 work=work,
                 bind_ip=bind_ip,
+                includes=includes_resolved,
             )
             if remote_inv is None:
                 peer_results.append(
@@ -1248,8 +1726,11 @@ def sync_home(
                 )
                 prog.note(f"  FAIL inventory: {inv_err[:120]}")
                 continue
+            if inv_err:
+                prog.note(f"  inventory note: {inv_err[:160]}")
 
             remote_inv = filter_inventory(remote_inv, includes_resolved)
+            prog.note(f"  remote inventory: {len(remote_inv)} files")
             # For quick mode we still need full remote for pull of new remote files
             # but local is reduced — re-walk missing remote-only is fine
 
@@ -1510,7 +1991,14 @@ def sync_home(
     total_elapsed = time.monotonic() - t0
     prog.finish(f"sync finished in {total_elapsed:.1f}s")
 
-    strategy = f"compare ({policy})" if compare_only else f"{policy} (Apple ditto)"
+    if compare_only:
+        strategy = f"compare ({policy})"
+    elif identical:
+        strategy = f"identical/1:1 ({policy}, force-icloud, Apple ditto)"
+    elif force_icloud:
+        strategy = f"{policy} (Apple ditto, force-icloud)"
+    else:
+        strategy = f"{policy} (Apple ditto)"
     result = SyncHomeResult(
         local_home=str(local_home),
         dry_run=dry_run,

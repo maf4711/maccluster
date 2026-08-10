@@ -5,12 +5,19 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from maccluster.adapters.plist_template import render_heal_plist, render_sync_plist
+from maccluster.adapters.plist_template import (
+    render_heal_plist,
+    render_sync_plist,
+    render_watchdog_plist,
+)
 from maccluster.constants import (
+    DEFAULT_WATCHDOG_INTERVAL_S,
     LAUNCH_AGENT_LABEL,
     LAUNCH_AGENT_PLIST,
     LAUNCH_AGENT_SYNC_LABEL,
     LAUNCH_AGENT_SYNC_PLIST,
+    LAUNCH_AGENT_WATCHDOG_LABEL,
+    LAUNCH_AGENT_WATCHDOG_PLIST,
     TIMEOUT_GENERIC,
 )
 from maccluster.domain.models import ServiceState
@@ -34,6 +41,8 @@ class LaunchAgentService:
             name = LAUNCH_AGENT_PLIST
         elif label == LAUNCH_AGENT_SYNC_LABEL:
             name = LAUNCH_AGENT_SYNC_PLIST
+        elif label == LAUNCH_AGENT_WATCHDOG_LABEL:
+            name = LAUNCH_AGENT_WATCHDOG_PLIST
         return launch_agents_dir() / name
 
     def install(
@@ -58,6 +67,15 @@ class LaunchAgentService:
                 program=str(program),
                 config_path=str(config_path),
                 interval_seconds=max(300, interval_seconds),
+            )
+        elif label == LAUNCH_AGENT_WATCHDOG_LABEL:
+            content = render_watchdog_plist(
+                label=label,
+                program=str(program),
+                config_path=str(config_path),
+                interval_seconds=max(
+                    DEFAULT_WATCHDOG_INTERVAL_S, int(interval_seconds or DEFAULT_WATCHDOG_INTERVAL_S)
+                ),
             )
         else:
             content = render_heal_plist(

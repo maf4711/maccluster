@@ -21,10 +21,15 @@ CONFIG_FILE_NAME = "cluster.toml"
 LOCK_FILE_NAME = "mutate.lock"
 LAUNCH_AGENT_LABEL = "com.maccluster.heal"
 LAUNCH_AGENT_PLIST = "com.maccluster.heal.plist"
+LAUNCH_AGENT_WATCHDOG_LABEL = "com.maccluster.heal-watchdog"
+LAUNCH_AGENT_WATCHDOG_PLIST = "com.maccluster.heal-watchdog.plist"
 LAUNCH_AGENT_SYNC_LABEL = "com.maccluster.sync-home"
 LAUNCH_AGENT_SYNC_PLIST = "com.maccluster.sync-home.plist"
 DEFAULT_SYNC_INTERVAL_S = 3600
 MIN_SYNC_INTERVAL_S = 300
+DEFAULT_WATCHDOG_INTERVAL_S = 60
+# Heartbeat older than interval * factor ⇒ heal loop considered hung
+HEAL_HEARTBEAT_STALE_FACTOR = 3.0
 
 # Interface name: letter first, then alnum/._- up to 16 chars total.
 IFACE_NAME_RE = r"^[A-Za-z][A-Za-z0-9_.-]{0,15}$"
@@ -64,6 +69,7 @@ ALLOWLIST_BASENAMES = frozenset(
         "security",  # macOS Keychain
         "tmutil",  # optional APFS local snapshot before pull
         "osascript",  # optional Notification Center on sync fail
+        "rdma_ctl",  # macOS RDMA status (read-only; enable is Recovery-OS only)
     }
 )
 
@@ -130,6 +136,17 @@ TRAFFIC_CACHE_DIR_NAME = "maccluster"
 TRAFFIC_CACHE_FILE_NAME = "traffic_sample.json"
 TRAFFIC_MIN_DT_S = 0.4
 TRAFFIC_MAX_DT_S = 120.0
+
+HEAL_HEARTBEAT_FILE_NAME = "heal_heartbeat.json"
+
+# Path-quality thresholds for iperf3 over TB bridge (Mbit/s)
+BENCH_EXCELLENT_MBPS = 30_000.0  # ~30 Gbit/s — healthy TB5 TCP
+BENCH_GOOD_MBPS = 1_000.0
+BENCH_MARGINAL_MBPS = 100.0
+
+# Optional exo local API (correlation only; never required)
+EXO_DEFAULT_BASE_URL = "http://127.0.0.1:52415"
+EXO_PROBE_TIMEOUT_S = 2.0
 
 SEARCH_PATHS = (
     "/usr/sbin",

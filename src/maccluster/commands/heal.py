@@ -11,6 +11,11 @@ from maccluster.services.mutate_service import ensure_local
 
 
 def run(ctx: AppContext, args) -> int:
+    if getattr(args, "watchdog", False):
+        from maccluster.services.heal_loop_service import run_heal_watchdog
+
+        return run_heal_watchdog(ctx)
+
     if getattr(args, "loop", False):
         interval = getattr(args, "interval", None)
         # best-effort loop — not HA
