@@ -16,21 +16,14 @@ def build_mesh_health(
     peers = [
         nh
         for nh in nodes
-        if not (
-            (self_node_id and nh.node.id == self_node_id) or nh.node.role == NodeRole.SELF
-        )
+        if not ((self_node_id and nh.node.id == self_node_id) or nh.node.role == NodeRole.SELF)
     ]
     expected = len(peers)
     up = sum(1 for nh in peers if nh.reachability == ReachabilityState.UP)
     down = sum(1 for nh in peers if nh.reachability == ReachabilityState.DOWN)
     unknown = expected - up - down
 
-    bridge_ok = bool(
-        bridge
-        and bridge.exists
-        and bridge.admin_up
-        and bool(bridge.addresses)
-    )
+    bridge_ok = bool(bridge and bridge.exists and bridge.admin_up and bool(bridge.addresses))
     tb_links = 0
     if tb and tb.ports:
         tb_links = sum(1 for p in tb.ports if p.link_state == LinkState.CONNECTED)

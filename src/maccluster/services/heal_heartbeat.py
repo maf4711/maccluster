@@ -78,7 +78,9 @@ def read_heartbeat(
     if age is None:
         detail = "heartbeat timestamp missing"
     elif stale:
-        detail = f"stale age={age:.0f}s (limit {limit:.0f}s = {HEAL_HEARTBEAT_STALE_FACTOR:g}×interval)"
+        detail = (
+            f"stale age={age:.0f}s (limit {limit:.0f}s = {HEAL_HEARTBEAT_STALE_FACTOR:g}×interval)"
+        )
     else:
         detail = f"fresh age={age:.0f}s last_ok={last_ok}"
     return HealHeartbeat(

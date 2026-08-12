@@ -36,9 +36,7 @@ def build_snapshot(
 ) -> HealthSnapshot:
     overall = aggregate_overall(node_health, self_node_id=self_node_id)
     if mesh is None:
-        mesh = build_mesh_health(
-            node_health, self_node_id=self_node_id, bridge=bridge, tb=tb
-        )
+        mesh = build_mesh_health(node_health, self_node_id=self_node_id, bridge=bridge, tb=tb)
     return HealthSnapshot(
         timestamp=timestamp,
         cluster_name=cfg.name,

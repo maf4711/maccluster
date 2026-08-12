@@ -28,7 +28,5 @@ def test_check_rdma_enabled_ok():
 
 
 def test_check_rdma_missing_info():
-    f = check_rdma(
-        RdmaStatus(tool_available=False, enabled=None, detail="not found")
-    )
+    f = check_rdma(RdmaStatus(tool_available=False, enabled=None, detail="not found"))
     assert f.severity == CheckSeverity.INFO

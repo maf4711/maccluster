@@ -20,7 +20,14 @@ def run(ctx: AppContext, args) -> int:
         payload = to_jsonable(snap)
         if isinstance(payload, dict):
             payload["rdma"] = to_jsonable(rdma)
-        print(dumps("tb", payload if isinstance(payload, dict) else {"tb": payload, "rdma": to_jsonable(rdma)}))
+        print(
+            dumps(
+                "tb",
+                payload
+                if isinstance(payload, dict)
+                else {"tb": payload, "rdma": to_jsonable(rdma)},
+            )
+        )
     else:
         print(render_tb(snap, rdma=rdma))
     return OK

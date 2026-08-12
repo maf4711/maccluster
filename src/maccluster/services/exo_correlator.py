@@ -85,9 +85,7 @@ def _summarize(
     mesh_ok: bool | None = None
     if topology_nodes is not None and expected_nodes is not None and expected_nodes > 0:
         # exo counts self in topology.nodes; expected_nodes is full cluster size
-        mesh_ok = topology_nodes >= expected_nodes and (
-            stale_seconds is None or stale_seconds < 60
-        )
+        mesh_ok = topology_nodes >= expected_nodes and (stale_seconds is None or stale_seconds < 60)
     elif topology_nodes is not None:
         mesh_ok = topology_nodes >= 2 and (stale_seconds is None or stale_seconds < 60)
 
@@ -201,7 +199,9 @@ def _instances_summary(data: dict[str, Any]) -> str:
             continue
         # MlxRingInstance nesting or flat
         mlx = inst.get("MlxRingInstance") if isinstance(inst.get("MlxRingInstance"), dict) else inst
-        shards = mlx.get("shardAssignments") if isinstance(mlx.get("shardAssignments"), dict) else {}
+        shards = (
+            mlx.get("shardAssignments") if isinstance(mlx.get("shardAssignments"), dict) else {}
+        )
         model = shards.get("modelId") or mlx.get("modelId") or "?"
         if isinstance(model, str) and "/" in model:
             model = model.rsplit("/", 1)[-1]

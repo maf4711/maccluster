@@ -108,6 +108,7 @@ class ProcessRunner:
                 timed_out=False,
             )
         except subprocess.TimeoutExpired as exc:
+
             def _decode(blob: object) -> str:
                 if blob is None:
                     return ""

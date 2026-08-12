@@ -88,12 +88,7 @@ def _brctl_download(path: str | Path, *, timeout: float = 8.0) -> None:
 
 def _force_read(path: str, *, timeout: float) -> bool:
     """Read first bytes in a child process so we can kill hangs."""
-    code = (
-        "import sys\n"
-        "p = sys.argv[1]\n"
-        "with open(p, 'rb') as f:\n"
-        "    f.read(16384)\n"
-    )
+    code = "import sys\np = sys.argv[1]\nwith open(p, 'rb') as f:\n    f.read(16384)\n"
     try:
         r = subprocess.run(
             [sys.executable, "-c", code, path],
@@ -232,7 +227,7 @@ def materialize_homes(
 
 
 # Remote script: run materialize on peer (Desktop + Documents by default)
-REMOTE_MATERIALIZE_PY = r'''
+REMOTE_MATERIALIZE_PY = r"""
 import os, stat, subprocess, sys, time
 UF_DATALESS = 0x40000000
 timeout_per = float(sys.argv[1]) if len(sys.argv) > 1 else 20.0
@@ -309,7 +304,7 @@ for rel in roots:
     total_rem += rem
     print(f"ROOT {rel} found={found} mat={mat} fail={fail} remaining={rem} sec={int(time.time()-t0)}", flush=True)
 print(f"TOTAL mat={total_mat} fail={total_fail} remaining={total_rem}", flush=True)
-'''
+"""
 
 
 def default_icloud_roots(home: Path | None = None) -> list[Path]:

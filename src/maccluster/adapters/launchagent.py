@@ -74,7 +74,8 @@ class LaunchAgentService:
                 program=str(program),
                 config_path=str(config_path),
                 interval_seconds=max(
-                    DEFAULT_WATCHDOG_INTERVAL_S, int(interval_seconds or DEFAULT_WATCHDOG_INTERVAL_S)
+                    DEFAULT_WATCHDOG_INTERVAL_S,
+                    int(interval_seconds or DEFAULT_WATCHDOG_INTERVAL_S),
                 ),
             )
         else:
