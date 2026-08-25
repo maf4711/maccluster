@@ -70,6 +70,9 @@ ALLOWLIST_BASENAMES = frozenset(
         "tmutil",  # optional APFS local snapshot before pull
         "osascript",  # optional Notification Center on sync fail
         "rdma_ctl",  # macOS RDMA status (read-only; enable is Recovery-OS only)
+        "git",  # MCPRT preflight (commit / merge / push)
+        "gh",  # MCPRT: merge open PR
+        "bash",  # TestFlight ship.sh
     }
 )
 
@@ -101,6 +104,10 @@ SYNC_HOME_EXCLUDES: tuple[str, ...] = (
 )
 
 # Extra excludes when the tree root is ~/Developer (`maccluster sync dev`)
+SYNC_DEV_WIFI_TOP = 10  # recent top-level git repos over Wi-Fi (.local)
+TIMEOUT_MCPRT_GIT = 120.0
+TIMEOUT_MCPRT_TESTFLIGHT = 1800.0
+
 SYNC_DEV_EXCLUDES: tuple[str, ...] = (
     "**/.build/",
     "**/.next/",

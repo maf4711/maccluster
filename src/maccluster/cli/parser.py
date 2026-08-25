@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 
 from maccluster import __version__
-from maccluster.constants import DEFAULT_MONITOR_INTERVAL_S
+from maccluster.constants import DEFAULT_MONITOR_INTERVAL_S, SYNC_DEV_WIFI_TOP
 
 
 def _add_sync_tree_flags(
@@ -384,13 +384,46 @@ def build_parser() -> argparse.ArgumentParser:
         aliases=["developer"],
         help=(
             "Two-way ~/Developer sync via Apple ditto (newest-wins). "
-            "Tree root is Developer, not Home. Includes .git. No deletes."
+            "MCPRT first (merge + cpr + TestFlight), then full tree over "
+            "Thunderbolt plus the 10 most recently touched git repos over "
+            "Wi-Fi (.local). Includes .git. No deletes."
         ),
     )
     _add_sync_tree_flags(
         p_dev,
         home_help="Local Developer path (default: ~/Developer)",
         remote_help="Remote Developer path (default: same as local path)",
+    )
+    wifi_g = p_dev.add_mutually_exclusive_group()
+    wifi_g.add_argument(
+        "--no-wifi",
+        action="store_true",
+        help="Skip the Wi-Fi top-N git-repo pass (Thunderbolt only)",
+    )
+    wifi_g.add_argument(
+        "--wifi-only",
+        action="store_true",
+        help="Skip Thunderbolt; only sync recent git repos over Wi-Fi (.local)",
+    )
+    p_dev.add_argument(
+        "--wifi-top",
+        type=int,
+        default=SYNC_DEV_WIFI_TOP,
+        metavar="N",
+        help=(
+            "Wi-Fi pass: most recently touched top-level git repos "
+            f"(default {SYNC_DEV_WIFI_TOP}; 0 disables)"
+        ),
+    )
+    p_dev.add_argument(
+        "--no-mcprt",
+        action="store_true",
+        help="Skip MCPRT preflight (merge + cpr + TestFlight) before ditto",
+    )
+    p_dev.add_argument(
+        "--no-testflight",
+        action="store_true",
+        help="MCPRT: git ship only, do not upload iOS apps to TestFlight",
     )
     p_ri = sub.add_parser(
         "remote-install",

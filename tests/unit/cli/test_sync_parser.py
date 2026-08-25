@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from maccluster.cli.parser import build_parser
 
 
@@ -62,6 +64,48 @@ def test_parse_sync_dev_flags():
     assert args.peer == "node-b"
     assert args.push_only is True
     assert args.no_speedtest is True
+    assert args.wifi_top == 10
+    assert args.no_wifi is False
+    assert args.wifi_only is False
+    assert args.no_mcprt is False
+    assert args.no_testflight is False
+
+
+def test_parse_sync_dev_mcprt_flags():
+    parser = build_parser()
+    skip = parser.parse_args(["sync", "dev", "--no-mcprt", "--no-testflight"])
+    assert skip.no_mcprt is True
+    assert skip.no_testflight is True
+
+
+def test_parse_sync_home_has_no_mcprt_flags():
+    parser = build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["sync", "home", "--no-mcprt"])
+
+
+def test_parse_sync_dev_wifi_flags():
+    parser = build_parser()
+    no_wifi = parser.parse_args(["sync", "dev", "--no-wifi"])
+    assert no_wifi.no_wifi is True
+    assert no_wifi.wifi_only is False
+    wifi_only = parser.parse_args(["sync", "dev", "--wifi-only", "--wifi-top", "3"])
+    assert wifi_only.wifi_only is True
+    assert wifi_only.wifi_top == 3
+
+
+def test_parse_sync_dev_wifi_flags_mutex():
+    parser = build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["sync", "dev", "--no-wifi", "--wifi-only"])
+
+
+def test_parse_sync_home_has_no_wifi_flags():
+    parser = build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["sync", "home", "--wifi-only"])
+    home = parser.parse_args(["sync", "home", "--dry-run"])
+    assert not hasattr(home, "wifi_top")
 
 
 def test_parse_sync_developer_alias():

@@ -138,12 +138,34 @@ def _result_to_dict(result: SyncHomeResult) -> dict[str, Any]:
                 "verify_mismatches": p.verify_mismatches,
                 "safetynet_backed_up": p.safetynet_backed_up,
                 "truncated": p.truncated,
+                "via": getattr(p, "via", "tb"),
             }
         )
     return {
         "ts": datetime.now(UTC).isoformat(),
         "local_home": result.local_home,
         "target": getattr(result, "target", "home"),
+        "wifi_repos": list(getattr(result, "wifi_repos", ()) or ()),
+        "mcprt": (
+            {
+                "ok": result.mcprt.ok,
+                "dry_run": result.mcprt.dry_run,
+                "repos": [
+                    {
+                        "name": r.name,
+                        "ok": r.ok,
+                        "committed": r.committed,
+                        "merged": r.merged,
+                        "pushed": r.pushed,
+                        "testflight": r.testflight,
+                        "message": r.message,
+                    }
+                    for r in result.mcprt.repos
+                ],
+            }
+            if getattr(result, "mcprt", None) is not None
+            else None
+        ),
         "dry_run": result.dry_run,
         "strategy": result.strategy,
         "conflict_policy": result.conflict_policy,

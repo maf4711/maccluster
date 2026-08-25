@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.2.7 — 2026-08-25
+
+### Added — MCPRT before `sync dev`
+- **`maccluster sync dev` always runs MCPRT first** (merge open PR + commit/push
+  + TestFlight for iOS apps) on the same recent git repos, then the ditto
+  TB/Wi-Fi pass
+- Secrets (`.env`, `*.pem`/`*.p8`/`*.key`, `credentials.json`, …) are never
+  committed; ditto still copies them over the mesh
+- `--no-mcprt` skips the preflight (ditto only)
+- `--no-testflight` ships git only (no archive/upload)
+- Dry-run / `--compare` does not commit, push, or upload
+- MCPRT failure does not abort ditto; overall exit 3 if git/TF failed and
+  ditto succeeded
+
+```bash
+maccluster sync dev                 # MCPRT → TB + Wi-Fi top 10
+maccluster sync dev --wifi-only     # MCPRT → Wi-Fi recent repos
+maccluster sync dev --no-mcprt      # file copy only
+maccluster sync dev --no-testflight # git ship, skip TestFlight
+```
+
+## 0.2.6 — 2026-08-25
+
+### Added — `sync dev` Wi-Fi top-10 recent repos
+- After the Thunderbolt full-tree pass, **`maccluster sync dev` also syncs
+  the 10 most recently touched top-level git repos over Wi-Fi**
+  (SSH to the peer's `*.local` hostname, no TB `BindAddress`)
+- Ranking is cheap git metadata (`.git` / `HEAD` / `index` / `COMMIT_EDITMSG`),
+  not a full tree walk. Gitfiles (worktrees) count
+- `--no-wifi` — TB only (previous behaviour)
+- `--wifi-only` — skip TB; only the recent-repo Wi-Fi pass
+- `--wifi-top N` — how many repos (default 10; `0` disables)
+- User `--include` intersects the Wi-Fi set
+- Output tags each peer row `[tb]` / `[wifi]` and lists `wifi_repos=`
+
+```bash
+maccluster sync dev                 # TB full Developer + Wi-Fi top 10
+maccluster sync dev --wifi-only     # WLAN only, recent repos
+maccluster sync dev --no-wifi       # Thunderbolt only
+maccluster sync dev --wifi-top 5
+```
+
 ## 0.2.5 — 2026-08-25
 
 ### Added — `maccluster sync dev`

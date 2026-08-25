@@ -3,18 +3,25 @@
 from __future__ import annotations
 
 import sys
+from dataclasses import replace
 
 from maccluster.app_factory import AppContext
-from maccluster.constants import TIMEOUT_SYNC
+from maccluster.constants import SYNC_DEV_WIFI_TOP, TIMEOUT_SYNC
 from maccluster.errors import CliError
 from maccluster.render.json_out import dumps, to_jsonable
 from maccluster.render.progress import NullProgress, SyncProgress
 from maccluster.services.sync_history import format_last_run, read_last_run
+from maccluster.services.sync_mcprt import run_mcprt
 from maccluster.services.sync_service import (
     exit_code_for_sync,
     normalize_sync_target,
     resolve_sync_tree,
     sync_home,
+)
+from maccluster.services.sync_wifi import (
+    intersect_repos_with_includes,
+    list_recent_repos,
+    merge_sync_results,
 )
 
 
@@ -27,6 +34,16 @@ def _render_plain(result) -> str:
     ]
     if result.includes:
         lines.append(f"includes={', '.join(result.includes)}")
+    if getattr(result, "wifi_repos", ()):
+        lines.append(f"wifi_repos={', '.join(result.wifi_repos)}")
+    mcprt = getattr(result, "mcprt", None)
+    if mcprt is not None:
+        tag = "dry" if mcprt.dry_run else ("OK" if mcprt.ok else "FAIL")
+        lines.append(f"mcprt [{tag}] {len(mcprt.repos)} repo(s)")
+        for row in mcprt.repos:
+            st = "OK" if row.ok else "FAIL"
+            tf = f" tf={row.testflight}" if row.testflight else ""
+            lines.append(f"  [{st}] {row.name}{tf}  {row.message}")
     if result.safetynet:
         lines.append("safetynet=on")
     if result.verify:
@@ -40,7 +57,8 @@ def _render_plain(result) -> str:
     for p in result.peers:
         status = "OK" if p.ok else "FAIL"
         lines.append(
-            f"  [{status}] {p.peer_id} ({p.peer_ip}) via {p.ssh_target}  "
+            f"  [{status}] {p.peer_id} ({p.peer_ip}) via {p.ssh_target} "
+            f"[{getattr(p, 'via', 'tb')}]  "
             f"push={p.push_files}/{p.push_bytes}B pull={p.pull_files}/{p.pull_bytes}B  "
             f"rc={p.push_rc}/{p.pull_rc}  {p.message}"
         )
@@ -121,8 +139,15 @@ def run(ctx: AppContext, args) -> int:
         progress = SyncProgress(enabled=True, stream=sys.stderr, force=False)
 
     tree = resolve_sync_tree(action, getattr(args, "home", None))
-    result = sync_home(
-        ctx,
+    wifi_top = 0
+    if action == "dev":
+        wifi_top = int(getattr(args, "wifi_top", SYNC_DEV_WIFI_TOP) or 0)
+    no_wifi = bool(getattr(args, "no_wifi", False))
+    wifi_only = bool(getattr(args, "wifi_only", False))
+    if wifi_top < 0:
+        raise CliError("--wifi-top must be >= 0", exit_code=2)
+
+    kwargs = dict(
         dry_run=bool(getattr(args, "dry_run", False)),
         compare_only=bool(getattr(args, "compare", False)),
         peer=getattr(args, "peer", None),
@@ -154,7 +179,70 @@ def run(ctx: AppContext, args) -> int:
         icloud_timeout_per_file=float(getattr(args, "icloud_timeout", 20.0) or 20.0),
         icloud_max_seconds=float(getattr(args, "icloud_max_seconds", 900.0) or 900.0),
     )
+
+    run_tb = not wifi_only
+    run_wifi = action == "dev" and not no_wifi and wifi_top > 0
+    wifi_repos: tuple[str, ...] = ()
+    if run_wifi:
+        wifi_repos = list_recent_repos(tree, limit=wifi_top)
+        wifi_repos = intersect_repos_with_includes(wifi_repos, includes)
+        if not wifi_repos:
+            if wifi_only:
+                raise CliError(
+                    f"no git repos under {tree} for wifi top-{wifi_top}",
+                    exit_code=1,
+                )
+            run_wifi = False
+
+    mcprt_result = None
+    no_mcprt = bool(getattr(args, "no_mcprt", False))
+    if action == "dev" and not no_mcprt:
+        mcprt_names = wifi_repos or list_recent_repos(
+            tree, limit=wifi_top if wifi_top > 0 else SYNC_DEV_WIFI_TOP
+        )
+        mcprt_names = intersect_repos_with_includes(mcprt_names, includes)
+        if mcprt_names:
+            progress.note(f"mcprt: {len(mcprt_names)} repo(s) before ditto")
+            mcprt_result = run_mcprt(
+                ctx,
+                tuple(tree / name for name in mcprt_names),
+                dry_run=bool(kwargs["dry_run"] or kwargs["compare_only"]),
+                testflight=not bool(getattr(args, "no_testflight", False)),
+                timeout=timeout,
+            )
+            for row in mcprt_result.repos:
+                mark = "OK" if row.ok else "FAIL"
+                progress.note(f"  mcprt [{mark}] {row.name}  {row.message}")
+
+    results = []
+    if run_tb:
+        results.append(sync_home(ctx, **kwargs, via="tb"))
+    if run_wifi:
+        results.append(
+            sync_home(
+                ctx,
+                **{
+                    **kwargs,
+                    "includes": wifi_repos,
+                    "presets": (),
+                    "no_speedtest": True,
+                    "force_icloud": False,
+                    "identical": False,
+                    "apfs_snapshot": False,
+                },
+                via="wifi",
+            )
+        )
+    if not results:
+        raise CliError("nothing to sync", exit_code=2)
+    result = results[0] if len(results) == 1 else merge_sync_results(*results)
+    if wifi_repos:
+        result = replace(result, wifi_repos=wifi_repos)
+    if mcprt_result is not None:
+        result = replace(result, mcprt=mcprt_result)
     code = exit_code_for_sync(result)
+    if mcprt_result is not None and not mcprt_result.ok and code == 0:
+        code = 3
     if ctx.json_mode:
         print(dumps("sync", to_jsonable(result)))
     else:

@@ -41,7 +41,7 @@ class ProcessRunner:
                 exit_code=1,
             )
         paths = self._search
-        if basename in ("iperf3", "ssh", "scp"):
+        if basename in ("iperf3", "ssh", "scp", "git", "gh", "bash"):
             paths = self._search + self._extra
         for directory in paths:
             candidate = Path(directory) / basename
@@ -73,7 +73,16 @@ class ProcessRunner:
             "LANG": "C",
             "LC_ALL": "C",
         }
-        for key in ("SSH_AUTH_SOCK", "SSH_CONNECTION", "SSH_TTY"):
+        for key in (
+            "SSH_AUTH_SOCK",
+            "SSH_CONNECTION",
+            "SSH_TTY",
+            "GIT_SSH_COMMAND",
+            "GH_TOKEN",
+            "GH_HOST",
+            "GITHUB_TOKEN",
+            "DEVELOPER_DIR",
+        ):
             val = os.environ.get(key)
             if val:
                 env[key] = val

@@ -77,7 +77,7 @@ maccluster topo         # cable map
 maccluster doctor       # diagnostics
 maccluster sync home --dry-run   # Home newest-wins over TB/SSH (needs keys)
 maccluster sync home             # see docs/SYNC-HOME.md
-maccluster sync dev --dry-run    # ~/Developer tree only (includes .git)
+maccluster sync dev --dry-run    # ~/Developer over TB + Wi-Fi top 10 git repos
 ```
 
 ---

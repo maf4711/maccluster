@@ -278,6 +278,7 @@ class SyncPeerResult:
     free_bytes_local: int | None = None
     free_bytes_remote: int | None = None
     truncated: bool = False  # batch limit hit
+    via: str = "tb"  # tb | wifi
 
 
 @dataclass(frozen=True)
@@ -300,10 +301,37 @@ class SyncHomeResult:
     max_files: int | None = None
     max_bytes: int | None = None
     target: str = "home"  # home | dev
+    wifi_repos: tuple[str, ...] = ()  # recent git repos on the Wi-Fi pass
+    mcprt: McprtResult | None = None
 
     @property
     def ok(self) -> bool:
         return all(p.ok or p.skipped for p in self.peers) and bool(self.peers)
+
+
+@dataclass(frozen=True)
+class McprtRepoResult:
+    """One repo from the MCPRT preflight (merge + cpr + optional TestFlight)."""
+
+    name: str
+    ok: bool
+    committed: bool = False
+    merged: bool = False
+    pushed: bool = False
+    testflight: str | None = None  # ok | fail | skipped | None
+    message: str = ""
+
+
+@dataclass(frozen=True)
+class McprtResult:
+    """Aggregate MCPRT preflight for `sync dev`."""
+
+    repos: tuple[McprtRepoResult, ...]
+    dry_run: bool = False
+
+    @property
+    def ok(self) -> bool:
+        return all(r.ok for r in self.repos)
 
 
 @dataclass(frozen=True)

@@ -30,6 +30,43 @@ Use `sync dev` when the goal is “keep `~/Developer` aligned across the mesh”
 (repos, `.env`, dirty work, git objects). `--include repo/` limits to one
 project. `--home` / `--remote-home` override the Developer path.
 
+### Wi-Fi top-N recent repos
+
+`sync dev` always does the Thunderbolt full-tree pass first (same as 0.2.5).
+It **also** copies the **10 most recently touched top-level git repos** over
+Wi-Fi, so recent work still moves if the TB path is down or you are only on
+WLAN.
+
+### MCPRT before ditto
+
+Every `sync dev` **starts with MCPRT** on those recent git repos:
+
+1. Merge an open PR on the current branch (`gh pr merge --squash`), if any  
+2. Commit remaining work (never `.env` / keys / `credentials.json`)  
+3. `git fetch` + `merge --no-edit origin/<branch>` + push + tags  
+4. **TestFlight** (`intern` + `Extern`) when the repo looks like an iOS app  
+
+Then the TB/Wi-Fi ditto pass runs (so `.env` and other skip-paths still copy
+over the mesh). `--dry-run` / `--compare` only *report* MCPRT. `--no-mcprt`
+skips it; `--no-testflight` skips only the archive/upload.
+
+| | Thunderbolt | Wi-Fi |
+|---|---|---|
+| Payload | whole `~/Developer` | top N git repos (default 10) |
+| SSH | `user@10.42.0.x` + `BindAddress` Self-IP | `user@host.local` (no bind) |
+| Ranking | — | `.git` / `HEAD` / `index` / `COMMIT_EDITMSG` mtime |
+
+```bash
+maccluster sync dev                 # TB + Wi-Fi top 10
+maccluster sync dev --wifi-only     # WLAN recent repos only
+maccluster sync dev --no-wifi       # TB only
+maccluster sync dev --wifi-top 5
+```
+
+`--include` on the Wi-Fi pass is an **intersection** with the recent-repo
+list. `--wifi-top 0` disables the pass. Needs a `*.local` hostname on the
+peer in `cluster.toml`. `sync home` is unchanged (TB only).
+
 ## Why Apple `ditto` (not Homebrew rsync)
 
 | Tool | Role |
@@ -136,6 +173,11 @@ maccluster service sync-uninstall
 | `--no-speedtest` | Skip cable/iperf preflight |
 | `--timeout SEC` | Budget per heavy step (default 3600) |
 | `--no-progress` | Disable live progress bar |
+| `--no-wifi` | `sync dev` only: skip Wi-Fi recent-repo pass |
+| `--wifi-only` | `sync dev` only: skip TB; Wi-Fi top-N only |
+| `--wifi-top N` | `sync dev` only: how many recent git repos (default 10; 0 off) |
+| `--no-mcprt` | `sync dev` only: skip merge/cpr/TestFlight preflight |
+| `--no-testflight` | `sync dev` only: git ship, no TestFlight |
 
 ### Presets
 
