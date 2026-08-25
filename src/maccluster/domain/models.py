@@ -282,7 +282,7 @@ class SyncPeerResult:
 
 @dataclass(frozen=True)
 class SyncHomeResult:
-    """Aggregate result of `maccluster sync home`."""
+    """Aggregate result of `maccluster sync home` / `sync dev`."""
 
     local_home: str
     dry_run: bool
@@ -299,6 +299,7 @@ class SyncHomeResult:
     apfs_snapshot: str | None = None
     max_files: int | None = None
     max_bytes: int | None = None
+    target: str = "home"  # home | dev
 
     @property
     def ok(self) -> bool:

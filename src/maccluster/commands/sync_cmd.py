@@ -1,4 +1,4 @@
-"""sync command — home directory sync (CCC-inspired options)."""
+"""sync command — home / Developer tree sync (CCC-inspired options)."""
 
 from __future__ import annotations
 
@@ -10,12 +10,18 @@ from maccluster.errors import CliError
 from maccluster.render.json_out import dumps, to_jsonable
 from maccluster.render.progress import NullProgress, SyncProgress
 from maccluster.services.sync_history import format_last_run, read_last_run
-from maccluster.services.sync_service import exit_code_for_sync, sync_home
+from maccluster.services.sync_service import (
+    exit_code_for_sync,
+    normalize_sync_target,
+    resolve_sync_tree,
+    sync_home,
+)
 
 
 def _render_plain(result) -> str:
+    target = getattr(result, "target", None) or "home"
     lines: list[str] = [
-        f"sync home  strategy={result.strategy}  dry_run={result.dry_run}  "
+        f"sync {target}  strategy={result.strategy}  dry_run={result.dry_run}  "
         f"compare={result.compare_only}  policy={result.conflict_policy}",
         f"local={result.local_home}",
     ]
@@ -79,10 +85,10 @@ def _render_plain(result) -> str:
 
 
 def run(ctx: AppContext, args) -> int:
-    action = getattr(args, "sync_action", None)
-    if action != "home":
+    action = normalize_sync_target(getattr(args, "sync_action", None))
+    if action not in ("home", "dev"):
         raise CliError(
-            "sync requires a target: maccluster sync home  (see --help)",
+            "sync requires a target: maccluster sync home|dev  (see --help)",
             exit_code=2,
         )
 
@@ -114,6 +120,7 @@ def run(ctx: AppContext, args) -> int:
     else:
         progress = SyncProgress(enabled=True, stream=sys.stderr, force=False)
 
+    tree = resolve_sync_tree(action, getattr(args, "home", None))
     result = sync_home(
         ctx,
         dry_run=bool(getattr(args, "dry_run", False)),
@@ -122,8 +129,9 @@ def run(ctx: AppContext, args) -> int:
         push_only=bool(getattr(args, "push_only", False)),
         pull_only=bool(getattr(args, "pull_only", False)),
         user=getattr(args, "user", None),
-        home=getattr(args, "home", None),
+        home=tree,
         remote_home=getattr(args, "remote_home", None),
+        target=action,
         extra_excludes=extra,
         exclude_from=getattr(args, "exclude_from", None),
         presets=presets,

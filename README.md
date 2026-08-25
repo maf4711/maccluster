@@ -81,6 +81,7 @@ targets are refused for write/lock paths.
 | `service install\|uninstall\|status` | plist | User LaunchAgent → `heal --loop` |
 | `service sync-install\|sync-uninstall\|sync-status` | plist | Scheduled `sync home` (CCC schedule analogue) |
 | `sync home` | files via SSH | Two-way **Home** via **Apple ditto** + CCC-inspired options (compare, presets, SafetyNet, verify, policies). See [`docs/SYNC-HOME.md`](docs/SYNC-HOME.md) |
+| `sync dev` | files via SSH | Two-way **`~/Developer`** via Apple ditto (tree root = Developer; includes `.git`). Alias: `sync developer` |
 | `remote-install` | peer install | Install wheel+config on peer over **TB bridge only** (`10.42.0.x`, BindAddress Self-IP). See [`docs/REMOTE-INSTALL.md`](docs/REMOTE-INSTALL.md) |
 | `ssh-config` | OpenSSH | Write `~/.ssh/config.d/maccluster` so `10.42.0.*` uses bridge BindAddress |
 | `keychain show\|push\|pull\|delete\|push-peer` | Keychain | Local store + TB `push-peer`. See [`docs/KEYCHAIN.md`](docs/KEYCHAIN.md) |
@@ -108,6 +109,11 @@ maccluster sync home --identical --peer node-b
 maccluster sync home --force-icloud         # materialize only (then normal sync)
 maccluster service sync-install --interval 3600   # hourly schedule
 maccluster sync home --last                 # last run log
+
+# Developer tree only (not whole Home)
+maccluster sync dev --compare
+maccluster sync dev --dry-run --peer node-b
+maccluster sync dev                         # newest-wins, includes .git
 ```
 
 `--identical` runs **force-icloud** (local + peer: `brctl download` + timed open)

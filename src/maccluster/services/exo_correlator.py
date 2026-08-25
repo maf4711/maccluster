@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from maccluster.constants import EXO_DEFAULT_BASE_URL, EXO_PROBE_TIMEOUT_S
@@ -89,7 +89,7 @@ def _summarize(
     elif topology_nodes is not None:
         mesh_ok = topology_nodes >= 2 and (stale_seconds is None or stale_seconds < 60)
 
-    parts = [f"exo=up"]
+    parts = ["exo=up"]
     if topology_nodes is not None:
         parts.append(f"mesh={topology_nodes}")
     if stale_seconds is not None:
@@ -156,7 +156,7 @@ def _rdma_enabled_count(val: Any) -> int | None:
 def _max_last_seen_age(last_seen: Any) -> float | None:
     if not isinstance(last_seen, dict) or not last_seen:
         return None
-    now = datetime.now(timezone.utc).timestamp()
+    now = datetime.now(UTC).timestamp()
     ages: list[float] = []
     for v in last_seen.values():
         if not isinstance(v, str):

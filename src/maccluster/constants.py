@@ -79,6 +79,8 @@ KEYCHAIN_SERVICE_SSH_USER = "ai.maccluster.ssh.user"
 KEYCHAIN_SERVICE_SSH_PASSWORD = "ai.maccluster.ssh.password"
 KEYCHAIN_ACCOUNT_DEFAULT = "default"
 
+DEVELOPER_DIR_NAME = "Developer"
+
 # Default excludes for `maccluster sync home` (newest-wins; never deletes)
 SYNC_HOME_EXCLUDES: tuple[str, ...] = (
     ".Trash/",
@@ -96,6 +98,16 @@ SYNC_HOME_EXCLUDES: tuple[str, ...] = (
     "**/venv/",
     ".DS_Store",
     ".maccluster-safetynet/",  # never re-sync SafetyNet undo tree
+)
+
+# Extra excludes when the tree root is ~/Developer (`maccluster sync dev`)
+SYNC_DEV_EXCLUDES: tuple[str, ...] = (
+    "**/.build/",
+    "**/.next/",
+    "**/.turbo/",
+    "**/.pytest_cache/",
+    "**/.ruff_cache/",
+    "**/DerivedData/",
 )
 
 # CCC-style path presets → include roots under $HOME (comma-separated via --preset)

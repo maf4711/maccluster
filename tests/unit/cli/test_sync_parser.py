@@ -40,10 +40,60 @@ def test_parse_sync_home_flags():
     assert args.no_progress is True
 
 
-def test_sync_bare_requires_action_in_main():
+def test_parse_sync_dev_flags():
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "sync",
+            "dev",
+            "--dry-run",
+            "--compare",
+            "--peer",
+            "node-b",
+            "--push-only",
+            "--no-speedtest",
+            "--no-progress",
+        ]
+    )
+    assert args.command == "sync"
+    assert args.sync_action == "dev"
+    assert args.dry_run is True
+    assert args.compare is True
+    assert args.peer == "node-b"
+    assert args.push_only is True
+    assert args.no_speedtest is True
+
+
+def test_parse_sync_developer_alias():
+    parser = build_parser()
+    args = parser.parse_args(["sync", "developer", "--last"])
+    assert args.sync_action in ("dev", "developer")
+    assert args.last is True
+
+
+def test_sync_help_lists_dev_target():
+    parser = build_parser()
+    help_text = parser.format_help()
+    assert "sync" in help_text
+    # subparser names appear in the top-level usage or command list
+    sync_help = None
+    for action in parser._subparsers._group_actions:  # noqa: SLF001
+        for name, sub in action.choices.items():
+            if name == "sync":
+                sync_help = sub.format_help()
+                break
+    assert sync_help is not None
+    assert "dev" in sync_help
+    assert "home" in sync_help
+
+
+def test_sync_bare_requires_action_in_main(capsys):
     from maccluster.cli.main import main
 
     assert main(["sync"]) == 2
+    err = capsys.readouterr().err
+    assert "home" in err
+    assert "dev" in err
 
 
 def test_parse_identical_and_force_icloud():

@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.2.5 — 2026-08-25
+
+### Added — `maccluster sync dev`
+- **`maccluster sync dev`** (alias **`sync developer`**): two-way **`~/Developer`**
+  tree sync over TB/SSH using the same Apple `ditto` engine as `sync home`
+- Tree root is **Developer**, not Home — inventory walks only that directory
+  (faster than `sync home --preset developer`)
+- Remote inventory includes **`.git` / `.github`** (dot-dirs); Home sync still
+  skips hidden dirs
+- Run logs stay in **`~/Library/Logs/maccluster/`** (not `~/Developer/Library/…`)
+- Extra excludes: `.build`, `.next`, `.turbo`, pytest/ruff caches, DerivedData
+- Same flags as `sync home` (`--compare`, `--dry-run`, `--peer`, `--include`, …)
+- Override tree with `--home PATH` / `--remote-home PATH`
+
+```bash
+maccluster sync dev --compare
+maccluster sync dev --dry-run --peer node-b
+maccluster sync dev
+maccluster sync dev --include maccluster/
+```
+
 ## 0.2.4 — 2026-08-11
 
 ### Added — fabric mesh health, RDMA probe, exo correlator, heal keepalive

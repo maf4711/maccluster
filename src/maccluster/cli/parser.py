@@ -8,6 +8,196 @@ from maccluster import __version__
 from maccluster.constants import DEFAULT_MONITOR_INTERVAL_S
 
 
+def _add_sync_tree_flags(
+    parser: argparse.ArgumentParser,
+    *,
+    home_help: str,
+    remote_help: str,
+) -> None:
+    """Flags shared by `sync home` and `sync dev`."""
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what ditto would transfer (no writes)",
+    )
+    parser.add_argument(
+        "--compare",
+        action="store_true",
+        help="CCC Compare: Diff-Report only (counts + sample paths, no transfer)",
+    )
+    parser.add_argument(
+        "--last",
+        action="store_true",
+        help="Show last sync run log (no transfer)",
+    )
+    parser.add_argument(
+        "--peer",
+        metavar="ID|IP",
+        default=None,
+        help="Only sync with this node id or IP (default: all peers)",
+    )
+    parser.add_argument(
+        "--push-only",
+        action="store_true",
+        help="Only push local → peer",
+    )
+    parser.add_argument(
+        "--pull-only",
+        action="store_true",
+        help="Only pull peer → local",
+    )
+    parser.add_argument(
+        "--user",
+        metavar="NAME",
+        default=None,
+        help="SSH username on peers (default: local $USER)",
+    )
+    parser.add_argument(
+        "--home",
+        metavar="PATH",
+        default=None,
+        help=home_help,
+    )
+    parser.add_argument(
+        "--remote-home",
+        metavar="PATH",
+        default=None,
+        help=remote_help,
+    )
+    parser.add_argument(
+        "--exclude",
+        action="append",
+        default=[],
+        metavar="PATTERN",
+        help="Extra exclude pattern (repeatable); defaults already skip Caches/Trash/…",
+    )
+    parser.add_argument(
+        "--exclude-from",
+        metavar="FILE",
+        default=None,
+        help="Exclude patterns file (default: ~/.config/maccluster/sync-excludes)",
+    )
+    parser.add_argument(
+        "--preset",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help=(
+            "Include preset (repeatable/comma): documents,desktop,downloads,"
+            "developer,pictures,movies,music,library-app,ssh,config"
+        ),
+    )
+    parser.add_argument(
+        "--include",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="Only sync this path under the tree root (repeatable)",
+    )
+    parser.add_argument(
+        "--conflict-policy",
+        choices=["newer", "larger", "prefer-local", "prefer-remote", "skip-conflict"],
+        default="newer",
+        help="On both-sides exist: newer (default) | larger | prefer-local | prefer-remote | skip-conflict",
+    )
+    parser.add_argument(
+        "--safetynet",
+        action="store_true",
+        help="Before overwrite on pull: backup local file to ~/.maccluster-safetynet/",
+    )
+    parser.add_argument(
+        "--verify",
+        action="store_true",
+        help="After pull: sample-check size/mtime of transferred files",
+    )
+    parser.add_argument(
+        "--verify-sample",
+        type=int,
+        default=20,
+        help="Max files to verify after pull (default 20)",
+    )
+    parser.add_argument(
+        "--quick",
+        action="store_true",
+        help="Quick update: prefer local files touched since last successful sync",
+    )
+    parser.add_argument(
+        "--max-files",
+        type=int,
+        default=None,
+        help="Batch limit: max files this run (remainder next run)",
+    )
+    parser.add_argument(
+        "--max-bytes",
+        type=int,
+        default=None,
+        help="Batch limit: max payload bytes this run",
+    )
+    parser.add_argument(
+        "--min-free",
+        type=int,
+        default=None,
+        metavar="BYTES",
+        help="Abort if free space on local or peer is below this many bytes",
+    )
+    parser.add_argument(
+        "--apfs-snapshot",
+        action="store_true",
+        help="Opt-in: tmutil localsnapshot before transfer (APFS, may need privileges)",
+    )
+    parser.add_argument(
+        "--notify",
+        action="store_true",
+        help="macOS Notification Center on failure",
+    )
+    parser.add_argument(
+        "--no-speedtest",
+        action="store_true",
+        help="Skip TB cable/speedtest preflight",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=None,
+        help="Per-step timeout seconds (default 3600)",
+    )
+    parser.add_argument(
+        "--no-progress",
+        action="store_true",
+        help="Disable live progress bar (percent / path / speed)",
+    )
+    parser.add_argument(
+        "--force-icloud",
+        action="store_true",
+        help=(
+            "Before sync: materialize iCloud dataless stubs on local + peer "
+            "(brctl download + timed open). Skips remaining stubs in inventory."
+        ),
+    )
+    parser.add_argument(
+        "--identical",
+        action="store_true",
+        help=(
+            "Best-effort 1:1: --force-icloud + both directions + --verify. "
+            "Cloud-only stubs that cannot materialize are skipped and reported."
+        ),
+    )
+    parser.add_argument(
+        "--icloud-timeout",
+        type=float,
+        default=20.0,
+        metavar="SEC",
+        help="Per-file timeout when force-materializing iCloud stubs (default 20)",
+    )
+    parser.add_argument(
+        "--icloud-max-seconds",
+        type=float,
+        default=900.0,
+        metavar="SEC",
+        help="Max seconds per tree (Desktop/Documents) for iCloud materialize (default 900)",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="maccluster",
@@ -174,7 +364,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_sync = sub.add_parser(
         "sync",
-        help="Sync data with peers over TB/SSH (CCC-inspired Home sync layer)",
+        help="Sync data with peers over TB/SSH (home or ~/Developer)",
     )
     sync_sub = p_sync.add_subparsers(dest="sync_action", metavar="TARGET")
     p_home = sync_sub.add_parser(
@@ -184,188 +374,24 @@ def build_parser() -> argparse.ArgumentParser:
             "mtime). Full xattrs/ACLs. No deletes. Needs SSH key login to peers."
         ),
     )
-    p_home.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Show what ditto would transfer (no writes)",
+    _add_sync_tree_flags(
+        p_home,
+        home_help="Local home path (default: ~)",
+        remote_help="Remote home path (default: same as local home path)",
     )
-    p_home.add_argument(
-        "--compare",
-        action="store_true",
-        help="CCC Compare: Diff-Report only (counts + sample paths, no transfer)",
-    )
-    p_home.add_argument(
-        "--last",
-        action="store_true",
-        help="Show last sync run log (no transfer)",
-    )
-    p_home.add_argument(
-        "--peer",
-        metavar="ID|IP",
-        default=None,
-        help="Only sync with this node id or IP (default: all peers)",
-    )
-    p_home.add_argument(
-        "--push-only",
-        action="store_true",
-        help="Only push local → peer",
-    )
-    p_home.add_argument(
-        "--pull-only",
-        action="store_true",
-        help="Only pull peer → local",
-    )
-    p_home.add_argument(
-        "--user",
-        metavar="NAME",
-        default=None,
-        help="SSH username on peers (default: local $USER)",
-    )
-    p_home.add_argument(
-        "--home",
-        metavar="PATH",
-        default=None,
-        help="Local home path (default: ~)",
-    )
-    p_home.add_argument(
-        "--remote-home",
-        metavar="PATH",
-        default=None,
-        help="Remote home path (default: same as local home path)",
-    )
-    p_home.add_argument(
-        "--exclude",
-        action="append",
-        default=[],
-        metavar="PATTERN",
-        help="Extra exclude pattern (repeatable); defaults already skip Caches/Trash/…",
-    )
-    p_home.add_argument(
-        "--exclude-from",
-        metavar="FILE",
-        default=None,
-        help="Exclude patterns file (default: ~/.config/maccluster/sync-excludes)",
-    )
-    p_home.add_argument(
-        "--preset",
-        action="append",
-        default=[],
-        metavar="NAME",
+    p_dev = sync_sub.add_parser(
+        "dev",
+        aliases=["developer"],
         help=(
-            "Include preset (repeatable/comma): documents,desktop,downloads,"
-            "developer,pictures,movies,music,library-app,ssh,config"
+            "Two-way ~/Developer sync via Apple ditto (newest-wins). "
+            "Tree root is Developer, not Home. Includes .git. No deletes."
         ),
     )
-    p_home.add_argument(
-        "--include",
-        action="append",
-        default=[],
-        metavar="PATH",
-        help="Only sync this path under Home (repeatable), e.g. Documents/",
+    _add_sync_tree_flags(
+        p_dev,
+        home_help="Local Developer path (default: ~/Developer)",
+        remote_help="Remote Developer path (default: same as local path)",
     )
-    p_home.add_argument(
-        "--conflict-policy",
-        choices=["newer", "larger", "prefer-local", "prefer-remote", "skip-conflict"],
-        default="newer",
-        help="On both-sides exist: newer (default) | larger | prefer-local | prefer-remote | skip-conflict",
-    )
-    p_home.add_argument(
-        "--safetynet",
-        action="store_true",
-        help="Before overwrite on pull: backup local file to ~/.maccluster-safetynet/",
-    )
-    p_home.add_argument(
-        "--verify",
-        action="store_true",
-        help="After pull: sample-check size/mtime of transferred files",
-    )
-    p_home.add_argument(
-        "--verify-sample",
-        type=int,
-        default=20,
-        help="Max files to verify after pull (default 20)",
-    )
-    p_home.add_argument(
-        "--quick",
-        action="store_true",
-        help="Quick update: prefer local files touched since last successful sync",
-    )
-    p_home.add_argument(
-        "--max-files",
-        type=int,
-        default=None,
-        help="Batch limit: max files this run (remainder next run)",
-    )
-    p_home.add_argument(
-        "--max-bytes",
-        type=int,
-        default=None,
-        help="Batch limit: max payload bytes this run",
-    )
-    p_home.add_argument(
-        "--min-free",
-        type=int,
-        default=None,
-        metavar="BYTES",
-        help="Abort if free space on local or peer is below this many bytes",
-    )
-    p_home.add_argument(
-        "--apfs-snapshot",
-        action="store_true",
-        help="Opt-in: tmutil localsnapshot before transfer (APFS, may need privileges)",
-    )
-    p_home.add_argument(
-        "--notify",
-        action="store_true",
-        help="macOS Notification Center on failure",
-    )
-    p_home.add_argument(
-        "--no-speedtest",
-        action="store_true",
-        help="Skip TB cable/speedtest preflight",
-    )
-    p_home.add_argument(
-        "--timeout",
-        type=float,
-        default=None,
-        help="Per-step timeout seconds (default 3600)",
-    )
-    p_home.add_argument(
-        "--no-progress",
-        action="store_true",
-        help="Disable live progress bar (percent / path / speed)",
-    )
-    p_home.add_argument(
-        "--force-icloud",
-        action="store_true",
-        help=(
-            "Before sync: materialize iCloud dataless stubs on local + peer "
-            "(brctl download + timed open). Skips remaining stubs in inventory."
-        ),
-    )
-    p_home.add_argument(
-        "--identical",
-        action="store_true",
-        help=(
-            "Best-effort 1:1: --force-icloud + both directions + --verify. "
-            "Cloud-only stubs that cannot materialize are skipped and reported."
-        ),
-    )
-    p_home.add_argument(
-        "--icloud-timeout",
-        type=float,
-        default=20.0,
-        metavar="SEC",
-        help="Per-file timeout when force-materializing iCloud stubs (default 20)",
-    )
-    p_home.add_argument(
-        "--icloud-max-seconds",
-        type=float,
-        default=900.0,
-        metavar="SEC",
-        help="Max seconds per tree (Desktop/Documents) for iCloud materialize (default 900)",
-    )
-
     p_ri = sub.add_parser(
         "remote-install",
         help=(

@@ -19,12 +19,14 @@ import shutil
 import stat
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from fnmatch import fnmatch
 from pathlib import Path
 
 from maccluster.app_factory import AppContext
 from maccluster.constants import (
+    DEVELOPER_DIR_NAME,
+    SYNC_DEV_EXCLUDES,
     SYNC_HOME_EXCLUDES,
     TIMEOUT_SSH,
     TIMEOUT_SYNC,
@@ -35,7 +37,7 @@ from maccluster.render.progress import NullProgress, ProgressLike, format_bytes,
 from maccluster.services.config_service import load_and_bind_self
 
 # Remote inventory: argv home excludes_file → lines relpath\\tmtime_ns\\tsize
-_REMOTE_INVENTORY_PY = 'import fnmatch, json, os, signal, stat, subprocess, sys, time\n\n# Unbuffered inventory lines (SSH non-TTY otherwise loses stdout on kill/timeout)\ntry:\n    sys.stdout.reconfigure(line_buffering=True)\nexcept Exception:\n    pass\ntry:\n    sys.stderr.reconfigure(line_buffering=True)\nexcept Exception:\n    pass\n\nroot, ex_path = sys.argv[1], sys.argv[2]\nincludes = [x.strip().strip("/") for x in sys.argv[3:] if x.strip()]\nex = open(ex_path, encoding="utf-8").read().splitlines() if os.path.isfile(ex_path) else []\nPREF = ("Developer", "Downloads", ".ssh", ".config", "Desktop", "Documents")\nincludes.sort(key=lambda x: PREF.index(x.split("/")[0]) if x.split("/")[0] in PREF else 99)\nt0 = time.time()\nMAX_SEC = float(os.environ.get("MACCLUSTER_INV_MAX_SEC", "240"))\nDIR_SEC = float(os.environ.get("MACCLUSTER_INV_DIR_SEC", "6"))\nSKIP_NAMES = {\n    "imessage_export", "node_modules", ".git", "DerivedData",\n    "__pycache__", ".venv", "venv", ".Trash", "Library",\n}\nUF_DATALESS = 0x40000000\nn_emitted = 0\n\n\ndef excl(rel):\n    rel = rel.replace("\\\\", "/").lstrip("./")\n    parts = rel.split("/")\n    for pat in ex:\n        if not pat:\n            continue\n        p = pat.replace("\\\\", "/")\n        if p.endswith("/"):\n            b = p.rstrip("/")\n            if rel == b or rel.startswith(b + "/"):\n                return True\n            if b.startswith("**/") and (b[3:] in parts or any(fnmatch.fnmatch(x, b[3:]) for x in parts)):\n                return True\n        elif p.startswith("**/"):\n            rest = p[3:]\n            if any(x == rest or fnmatch.fnmatch(x, rest) for x in parts):\n                return True\n            if fnmatch.fnmatch(rel, p) or fnmatch.fnmatch(os.path.basename(rel), rest):\n                return True\n        else:\n            if fnmatch.fnmatch(rel, p) or fnmatch.fnmatch(os.path.basename(rel), p):\n                return True\n            b = p.rstrip("/")\n            if rel == b or rel.startswith(b + "/"):\n                return True\n    return False\n\n\ndef safe_scandir(path):\n    """List dir in a killable child — iCloud/FP hangs ignore SIGALRM."""\n    code = (\n        "import os,json,sys\\n"\n        "p=sys.argv[1]\\n"\n        "o=[]\\n"\n        "try:\\n"\n        "  for e in os.scandir(p):\\n"\n        "    try:\\n"\n        "      o.append([e.name,e.path,e.is_dir(follow_symlinks=False),e.is_file(follow_symlinks=False)])\\n"\n        "    except OSError:\\n"\n        "      pass\\n"\n        "except Exception:\\n"\n        "  sys.exit(2)\\n"\n        "print(json.dumps(o))\\n"\n    )\n    try:\n        r = subprocess.run(\n            [sys.executable, "-c", code, path],\n            capture_output=True,\n            text=True,\n            timeout=DIR_SEC,\n        )\n    except subprocess.TimeoutExpired:\n        print("# skip-hang %s" % path, file=sys.stderr, flush=True)\n        return None\n    if r.returncode != 0:\n        return None\n    try:\n        return json.loads(r.stdout or "[]")\n    except Exception:\n        return None\n\n\ndef emit_file(home, path):\n    global n_emitted\n    try:\n        st = os.lstat(path)\n    except OSError:\n        return False\n    if not (stat.S_ISREG(st.st_mode) or stat.S_ISLNK(st.st_mode)):\n        return False\n    if getattr(st, "st_flags", 0) & UF_DATALESS:\n        return False\n    rel = os.path.relpath(path, home).replace("\\\\", "/")\n    if excl(rel):\n        return False\n    sys.stdout.write("%s\\t%d\\t%d\\n" % (rel, st.st_mtime_ns, st.st_size))\n    n_emitted += 1\n    if n_emitted % 200 == 0:\n        sys.stdout.flush()\n    return True\n\n\ndef walk_safe(home, start):\n    n = 0\n    stack = [start]\n    while stack:\n        if time.time() - t0 > MAX_SEC:\n            print("# inventory time budget", file=sys.stderr, flush=True)\n            break\n        cur = stack.pop()\n        entries = safe_scandir(cur)\n        if entries is None:\n            try:\n                label = os.path.relpath(cur, home)\n            except Exception:\n                label = cur\n            print("# skip-hang %s" % label, file=sys.stderr, flush=True)\n            continue\n        for name, path, is_dir, is_file in entries:\n            if time.time() - t0 > MAX_SEC:\n                break\n            if name in SKIP_NAMES:\n                continue\n            if name == ".DS_Store":\n                continue\n            # skip heavy/hidden dirs except .ssh / .config\n            if name.startswith(".") and name not in (".ssh", ".config"):\n                if is_dir:\n                    continue\n            if is_dir:\n                rel = os.path.relpath(path, home).replace("\\\\", "/")\n                if excl(rel) or excl(rel + "/"):\n                    continue\n                stack.append(path)\n            elif is_file or True:\n                if emit_file(home, path):\n                    n += 1\n                    if n % 20000 == 0:\n                        print("# listed %d" % n, file=sys.stderr, flush=True)\n    return n\n\n\nwalk_roots = []\nif includes:\n    for inc in includes:\n        if not inc or ".." in inc.split("/"):\n            continue\n        p0 = os.path.join(root, inc)\n        if not os.path.lexists(p0):\n            continue\n        base = inc.split("/")[0]\n        if base in ("Documents", "Desktop") and "/" not in inc.rstrip("/"):\n            kids = safe_scandir(p0)\n            if kids is None:\n                print("# skip-hang %s" % inc, file=sys.stderr, flush=True)\n                continue\n            for name, path, is_dir, is_file in kids:\n                if name in SKIP_NAMES or name == ".DS_Store":\n                    continue\n                if is_dir:\n                    walk_roots.append((path, "%s/%s" % (inc.rstrip("/"), name)))\n                elif is_file:\n                    emit_file(root, path)\n        else:\n            walk_roots.append((p0, inc))\nelse:\n    walk_roots.append((root, ""))\n\nn = 0\nfor walk_root, label in walk_roots:\n    if time.time() - t0 > MAX_SEC:\n        break\n    print("# walk %s" % label, file=sys.stderr, flush=True)\n    n += walk_safe(root, walk_root)\n\nsys.stdout.flush()\nprint("# inventory done n=%d sec=%d" % (n_emitted, int(time.time() - t0)), file=sys.stderr, flush=True)\nsys.exit(0)\n'
+_REMOTE_INVENTORY_PY = 'import fnmatch, json, os, signal, stat, subprocess, sys, time\n\n# Unbuffered inventory lines (SSH non-TTY otherwise loses stdout on kill/timeout)\ntry:\n    sys.stdout.reconfigure(line_buffering=True)\nexcept Exception:\n    pass\ntry:\n    sys.stderr.reconfigure(line_buffering=True)\nexcept Exception:\n    pass\n\nroot, ex_path = sys.argv[1], sys.argv[2]\nincludes = [x.strip().strip("/") for x in sys.argv[3:] if x.strip()]\nex = open(ex_path, encoding="utf-8").read().splitlines() if os.path.isfile(ex_path) else []\nPREF = ("Developer", "Downloads", ".ssh", ".config", "Desktop", "Documents")\nincludes.sort(key=lambda x: PREF.index(x.split("/")[0]) if x.split("/")[0] in PREF else 99)\nt0 = time.time()\nMAX_SEC = float(os.environ.get("MACCLUSTER_INV_MAX_SEC", "240"))\nDIR_SEC = float(os.environ.get("MACCLUSTER_INV_DIR_SEC", "6"))\nSKIP_NAMES = {\n    "imessage_export", "node_modules", ".git", "DerivedData",\n    "__pycache__", ".venv", "venv", ".Trash", "Library",\n}\nDOTDIRS = os.environ.get("MACCLUSTER_INV_DOTDIRS", "").strip().lower() in ("1", "true", "yes")\nif DOTDIRS:\n    SKIP_NAMES.discard(".git")\nUF_DATALESS = 0x40000000\nn_emitted = 0\n\n\ndef excl(rel):\n    rel = rel.replace("\\\\", "/").lstrip("./")\n    parts = rel.split("/")\n    for pat in ex:\n        if not pat:\n            continue\n        p = pat.replace("\\\\", "/")\n        if p.endswith("/"):\n            b = p.rstrip("/")\n            if rel == b or rel.startswith(b + "/"):\n                return True\n            if b.startswith("**/") and (b[3:] in parts or any(fnmatch.fnmatch(x, b[3:]) for x in parts)):\n                return True\n        elif p.startswith("**/"):\n            rest = p[3:]\n            if any(x == rest or fnmatch.fnmatch(x, rest) for x in parts):\n                return True\n            if fnmatch.fnmatch(rel, p) or fnmatch.fnmatch(os.path.basename(rel), rest):\n                return True\n        else:\n            if fnmatch.fnmatch(rel, p) or fnmatch.fnmatch(os.path.basename(rel), p):\n                return True\n            b = p.rstrip("/")\n            if rel == b or rel.startswith(b + "/"):\n                return True\n    return False\n\n\ndef safe_scandir(path):\n    """List dir in a killable child — iCloud/FP hangs ignore SIGALRM."""\n    code = (\n        "import os,json,sys\\n"\n        "p=sys.argv[1]\\n"\n        "o=[]\\n"\n        "try:\\n"\n        "  for e in os.scandir(p):\\n"\n        "    try:\\n"\n        "      o.append([e.name,e.path,e.is_dir(follow_symlinks=False),e.is_file(follow_symlinks=False)])\\n"\n        "    except OSError:\\n"\n        "      pass\\n"\n        "except Exception:\\n"\n        "  sys.exit(2)\\n"\n        "print(json.dumps(o))\\n"\n    )\n    try:\n        r = subprocess.run(\n            [sys.executable, "-c", code, path],\n            capture_output=True,\n            text=True,\n            timeout=DIR_SEC,\n        )\n    except subprocess.TimeoutExpired:\n        print("# skip-hang %s" % path, file=sys.stderr, flush=True)\n        return None\n    if r.returncode != 0:\n        return None\n    try:\n        return json.loads(r.stdout or "[]")\n    except Exception:\n        return None\n\n\ndef emit_file(home, path):\n    global n_emitted\n    try:\n        st = os.lstat(path)\n    except OSError:\n        return False\n    if not (stat.S_ISREG(st.st_mode) or stat.S_ISLNK(st.st_mode)):\n        return False\n    if getattr(st, "st_flags", 0) & UF_DATALESS:\n        return False\n    rel = os.path.relpath(path, home).replace("\\\\", "/")\n    if excl(rel):\n        return False\n    sys.stdout.write("%s\\t%d\\t%d\\n" % (rel, st.st_mtime_ns, st.st_size))\n    n_emitted += 1\n    if n_emitted % 200 == 0:\n        sys.stdout.flush()\n    return True\n\n\ndef walk_safe(home, start):\n    n = 0\n    stack = [start]\n    while stack:\n        if time.time() - t0 > MAX_SEC:\n            print("# inventory time budget", file=sys.stderr, flush=True)\n            break\n        cur = stack.pop()\n        entries = safe_scandir(cur)\n        if entries is None:\n            try:\n                label = os.path.relpath(cur, home)\n            except Exception:\n                label = cur\n            print("# skip-hang %s" % label, file=sys.stderr, flush=True)\n            continue\n        for name, path, is_dir, is_file in entries:\n            if time.time() - t0 > MAX_SEC:\n                break\n            if name in SKIP_NAMES:\n                continue\n            if name == ".DS_Store":\n                continue\n            # skip heavy/hidden dirs except .ssh / .config (DOTDIRS walks .git/.github)\n            if (not DOTDIRS) and name.startswith(".") and name not in (".ssh", ".config"):\n                if is_dir:\n                    continue\n            if is_dir:\n                rel = os.path.relpath(path, home).replace("\\\\", "/")\n                if excl(rel) or excl(rel + "/"):\n                    continue\n                stack.append(path)\n            elif is_file or True:\n                if emit_file(home, path):\n                    n += 1\n                    if n % 20000 == 0:\n                        print("# listed %d" % n, file=sys.stderr, flush=True)\n    return n\n\n\nwalk_roots = []\nif includes:\n    for inc in includes:\n        if not inc or ".." in inc.split("/"):\n            continue\n        p0 = os.path.join(root, inc)\n        if not os.path.lexists(p0):\n            continue\n        base = inc.split("/")[0]\n        if base in ("Documents", "Desktop") and "/" not in inc.rstrip("/"):\n            kids = safe_scandir(p0)\n            if kids is None:\n                print("# skip-hang %s" % inc, file=sys.stderr, flush=True)\n                continue\n            for name, path, is_dir, is_file in kids:\n                if name in SKIP_NAMES or name == ".DS_Store":\n                    continue\n                if is_dir:\n                    walk_roots.append((path, "%s/%s" % (inc.rstrip("/"), name)))\n                elif is_file:\n                    emit_file(root, path)\n        else:\n            walk_roots.append((p0, inc))\nelse:\n    walk_roots.append((root, ""))\n\nn = 0\nfor walk_root, label in walk_roots:\n    if time.time() - t0 > MAX_SEC:\n        break\n    print("# walk %s" % label, file=sys.stderr, flush=True)\n    n += walk_safe(root, walk_root)\n\nsys.stdout.flush()\nprint("# inventory done n=%d sec=%d" % (n_emitted, int(time.time() - t0)), file=sys.stderr, flush=True)\nsys.exit(0)\n'
 
 _REMOTE_STAGE_PY = 'import os, stat, subprocess, sys\n\nhome, list_path, stage, archive = sys.argv[1:5]\nos.makedirs(stage, exist_ok=True)\nUF_DATALESS = 0x40000000\nn = 0\nskipped = 0\nwith open(list_path, encoding="utf-8") as fh:\n    for line in fh:\n        rel = line.strip()\n        if not rel or ".." in rel.split("/"):\n            continue\n        src = os.path.join(home, rel)\n        dst = os.path.join(stage, rel)\n        if not os.path.lexists(src):\n            skipped += 1\n            continue\n        try:\n            st = os.lstat(src)\n        except OSError:\n            skipped += 1\n            continue\n        if getattr(st, "st_flags", 0) & UF_DATALESS:\n            skipped += 1\n            continue\n        if not (stat.S_ISREG(st.st_mode) or stat.S_ISLNK(st.st_mode)):\n            skipped += 1\n            continue\n        # Unreadable dataless-ish edge cases\n        if not os.access(src, os.R_OK) and not stat.S_ISLNK(st.st_mode):\n            skipped += 1\n            continue\n        os.makedirs(os.path.dirname(dst) or ".", exist_ok=True)\n        if os.path.lexists(dst):\n            try:\n                os.unlink(dst)\n            except OSError:\n                pass\n        ok = False\n        try:\n            os.link(src, dst)\n            ok = True\n        except OSError:\n            try:\n                r = subprocess.run(\n                    ["/bin/cp", "-p", src, dst],\n                    stdout=subprocess.DEVNULL,\n                    stderr=subprocess.DEVNULL,\n                    timeout=30,\n                    check=False,\n                )\n                ok = r.returncode == 0 and os.path.lexists(dst)\n            except Exception:\n                ok = False\n        if ok:\n            n += 1\n        else:\n            skipped += 1\n\nif n == 0:\n    print("staged=0 skipped=%d archive_rc=0" % skipped, flush=True)\n    open(archive, "wb").close()\n    sys.exit(0)\n\nrc = 1\ntry:\n    rc = subprocess.run(\n        ["/usr/bin/ditto", "-c", stage, archive],\n        timeout=max(120, min(3600, n // 10 + 60)),\n        check=False,\n    ).returncode\nexcept Exception:\n    rc = 1\n\narch_ok = os.path.isfile(archive) and os.path.getsize(archive) > 0\nif rc != 0 and arch_ok:\n    rc = 0\nprint("staged=%d skipped=%d archive_rc=%d" % (n, skipped, rc), flush=True)\n# Soft-ok empty transfer only when nothing staged; never claim success with missing archive\nif n > 0 and not arch_ok:\n    sys.exit(1)\nsys.exit(0 if arch_ok or n == 0 else rc)\n'
 
@@ -44,6 +46,35 @@ _REMOTE_STAGE_PY = 'import os, stat, subprocess, sys\n\nhome, list_path, stage, 
 class FileMeta:
     mtime_ns: int
     size: int
+
+
+def normalize_sync_target(action: str | None) -> str | None:
+    """Map CLI aliases onto the canonical sync target (`home` | `dev`)."""
+    if action is None:
+        return None
+    key = str(action).strip().lower()
+    if key in ("dev", "developer"):
+        return "dev"
+    if key == "home":
+        return "home"
+    return key or None
+
+
+def resolve_sync_tree(action: str, home: str | Path | None) -> Path:
+    """Local tree root: ``~/Developer`` for `dev`, ``~`` for `home`, or ``--home``."""
+    if home is not None and str(home).strip():
+        return Path(home).expanduser()
+    target = normalize_sync_target(action) or "home"
+    if target == "dev":
+        return Path.home() / DEVELOPER_DIR_NAME
+    return Path.home()
+
+
+def log_home_for_target(target: str, tree: Path) -> Path:
+    """Where run logs live. Developer-tree sync stays in the real user home."""
+    if normalize_sync_target(target) == "dev":
+        return Path.home()
+    return tree
 
 
 def _ssh_target_for(node: Node, *, default_user: str) -> str:
@@ -228,7 +259,7 @@ def inventory_local(
     else:
         walk_roots.append((root, ""))
 
-    for walk_path, prefix in walk_roots:
+    for walk_path, _prefix in walk_roots:
         for dirpath, dirnames, filenames in os.walk(walk_path, followlinks=False):
             rel_dir = os.path.relpath(dirpath, root)
             if rel_dir == ".":
@@ -1226,6 +1257,7 @@ def _remote_inventory(
     work: Path,
     bind_ip: str | None = None,
     includes: tuple[str, ...] = (),
+    include_dotdirs: bool = False,
 ) -> tuple[dict[str, FileMeta] | None, str]:
     script = work / "remote_inv.py"
     script.write_text(_REMOTE_INVENTORY_PY, encoding="utf-8")
@@ -1243,12 +1275,14 @@ def _remote_inventory(
             return None, (scp.stderr or f"scp {local.name} failed")[:300]
 
     # PYTHONUNBUFFERED so inventory lines are not stuck in libc buffers if SSH dies
+    env_pairs = ["env", "PYTHONUNBUFFERED=1"]
+    if include_dotdirs:
+        env_pairs.append("MACCLUSTER_INV_DOTDIRS=1")
     r = ctx.runner.run(
         _ssh_argv(
             abs_ssh,
             ssh_target,
-            "env",
-            "PYTHONUNBUFFERED=1",
+            *env_pairs,
             "/usr/bin/python3",
             "-u",
             remote_script,
@@ -1480,9 +1514,11 @@ def sync_home(
     identical: bool = False,
     icloud_timeout_per_file: float = 20.0,
     icloud_max_seconds: float = 900.0,
+    target: str = "home",
 ) -> SyncHomeResult:
     """
-    Two-way Home sync via Apple ``ditto`` (metadata-complete) over SSH.
+    Two-way tree sync via Apple ``ditto`` (metadata-complete) over SSH.
+    ``target="dev"`` uses ``~/Developer`` as the tree (see ``resolve_sync_tree``).
 
     CCC-inspired options: compare, presets/includes, exclude-from, conflict
     policy, SafetyNet-lite, post-verify, quick update, batch limits, APFS
@@ -1520,6 +1556,7 @@ def sync_home(
             f"choose from {', '.join(sorted(SYNC_CONFLICT_POLICIES))}",
             exit_code=2,
         )
+    target = normalize_sync_target(target) or "home"
     if compare_only:
         dry_run = True
 
@@ -1536,9 +1573,10 @@ def sync_home(
     if not default_user:
         raise CliError("cannot determine local username for SSH", exit_code=1)
 
-    local_home = Path(home) if home else Path.home()
+    local_home = Path(home) if home else resolve_sync_tree(target, None)
     if not local_home.is_dir():
-        raise CliError(f"local home is not a directory: {local_home}", exit_code=1)
+        label = "Developer dir" if target == "dev" else "local home"
+        raise CliError(f"{label} is not a directory: {local_home}", exit_code=1)
     remote_home_path = str(Path(remote_home) if remote_home else local_home)
 
     try:
@@ -1560,7 +1598,8 @@ def sync_home(
         Path(exclude_from) if exclude_from else default_sync_exclude_file()
     )
     includes_resolved = merge_includes(presets, includes)
-    excludes = tuple(SYNC_HOME_EXCLUDES) + file_excludes + tuple(extra_excludes)
+    extra_dev = SYNC_DEV_EXCLUDES if target == "dev" else ()
+    excludes = tuple(SYNC_HOME_EXCLUDES) + extra_dev + file_excludes + tuple(extra_excludes)
     peers = _resolve_peers(cfg.nodes, self_node, peer_filter=peer, default_user=default_user)
     bind_ip = str(self_node.ip)  # TB bridge Self-IP only — never Wi‑Fi
 
@@ -1705,6 +1744,7 @@ def sync_home(
                 work=work,
                 bind_ip=bind_ip,
                 includes=includes_resolved,
+                include_dotdirs=(target == "dev"),
             )
             if remote_inv is None:
                 peer_results.append(
@@ -2010,6 +2050,7 @@ def sync_home(
         apfs_snapshot=snap_label,
         max_files=max_files,
         max_bytes=max_bytes,
+        target=target,
     )
 
     log_path: str | None = None
@@ -2019,23 +2060,7 @@ def sync_home(
         except OSError as exc:
             prog.note(f"warning: could not write sync log: {exc}")
     if log_path:
-        result = SyncHomeResult(
-            local_home=result.local_home,
-            dry_run=result.dry_run,
-            strategy=result.strategy,
-            peers=result.peers,
-            excludes=result.excludes,
-            includes=result.includes,
-            conflict_policy=result.conflict_policy,
-            compare_only=result.compare_only,
-            safetynet=result.safetynet,
-            verify=result.verify,
-            quick=result.quick,
-            log_path=log_path,
-            apfs_snapshot=result.apfs_snapshot,
-            max_files=result.max_files,
-            max_bytes=result.max_bytes,
-        )
+        result = replace(result, log_path=log_path)
 
     if result.ok and not dry_run and not compare_only:
         # Advance quick-update watermark

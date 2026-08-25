@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -11,13 +14,16 @@ from maccluster.errors import CliError
 from maccluster.ports.process import ProcessResult
 from maccluster.services.sync_filters import merge_includes, resolve_presets
 from maccluster.services.sync_service import (
+    _REMOTE_INVENTORY_PY,
     FileMeta,
     apply_batch_limits,
     exit_code_for_sync,
     inventory_local,
     is_excluded,
+    log_home_for_target,
     parse_inventory_text,
     plan_transfers,
+    resolve_sync_tree,
     sync_home,
 )
 
@@ -188,6 +194,113 @@ def test_presets_and_batch_limits():
     p, q, trunc = apply_batch_limits(push, pull, sizes, sizes, max_files=2, max_bytes=None)
     assert len(p) + len(q) == 2
     assert trunc
+
+
+def test_resolve_sync_tree_explicit_overrides_action(tmp_path: Path):
+    custom = tmp_path / "custom-dev"
+    custom.mkdir()
+    assert resolve_sync_tree("dev", custom) == custom
+    assert resolve_sync_tree("home", custom) == custom
+    assert resolve_sync_tree("dev", str(custom)) == custom
+
+
+def test_resolve_sync_tree_defaults(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    assert resolve_sync_tree("home", None) == tmp_path
+    assert resolve_sync_tree("dev", None) == tmp_path / "Developer"
+    assert resolve_sync_tree("developer", None) == tmp_path / "Developer"
+
+
+def test_log_home_for_target_dev_stays_on_real_home(tmp_path: Path):
+    tree = tmp_path / "Developer"
+    tree.mkdir()
+    assert log_home_for_target("home", tree) == tree
+    assert log_home_for_target("dev", tree) == Path.home()
+    assert log_home_for_target("developer", tree) == Path.home()
+
+
+def test_sync_dev_missing_tree_message(fake_ctx, tmp_path: Path):
+    missing = tmp_path / "no-such-Developer"
+    fake_ctx.runner = RecordingRunner(fail_ssh=False)
+    with pytest.raises(CliError) as exc:
+        sync_home(
+            fake_ctx,
+            peer="node-b",
+            home=missing,
+            user="a321",
+            timeout=60,
+            dry_run=True,
+            no_speedtest=True,
+            write_log=False,
+            target="dev",
+        )
+    assert exc.value.exit_code == 1
+    assert "Developer" in exc.value.message
+    assert str(missing) in exc.value.message
+
+
+def test_sync_dev_dry_run_uses_developer_tree(fake_ctx, tmp_path: Path):
+    tree = tmp_path / "Developer"
+    tree.mkdir()
+    (tree / "repo").mkdir()
+    (tree / "repo" / "main.py").write_text("print(1)\n", encoding="utf-8")
+    fake_ctx.runner = RecordingRunner(fail_ssh=False)
+    result = sync_home(
+        fake_ctx,
+        peer="node-b",
+        home=tree,
+        remote_home=str(tree),
+        user="a321",
+        timeout=60,
+        dry_run=True,
+        no_speedtest=True,
+        write_log=False,
+        target="dev",
+    )
+    assert result.target == "dev"
+    assert result.local_home == str(tree)
+    assert result.peers[0].ok
+    assert result.peers[0].push_files >= 1
+    assert "**/.build/" in result.excludes
+
+
+def test_remote_inventory_script_includes_git_when_dotdirs(tmp_path: Path):
+    tree = tmp_path / "dev"
+    git = tree / "repo" / ".git"
+    git.mkdir(parents=True)
+    (git / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    (tree / "repo" / "a.py").write_text("x\n", encoding="utf-8")
+    venv = tree / "repo" / ".venv" / "lib"
+    venv.mkdir(parents=True)
+    (venv / "x.py").write_text("z\n", encoding="utf-8")
+    script = tmp_path / "inv.py"
+    script.write_text(_REMOTE_INVENTORY_PY, encoding="utf-8")
+    excl = tmp_path / "ex.txt"
+    excl.write_text("**/.venv/\n**/node_modules/\n", encoding="utf-8")
+
+    env = {**os.environ, "MACCLUSTER_INV_DOTDIRS": "1"}
+    r = subprocess.run(
+        [sys.executable, str(script), str(tree), str(excl)],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    assert r.returncode == 0, r.stderr
+    inv = parse_inventory_text(r.stdout)
+    assert "repo/a.py" in inv
+    assert "repo/.git/HEAD" in inv
+    assert not any(".venv" in k for k in inv)
+
+    r2 = subprocess.run(
+        [sys.executable, str(script), str(tree), str(excl)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    inv2 = parse_inventory_text(r2.stdout)
+    assert "repo/a.py" in inv2
+    assert "repo/.git/HEAD" not in inv2
 
 
 def test_sync_home_compare(fake_ctx, tmp_path: Path):

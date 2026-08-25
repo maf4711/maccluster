@@ -10,7 +10,25 @@ maccluster sync home --compare
 maccluster sync home --dry-run
 maccluster sync home --safetynet --verify
 maccluster sync home --preset documents,developer --peer node-b
+maccluster sync dev --compare
+maccluster sync dev
 ```
+
+## `sync dev` — Developer tree
+
+`maccluster sync dev` (alias `sync developer`) is the same engine with a
+**different tree root**: `$HOME/Developer` on both Macs, not `$HOME`.
+
+| | `sync home --preset developer` | `sync dev` |
+|---|---|---|
+| Tree | `$HOME` | `$HOME/Developer` |
+| Inventory | walks Home, keeps `Developer/` | walks only Developer |
+| `.git` | remote inventory skips hidden dirs | included (`.git`, `.github`, …) |
+| Logs | `<home>/Library/Logs/maccluster/` | always `~/Library/Logs/maccluster/` |
+
+Use `sync dev` when the goal is “keep `~/Developer` aligned across the mesh”
+(repos, `.env`, dirty work, git objects). `--include repo/` limits to one
+project. `--home` / `--remote-home` override the Developer path.
 
 ## Why Apple `ditto` (not Homebrew rsync)
 

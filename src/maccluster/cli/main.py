@@ -40,7 +40,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return USAGE
     if args.command == "sync" and not getattr(args, "sync_action", None):
-        print("error: sync requires a target (e.g. home)", file=sys.stderr)
+        print("error: sync requires a target (home or dev)", file=sys.stderr)
         return USAGE
     if args.command == "keychain" and not getattr(args, "keychain_action", None):
         args.keychain_action = "show"

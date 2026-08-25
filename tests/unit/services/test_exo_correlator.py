@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from maccluster.services.exo_correlator import _summarize
 
 
 def test_summarize_healthy_mesh():
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     data = {
         "topology": {"nodes": ["a", "b", "c", "d"]},
         "lastSeen": {"a": now, "b": now, "c": now, "d": now},

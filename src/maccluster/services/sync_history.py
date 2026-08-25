@@ -13,7 +13,15 @@ from maccluster.domain.models import SyncHomeResult
 
 
 def _home_of(result: SyncHomeResult) -> Path | None:
-    """Home whose sync this log describes (None → real home)."""
+    """Directory whose Library/Logs holds this run.
+
+    ``sync home`` logs under the synced home (tests use a throwaway tree).
+    ``sync dev`` always logs under the real user home so ~/Developer does
+    not grow a Library/Logs tree that would then be re-synced.
+    """
+    target = (getattr(result, "target", "home") or "home").strip().lower()
+    if target in ("dev", "developer"):
+        return Path.home()
     home = getattr(result, "local_home", None)
     return Path(home) if home else None
 
@@ -67,7 +75,7 @@ def read_last_run(*, log_dir: Path | None = None) -> dict[str, Any] | None:
 
 def format_last_run(data: dict[str, Any] | None) -> str:
     if not data:
-        return "no sync runs logged yet (run: maccluster sync home)"
+        return "no sync runs logged yet (run: maccluster sync home|dev)"
     lines = [
         f"last sync  strategy={data.get('strategy')}  dry_run={data.get('dry_run')}  "
         f"compare={data.get('compare_only')}  policy={data.get('conflict_policy')}",
@@ -135,6 +143,7 @@ def _result_to_dict(result: SyncHomeResult) -> dict[str, Any]:
     return {
         "ts": datetime.now(UTC).isoformat(),
         "local_home": result.local_home,
+        "target": getattr(result, "target", "home"),
         "dry_run": result.dry_run,
         "strategy": result.strategy,
         "conflict_policy": result.conflict_policy,
