@@ -7,31 +7,50 @@ from maccluster.domain.models import (
     ClusterConfig,
     DoctorReport,
     HealthSnapshot,
+    InterfaceTraffic,
+    RdmaStatus,
     ServiceState,
     ThunderboltSnapshot,
     Topology,
 )
+from maccluster.health.traffic import format_bps, format_pps
 from maccluster.render.sanitize import sanitize
 from maccluster.render.symbols import link_symbol, reachability_symbol
 
 
-def render_tb(snap: ThunderboltSnapshot) -> str:
+def render_tb(snap: ThunderboltSnapshot, *, rdma: RdmaStatus | None = None) -> str:
+    from maccluster.domain.cable import assess_cluster_cables
+
     lines = [f"Thunderbolt ({snap.source})" + (f" — {snap.host_model}" if snap.host_model else "")]
     if not snap.ports:
         lines.append("  (no ports detected)")
-        return "\n".join(lines)
-    for p in snap.ports:
-        speed = f"{p.link_speed_gbps:g} Gb/s" if p.link_speed_gbps is not None else "n/a"
-        peer = sanitize(p.peer_name) if p.peer_name else "no peer"
-        iface = p.interface_name or "-"
-        lines.append(
-            f"  receptacle {sanitize(p.receptacle_id)}: "
-            f"{link_symbol(p.link_state)} {p.link_state.value} "
-            f"cap={p.thunderbolt_version or '?'} speed={speed} "
-            f"iface={iface} peer={peer}"
+    else:
+        for p in snap.ports:
+            speed = f"{p.link_speed_gbps:g} Gb/s" if p.link_speed_gbps is not None else "n/a"
+            peer = sanitize(p.peer_name) if p.peer_name else "no peer"
+            iface = p.interface_name or "-"
+            mode = f" mode={sanitize(p.peer_mode)}" if p.peer_mode else ""
+            lines.append(
+                f"  receptacle {sanitize(p.receptacle_id)}: "
+                f"{link_symbol(p.link_state)} {p.link_state.value} "
+                f"cap={p.thunderbolt_version or '?'} speed={speed} "
+                f"iface={iface} peer={peer}{mode}"
+            )
+            if p.domain_uuid:
+                lines.append(f"    domain={p.domain_uuid}")
+        report = assess_cluster_cables(snap)
+        lines.append(f"cable: [{report.overall_grade.value}] {report.summary}")
+        lines.append(f"  → {report.recommendation}")
+    if rdma is not None:
+        en = (
+            "enabled"
+            if rdma.enabled is True
+            else "disabled"
+            if rdma.enabled is False
+            else "unknown"
         )
-        if p.domain_uuid:
-            lines.append(f"    domain={p.domain_uuid}")
+        avail = "yes" if rdma.tool_available else "no"
+        lines.append(f"rdma: tool={avail} status={en} — {sanitize(rdma.detail)}")
     return "\n".join(lines)
 
 
@@ -58,23 +77,91 @@ def render_config(cfg: ClusterConfig, *, self_id: str | None = None) -> str:
     return "\n".join(lines)
 
 
+def render_traffic_block(traffic: tuple[InterfaceTraffic, ...]) -> list[str]:
+    if not traffic:
+        return ["traffic: (no interface counters)"]
+    rated = [t for t in traffic if t.rate_available and t.sample_dt_s is not None]
+    if rated:
+        dt_note = f" Δ{rated[0].sample_dt_s:.1f}s"
+    else:
+        dt_note = " (rates after 2nd sample within ~2 min)"
+    lines = [f"traffic{dt_note}:"]
+    for t in traffic:
+        if t.rate_available:
+            err = f"err in/out {t.ierrs}/{t.oerrs} (+{t.ierrs_delta or 0}/+{t.oerrs_delta or 0})"
+            lines.append(
+                f"  {t.name:10}  "
+                f"RX {format_bps(t.rx_bps):>10} ({format_pps(t.rx_pps):>8})  "
+                f"TX {format_bps(t.tx_bps):>10} ({format_pps(t.tx_pps):>8})  "
+                f"{err}"
+            )
+        else:
+            lines.append(
+                f"  {t.name:10}  "
+                f"RX bytes={t.ibytes} pkts={t.ipkts}  "
+                f"TX bytes={t.obytes} pkts={t.opkts}  "
+                f"err in/out {t.ierrs}/{t.oerrs}  rate=n/a"
+            )
+    return lines
+
+
 def render_status(snap: HealthSnapshot) -> str:
+    from maccluster.domain.cable import assess_cluster_cables
+
     lines = [
         f"cluster: {sanitize(snap.cluster_name)}  overall={snap.overall.value}  "
         f"ts={snap.timestamp.isoformat()}",
     ]
+    if snap.mesh is not None:
+        m = snap.mesh
+        lines.append(
+            f"mesh: [{m.verdict.value}] {m.summary} "
+            f"(alive≠meshed: bridge_ok={m.bridge_ok} tb_links={m.tb_links})"
+        )
     if snap.bridge:
         b = snap.bridge
         addrs = ",".join(str(a) for a in b.addresses) or "-"
         lines.append(f"bridge: {b.name} exists={b.exists} up={b.admin_up} addrs={addrs}")
+    if snap.tb is not None:
+        cable = assess_cluster_cables(snap.tb)
+        lines.append(
+            f"cable: [{cable.overall_grade.value}] {cable.summary}"
+            + (
+                f" (best {cable.best_mac_peer_gbps:g}G)"
+                if cable.best_mac_peer_gbps is not None
+                else ""
+            )
+        )
+    if snap.rdma is not None:
+        en = (
+            "enabled"
+            if snap.rdma.enabled is True
+            else "disabled"
+            if snap.rdma.enabled is False
+            else "n/a"
+        )
+        lines.append(f"rdma: {en} — {sanitize(snap.rdma.detail)}")
+    if snap.heal_heartbeat is not None:
+        hb = snap.heal_heartbeat
+        stale = "stale" if hb.stale else "fresh"
+        lines.append(f"heal: heartbeat={stale} — {sanitize(hb.detail)}")
     for nh in snap.nodes:
         mark = "*" if snap.self_node_id and nh.node.id == snap.self_node_id else " "
         rtt = f" rtt={nh.rtt_ms:.1f}ms" if nh.rtt_ms is not None else ""
+        how = f" via={sanitize(nh.notes)}" if nh.notes and nh.notes not in ("self",) else ""
+        spd = f" {nh.link_speed_gbps:g}G" if nh.link_speed_gbps is not None else ""
         lines.append(
             f"{mark} {nh.node.id:12} {str(nh.node.ip):15} "
             f"{reachability_symbol(nh.reachability)} {nh.reachability.value:7} "
-            f"{link_symbol(nh.link_state)} {nh.link_state.value}{rtt}"
+            f"{link_symbol(nh.link_state)} {nh.link_state.value}{spd}{rtt}{how}"
         )
+    if snap.exo is not None:
+        lines.append(f"exo: {sanitize(snap.exo.summary)}")
+        if snap.exo.instances_summary:
+            lines.append(f"  workload: {sanitize(snap.exo.instances_summary)}")
+        if snap.exo.error and not snap.exo.http_ok:
+            lines.append(f"  note: {sanitize(snap.exo.error)}")
+    lines.extend(render_traffic_block(snap.traffic))
     return "\n".join(lines)
 
 

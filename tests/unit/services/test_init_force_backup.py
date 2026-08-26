@@ -43,7 +43,7 @@ def test_init_force_writes_bak(tmp_path: Path):
         platform=FakePlatform(),
         audit=NullAudit(),
     )
-    out = init_cluster(ctx, force=True)
+    out, _src = init_cluster(ctx, force=True, from_keychain=False, save_keychain=False)
     assert out.exists()
     assert "schema_version" in out.read_text(encoding="utf-8")
     bak = path.with_suffix(path.suffix + ".bak")

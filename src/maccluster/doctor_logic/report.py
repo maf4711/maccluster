@@ -7,7 +7,9 @@ from maccluster.domain.enums import CheckSeverity
 from maccluster.domain.models import DoctorFinding, DoctorReport
 
 # Cluster-relevant warn checks that should yield exit 3
-_CLUSTER_WARN_IDS = frozenset({"peers", "bridge", "self", "thunderbolt", "config"})
+_CLUSTER_WARN_IDS = frozenset(
+    {"peers", "bridge", "self", "thunderbolt", "config", "mesh", "heal_heartbeat", "exo"}
+)
 
 
 def severity_rank(sev: CheckSeverity) -> int:

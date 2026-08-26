@@ -9,29 +9,35 @@ cluster. Same package on every member — no leader, no cloud, no database.
 
 ## Install
 
+**Short guide:** [`docs/INSTALL.md`](docs/INSTALL.md)
+
 ```bash
-# Preferred
-pipx install .
-
-# Or editable for development
-python3 -m pip install -e ".[dev]"
-
-# Convenience
-./install.sh
+curl -fsSL https://raw.githubusercontent.com/maf4711/maccluster/main/install.sh | bash
+export PATH="$HOME/.local/bin:$PATH"
+maccluster --version
 ```
 
-Verify:
+| Artifact | URL |
+|----------|-----|
+| **raw install.sh** | https://raw.githubusercontent.com/maf4711/maccluster/main/install.sh |
+| **ZIP (main)** | https://github.com/maf4711/maccluster/archive/refs/heads/main.zip |
+| **Repo** | https://github.com/maf4711/maccluster |
 
 ```bash
-make verify   # ruff + pytest
-maccluster --help
+# pipx from Git
+pipx install "git+https://github.com/maf4711/maccluster.git"
+
+# dev checkout
+git clone https://github.com/maf4711/maccluster.git && cd maccluster
+pipx install .   # or: python3 -m pip install -e ".[dev]"
+make verify
 ```
 
 ## Offline / zero cloud
 
 MacCluster runs entirely on the local Mac. It does not call remote LLM or SaaS
 APIs. Host tools used: `system_profiler`, `ioreg`, `ifconfig`, `networksetup`,
-`ping`, `launchctl` (and optional `iperf3` / `ssh`).
+`ping`, `launchctl` (and optional `iperf3` / `ssh` / `scp` / `ditto` for sync home).
 
 ## Configuration
 
@@ -64,17 +70,77 @@ targets are refused for write/lock paths.
 | `config validate` | no | Validate + self-match |
 | `up` | yes (local) | Ensure bridge + fixed Self-IP; often needs admin |
 | `heal` | yes (local) | One-shot ensure (same path as `up`) |
-| `heal --loop` | yes | Periodic heal (default 30 s, min 5 s); **best-effort**, not HA |
-| `status` | no | Nodes + reachability + TB link hints |
-| `monitor` | no | Live refresh (`--interval`); Ctrl+C → exit 0 |
+| `heal --loop` | yes | Periodic heal (default 30 s, min 5 s); **best-effort**, not HA; writes heartbeat |
+| `heal --watchdog` | no* | If heal heartbeat stale → `launchctl kickstart` heal agent (*installs with service) |
+| `status` | no | Nodes + **mesh** (alive≠meshed) + TB + RDMA + heal heartbeat + TX/RX rates; `--exo` correlates local exo `:52415` |
+| `monitor` | no | Live refresh (`--interval`) with TX/RX Mb/s, pps, errors; Ctrl+C → exit 0 |
 | `topo` | no | Cable / topology map (no rewiring advice) |
-| `doctor` | no | Diagnostics (config, self, TB, bridge, peers) |
-| `bench` | no | Optional `iperf3` to a peer IP |
+| `doctor` | no | Diagnostics (config, self, TB, cable, bridge, peers, **mesh**, RDMA, heal heartbeat); `--exo` optional |
+| `bench` | no | Optional `iperf3` to a peer IP (bound to TB Self-IP) + **path quality** / retransmits |
+| `speedtest` | no | TB **cable grade** (40G ideal) + iperf3 over bridge; also runs at start of `sync home` / `remote-install` |
 | `service install\|uninstall\|status` | plist | User LaunchAgent → `heal --loop` |
+| `service sync-install\|sync-uninstall\|sync-status` | plist | Scheduled `sync home` (CCC schedule analogue) |
+| `sync home` | files via SSH | Two-way **Home** via **Apple ditto** + CCC-inspired options (compare, presets, SafetyNet, verify, policies). See [`docs/SYNC-HOME.md`](docs/SYNC-HOME.md) |
+| `sync dev` | files via SSH | **MCPRT** (merge + cpr + TestFlight) on recent git repos, then two-way **`~/Developer`** via Apple ditto over TB plus those repos over Wi-Fi (`.local`). Alias: `sync developer` |
+| `remote-install` | peer install | Install wheel+config on peer over **TB bridge only** (`10.42.0.x`, BindAddress Self-IP). See [`docs/REMOTE-INSTALL.md`](docs/REMOTE-INSTALL.md) |
+| `ssh-config` | OpenSSH | Write `~/.ssh/config.d/maccluster` so `10.42.0.*` uses bridge BindAddress |
+| `keychain show\|push\|pull\|delete\|push-peer` | Keychain | Local store + TB `push-peer`. See [`docs/KEYCHAIN.md`](docs/KEYCHAIN.md) |
 
 Global flags: `--config`, `--json`, `-v` / `--verbose`.  
 Env: `NO_COLOR`, `MACCLUSTER_CONFIG`, `MACCLUSTER_SKIP_PLATFORM_GUARD=1` (tests only),
 `MACCLUSTER_RICH=0`.
+
+### Home sync (`maccluster sync home`)
+
+Mesh bring-up does **not** copy files. To keep `~/` aligned across minis over TB,
+MacCluster uses **Apple `ditto`** (metadata-complete: xattrs, ACLs, resource forks)
+with **newest-wins** by mtime — not Homebrew rsync. iCloud Desktop/Documents
+placeholders (`UF_DATALESS`) hang open/ditto until materialised:
+
+```bash
+# needs: ssh key login to peers (stock macOS ditto + scp)
+maccluster sync home --compare              # CCC-style diff only
+maccluster sync home --dry-run              # preview transfers
+maccluster sync home --safetynet --verify   # SafetyNet + sample verify
+maccluster sync home --preset documents,developer
+maccluster sync home --conflict-policy prefer-local
+# 1:1 best-effort (force iCloud download on both Macs, then bi-sync + verify)
+maccluster sync home --identical --peer node-b
+maccluster sync home --force-icloud         # materialize only (then normal sync)
+maccluster service sync-install --interval 3600   # hourly schedule
+maccluster sync home --last                 # last run log
+
+# Developer tree only (not whole Home)
+maccluster sync dev --compare
+maccluster sync dev --dry-run --peer node-b
+maccluster sync dev                         # MCPRT, then TB + Wi-Fi top 10
+maccluster sync dev --wifi-only             # MCPRT, then recent repos over .local
+maccluster sync dev --no-wifi               # MCPRT, then Thunderbolt only
+maccluster sync dev --no-mcprt              # skip git/TestFlight preflight
+```
+
+`--identical` runs **force-icloud** (local + peer: `brctl download` + timed open)
+then bidirectional ditto + sample verify. Inventory **skips remaining dataless
+stubs** so the transfer cannot hang. True cloud-only files need online iCloud.
+
+Requires working SSH (`ssh-copy-id user@10.42.0.x`). Details: [`docs/SYNC-HOME.md`](docs/SYNC-HOME.md),
+SSH troubles: [`docs/PEER-SSH.md`](docs/PEER-SSH.md).
+
+### Live traffic (status / monitor)
+
+`status` and `monitor` sample macOS `netstat` counters for `bridge0` and Thunderbolt
+member ports (`en2`/`en3`/`en4`). Rates need **two samples** (Δt ≥ ~0.4 s):
+
+- First run after idle: shows cumulative bytes/packets, `rate=n/a`
+- Second `status` within 2 minutes, or every `monitor` tick: **RX/TX b/s–Gb/s**, packets/s, error counters (+delta)
+
+```text
+traffic Δ1.5s:
+  bridge0     RX   12.40 Mb/s (  1.2k pps)  TX    3.10 Mb/s (  400 pps)  err in/out 0/0 (+0/+0)
+```
+
+This is **interface throughput**, not application transaction rate. For saturation
+tests use `maccluster bench` (iperf3).
 
 ### Exit codes
 

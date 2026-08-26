@@ -108,3 +108,18 @@ projects/maccluster/
 ## 6. state.json
 
 `wellen.fertig` → **6** nach grünem Gesamttestlauf.
+
+---
+
+## Nachtrag Betrieb / Releases (2026-08-02)
+
+| Version | Inhalt |
+|---|---|
+| 0.1.1 | Live TX/RX auf status/monitor |
+| 0.1.2 | Peer reachability -S + TCP:22, remote-install.sh |
+| 0.1.3 | Shared health/reach.py, Peer TB-Link 40G |
+| Skill | maccluster-status → Historie + Live-Monitor |
+| Fabrik | `_fabrik/70-betrieb/` Inventar + Session-Chronik |
+
+GitHub: https://github.com/maf4711/maccluster  
+Open: Peer CLI install (SSH blocked) — siehe `_fabrik/70-betrieb/BETRIEB.md`

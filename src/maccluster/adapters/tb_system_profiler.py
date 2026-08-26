@@ -72,6 +72,11 @@ def parse_system_profiler_tb(text: str) -> ThunderboltSnapshot:
                 if "no device" in status:
                     peer = None
 
+        peer_mode = current.get("peer_mode") or current.get("mode")
+        # Prefer concrete model (Mac16,11) over generic "Mac mini" bus label
+        concrete = current.get("peer_device") or current.get("nested_device")
+        if concrete and link_state == LinkState.CONNECTED:
+            peer = concrete
         ports.append(
             ThunderboltPort(
                 receptacle_id=str(receptacle),
@@ -84,6 +89,7 @@ def parse_system_profiler_tb(text: str) -> ThunderboltSnapshot:
                 peer_name=peer if link_state == LinkState.CONNECTED else None,
                 bus_uid=current.get("uid"),
                 status_raw=current.get("status"),
+                peer_mode=peer_mode if link_state == LinkState.CONNECTED else None,
             )
         )
         current = {}
@@ -94,6 +100,19 @@ def parse_system_profiler_tb(text: str) -> ThunderboltSnapshot:
             continue
         if line.startswith("Device Name:"):
             val = line.split(":", 1)[1].strip()
+            # Nested peer model under an already-open port (e.g. Mac16,11)
+            if current.get("status") and current.get("receptacle"):
+                if val and val.lower() not in (
+                    "mac mini",
+                    "macbook pro",
+                    "macbook air",
+                    "mac pro",
+                    "mac studio",
+                ):
+                    current["peer_device"] = val
+                elif val:
+                    current["nested_device"] = current.get("nested_device") or val
+                continue
             if current.get("receptacle") or current.get("status"):
                 flush()
             current["device_name"] = val
@@ -111,6 +130,9 @@ def parse_system_profiler_tb(text: str) -> ThunderboltSnapshot:
             current["receptacle"] = line.split(":", 1)[1].strip()
         elif line.startswith("Link Status:"):
             current["link_status"] = line.split(":", 1)[1].strip()
+        elif line.startswith("Mode:"):
+            # Nested peer device mode (Thunderbolt 3/4/5, USB4, …)
+            current["peer_mode"] = line.split(":", 1)[1].strip()
         elif line.startswith("Vendor Name:"):
             # new bus block — flush previous port if complete
             if current.get("receptacle") is not None or current.get("status") is not None:

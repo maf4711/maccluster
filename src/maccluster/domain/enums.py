@@ -2,28 +2,28 @@
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 
-class NodeRole(str, Enum):
+class NodeRole(StrEnum):
     SELF = "self"
     PEER = "peer"
     UNKNOWN = "unknown"
 
 
-class ReachabilityState(str, Enum):
+class ReachabilityState(StrEnum):
     UP = "up"
     DOWN = "down"
     UNKNOWN = "unknown"
 
 
-class LinkState(str, Enum):
+class LinkState(StrEnum):
     CONNECTED = "connected"
     UNCONNECTED = "unconnected"
     UNKNOWN = "unknown"
 
 
-class CheckSeverity(str, Enum):
+class CheckSeverity(StrEnum):
     OK = "ok"
     INFO = "info"
     WARN = "warn"
@@ -31,7 +31,7 @@ class CheckSeverity(str, Enum):
     SKIPPED = "skipped"
 
 
-class HealActionKind(str, Enum):
+class HealActionKind(StrEnum):
     NOOP = "noop"
     ENSURE_BRIDGE = "ensure_bridge"
     ADMIN_UP = "admin_up"
@@ -39,8 +39,26 @@ class HealActionKind(str, Enum):
     ALREADY_CONFIGURED = "already_configured"
 
 
-class OverallHealth(str, Enum):
+class OverallHealth(StrEnum):
     HEALTHY = "healthy"
     DEGRADED = "degraded"
     UNHEALTHY = "unhealthy"
+    UNKNOWN = "unknown"
+
+
+class MeshVerdict(StrEnum):
+    """Fabric mesh membership (alive ≠ fully meshed)."""
+
+    OK = "ok"  # all configured peers reachable
+    PARTIAL = "partial"  # some peers down
+    ISOLATED = "isolated"  # no peers reachable
+    SINGLE = "single"  # config has no peers (1-node / self only)
+    UNKNOWN = "unknown"
+
+
+class BenchQuality(StrEnum):
+    EXCELLENT = "excellent"  # TB-class ≥ ~30 Gbit/s
+    GOOD = "good"  # ≥ 1 Gbit/s
+    MARGINAL = "marginal"  # ≥ 100 Mbit/s
+    POOR = "poor"
     UNKNOWN = "unknown"

@@ -6,9 +6,10 @@ import sys
 
 from maccluster.app_factory import AppContext
 from maccluster.constants import DEFAULT_MONITOR_INTERVAL_S
+from maccluster.health.traffic import TrafficSampler
 from maccluster.render.plain import render_status
 from maccluster.render.rich_monitor import render_rich_status, rich_available
-from maccluster.services.status_service import collect_status
+from maccluster.services.status_service import collect_status, get_traffic_sampler
 
 
 def run_monitor(
@@ -18,13 +19,19 @@ def run_monitor(
     max_iterations: int | None = None,
     out=None,
 ) -> int:
-    """Refresh status until Ctrl+C. Returns 0 on clean exit."""
+    """Refresh status until Ctrl+C. Returns 0 on clean exit.
+
+    Live TX/RX rates come from netstat counter deltas between refresh ticks
+    (and disk cache for the first tick after a prior status/monitor run).
+    """
     out = out or sys.stdout
     n = 0
     use_rich = rich_available() and not ctx.no_color and not ctx.json_mode
+    # Shared sampler so rates use previous monitor tick (and disk cache).
+    sampler: TrafficSampler = get_traffic_sampler()
     try:
         while True:
-            snap, _code = collect_status(ctx)
+            snap, _code = collect_status(ctx, sampler=sampler, persist_traffic=True)
             if ctx.json_mode:
                 from maccluster.render.json_out import dumps, to_jsonable
 

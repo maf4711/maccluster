@@ -8,10 +8,16 @@ from maccluster.domain.enums import LinkState, OverallHealth, ReachabilityState
 from maccluster.domain.models import (
     BridgeInterface,
     ClusterConfig,
+    ExoCorrelation,
+    HealHeartbeat,
     HealthSnapshot,
+    InterfaceTraffic,
+    MeshHealth,
     NodeHealth,
+    RdmaStatus,
     ThunderboltSnapshot,
 )
+from maccluster.health.mesh import build_mesh_health
 
 
 def build_snapshot(
@@ -22,8 +28,15 @@ def build_snapshot(
     node_health: list[NodeHealth] | tuple[NodeHealth, ...],
     bridge: BridgeInterface | None = None,
     tb: ThunderboltSnapshot | None = None,
+    traffic: tuple[InterfaceTraffic, ...] = (),
+    mesh: MeshHealth | None = None,
+    rdma: RdmaStatus | None = None,
+    heal_heartbeat: HealHeartbeat | None = None,
+    exo: ExoCorrelation | None = None,
 ) -> HealthSnapshot:
     overall = aggregate_overall(node_health, self_node_id=self_node_id)
+    if mesh is None:
+        mesh = build_mesh_health(node_health, self_node_id=self_node_id, bridge=bridge, tb=tb)
     return HealthSnapshot(
         timestamp=timestamp,
         cluster_name=cfg.name,
@@ -32,6 +45,11 @@ def build_snapshot(
         overall=overall,
         bridge=bridge,
         tb=tb,
+        traffic=traffic,
+        mesh=mesh,
+        rdma=rdma,
+        heal_heartbeat=heal_heartbeat,
+        exo=exo,
     )
 
 

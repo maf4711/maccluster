@@ -9,7 +9,9 @@ from maccluster.services.doctor_service import run_doctor
 
 
 def run(ctx: AppContext, args) -> int:
-    report = run_doctor(ctx)
+    include_exo = bool(getattr(args, "exo", False))
+    exo_url = getattr(args, "exo_url", None)
+    report = run_doctor(ctx, include_exo=include_exo, exo_base_url=exo_url)
     if ctx.json_mode:
         print(dumps("doctor", to_jsonable(report)))
     else:

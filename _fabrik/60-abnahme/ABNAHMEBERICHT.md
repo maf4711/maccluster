@@ -276,3 +276,35 @@ protokolliert. Eine handschriftliche Unterschrift ist nicht erforderlich.
 | `sudo maccluster up` | **Operator einmalig** (Admin-Passwort GUI/Terminal) — Bridge-IP 10.42.0.1 |
 | Peer node-b | Hostname `CM-KWFVR7JGW3` vorbereitet; UUID auf Peer nachziehen; TB-Kabel stecken |
 | node-c/d | Platzhalter bis Hardware da |
+
+---
+
+## Nachtrag 2026-08-02 (Fabrik-Daten aktualisiert)
+
+Betriebsinventar und Session-Chronik unter `_fabrik/70-betrieb/`.
+Produktversion **0.1.3**, Skill `maccluster-status`, GitHub Releases v0.1.0–v0.1.3.
+Peer node-b: Monitoring oft erreichbar (tcp:22), Software-Install remote per SSH noch offen (AirDrop-Bootstrap dokumentiert).
+
+## Evidenz (real ausgeführte Kommandos)
+
+Nur Ausgeführtes gilt als belegt — kein Eintrag ohne echten Lauf.
+Nachgetragen 2026-08-08 (Roadmap 1.C Evidence-Pflicht).
+Aktualisiert 2026-08-11 (H8 Suite/Security-Diff nach v0.2.4).
+
+| Kommando | Exit-Code | Zweck |
+|---|---|---|
+| `cd projects/maccluster && python3 -m pytest -q` | 0 | **186 passed** in 0.43s (2026-08-11, v0.2.4) |
+| `python3 company/tools/fabrik_autoheal.py --check` | 0 nach Evidence-Commit | Hygiene inkl. H8 |
+| siehe QA `TESTBERICHT.md` §0 | (siehe Bericht) | Suite- + Security-Diff |
+
+## Nachtrag 2026-08-11 — Suite/Security-Diff v0.2.4 (H8)
+
+| Feld | Wert |
+|---|---|
+| Produktversion | **0.2.4** |
+| Auslöser | Autoheal **H8**: Code-Commit neuer als QA/Abnahme-Evidence |
+| Suite | **186/186** pytest grün (`TESTBERICHT.md` §0) |
+| Security | RO RDMA-Probe · exo nur Loopback opt-in · Keychain-Härtung 0.2.1 · keine Cloud-Clients (Details §0.2 TESTBERICHT) |
+| Abnahme-Status | **weiterhin FERTIG / Freeze** — kein neues Gate-4 nötig; Feature-Tiefe hinter Tests |
+| Ops | `company/ops/portfolio.json` → freeze (nur Hygiene/DoD) |
+

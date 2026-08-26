@@ -1,0 +1,33 @@
+# Live studio fleet (2 nodes). Keep in sync on both minis.
+schema_version = 1
+name = "studio-cluster"
+subnet = "10.42.0.0/24"
+bridge_interface = "bridge0"
+heal_interval_seconds = 30
+ssh_probes_enabled = false
+
+[[nodes]]
+id = "node-a"
+hostnames = [
+  "CM-CFMQ2D029F",
+  "CM-CFMQ2D029F.local",
+  "CM-CFMQ2D029F-2",
+  "CM-CFMQ2D029F-2.local",
+  "cm-cfmq2d029f",
+  "cm-cfmq2d029f.local",
+  "cm-cfmq2d029f-2",
+  "cm-cfmq2d029f-2.local",
+]
+ip = "10.42.0.1"
+hw_uuid = "409C591A-9803-5203-B8C9-E72E73A3EF6E"
+
+[[nodes]]
+id = "node-b"
+hostnames = [
+  "CM-KWFVR7JGW3",
+  "CM-KWFVR7JGW3.local",
+  "cm-kwfvr7jgw3",
+  "cm-kwfvr7jgw3.local",
+]
+ip = "10.42.0.2"
+hw_uuid = "00000000-0000-0000-0000-0000000000B2"
