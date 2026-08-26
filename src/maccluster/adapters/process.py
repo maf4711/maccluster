@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import os
 import subprocess
-from collections.abc import Sequence
+import time
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from maccluster.constants import (
@@ -15,6 +16,8 @@ from maccluster.constants import (
 )
 from maccluster.errors import CliError
 from maccluster.ports.process import ProcessResult
+
+ProgressChunkCb = Callable[[int, int], None]  # (bytes_done, bytes_total)
 
 
 class ProcessRunner:
@@ -38,7 +41,7 @@ class ProcessRunner:
                 exit_code=1,
             )
         paths = self._search
-        if basename in ("iperf3", "ssh"):
+        if basename in ("iperf3", "ssh", "scp", "git", "gh", "bash"):
             paths = self._search + self._extra
         for directory in paths:
             candidate = Path(directory) / basename
@@ -46,17 +49,10 @@ class ProcessRunner:
                 return str(candidate)
         raise CliError(f"tool not found: {basename}", exit_code=1)
 
-    def run(
-        self,
-        argv: Sequence[str],
-        *,
-        timeout: float = TIMEOUT_GENERIC,
-        check: bool = False,
-    ) -> ProcessResult:
+    def _prepare_argv(self, argv: Sequence[str]) -> list[str]:
         if not argv:
             raise CliError("empty argv", exit_code=1)
         first = argv[0]
-        # Absolute path or basename
         if "/" in first:
             basename = Path(first).name
             if basename not in self._allowlist:
@@ -67,19 +63,47 @@ class ProcessRunner:
             abs_first = first
         else:
             abs_first = self.resolve(first)
-        full_argv = [abs_first, *list(argv[1:])]
+        return [abs_first, *list(argv[1:])]
+
+    def _child_env(self) -> dict[str, str]:
         env = {
-            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin",
             "HOME": os.environ.get("HOME", ""),
             "USER": os.environ.get("USER", ""),
             "LANG": "C",
             "LC_ALL": "C",
         }
+        for key in (
+            "SSH_AUTH_SOCK",
+            "SSH_CONNECTION",
+            "SSH_TTY",
+            "GIT_SSH_COMMAND",
+            "GH_TOKEN",
+            "GH_HOST",
+            "GITHUB_TOKEN",
+            "DEVELOPER_DIR",
+        ):
+            val = os.environ.get(key)
+            if val:
+                env[key] = val
+        return env
+
+    def run(
+        self,
+        argv: Sequence[str],
+        *,
+        timeout: float = TIMEOUT_GENERIC,
+        check: bool = False,
+    ) -> ProcessResult:
+        full_argv = self._prepare_argv(argv)
+        env = self._child_env()
         try:
             completed = subprocess.run(  # noqa: S603 — intentional; shell=False, allowlist
                 full_argv,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=timeout,
                 shell=False,
                 env=env,
@@ -93,15 +117,19 @@ class ProcessRunner:
                 timed_out=False,
             )
         except subprocess.TimeoutExpired as exc:
+
+            def _decode(blob: object) -> str:
+                if blob is None:
+                    return ""
+                if isinstance(blob, bytes):
+                    return blob.decode("utf-8", errors="replace")
+                return str(blob)
+
             result = ProcessResult(
                 argv=tuple(full_argv),
                 returncode=124,
-                stdout=(exc.stdout or b"").decode()
-                if isinstance(exc.stdout, bytes)
-                else (exc.stdout or ""),
-                stderr=(exc.stderr or b"").decode()
-                if isinstance(exc.stderr, bytes)
-                else (exc.stderr or ""),
+                stdout=_decode(exc.stdout),
+                stderr=_decode(exc.stderr),
                 timed_out=True,
             )
         if check and result.returncode != 0:
@@ -111,3 +139,149 @@ class ProcessRunner:
                 details=result,
             )
         return result
+
+    def stream_stdin_file(
+        self,
+        argv: Sequence[str],
+        *,
+        input_path: Path | str,
+        timeout: float = TIMEOUT_GENERIC,
+        chunk_size: int = 1024 * 1024,
+        on_progress: ProgressChunkCb | None = None,
+    ) -> ProcessResult:
+        """Run command with file piped to stdin; optional byte progress callback."""
+        full_argv = self._prepare_argv(argv)
+        path = Path(input_path)
+        total = path.stat().st_size if path.is_file() else 0
+        env = self._child_env()
+        started = time.monotonic()
+        try:
+            proc = subprocess.Popen(  # noqa: S603
+                full_argv,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                shell=False,
+                env=env,
+            )
+        except OSError as exc:
+            raise CliError(f"cannot start process: {exc}", exit_code=1) from exc
+        assert proc.stdin is not None
+        sent = 0
+        err = ""
+        out = ""
+        timed_out = False
+        try:
+            with path.open("rb") as fh:
+                while True:
+                    if timeout and (time.monotonic() - started) > timeout:
+                        proc.kill()
+                        timed_out = True
+                        break
+                    chunk = fh.read(chunk_size)
+                    if not chunk:
+                        break
+                    proc.stdin.write(chunk)
+                    sent += len(chunk)
+                    if on_progress:
+                        on_progress(sent, total)
+            proc.stdin.close()
+            try:
+                stdout_b, stderr_b = proc.communicate(
+                    timeout=max(1.0, timeout - (time.monotonic() - started)) if timeout else None
+                )
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                stdout_b, stderr_b = proc.communicate()
+                timed_out = True
+            out = (stdout_b or b"").decode(errors="replace")
+            err = (stderr_b or b"").decode(errors="replace")
+            if on_progress and not timed_out:
+                on_progress(total if total else sent, total if total else sent)
+            rc = 124 if timed_out else int(proc.returncode or 0)
+        except Exception as exc:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            raise CliError(f"stream_stdin_file failed: {exc}", exit_code=1) from exc
+        return ProcessResult(
+            argv=tuple(full_argv),
+            returncode=rc,
+            stdout=out,
+            stderr=err,
+            timed_out=timed_out,
+        )
+
+    def stream_stdout_file(
+        self,
+        argv: Sequence[str],
+        *,
+        output_path: Path | str,
+        timeout: float = TIMEOUT_GENERIC,
+        expected_size: int = 0,
+        chunk_size: int = 1024 * 1024,
+        on_progress: ProgressChunkCb | None = None,
+    ) -> ProcessResult:
+        """Run command and write stdout to file; optional byte progress callback."""
+        full_argv = self._prepare_argv(argv)
+        path = Path(output_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        env = self._child_env()
+        started = time.monotonic()
+        try:
+            proc = subprocess.Popen(  # noqa: S603
+                full_argv,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                shell=False,
+                env=env,
+            )
+        except OSError as exc:
+            raise CliError(f"cannot start process: {exc}", exit_code=1) from exc
+        assert proc.stdout is not None
+        received = 0
+        err = ""
+        timed_out = False
+        try:
+            with path.open("wb") as fh:
+                while True:
+                    if timeout and (time.monotonic() - started) > timeout:
+                        proc.kill()
+                        timed_out = True
+                        break
+                    chunk = proc.stdout.read(chunk_size)
+                    if not chunk:
+                        break
+                    fh.write(chunk)
+                    received += len(chunk)
+                    if on_progress:
+                        total = expected_size if expected_size > 0 else received
+                        on_progress(received, total)
+            try:
+                _, stderr_b = proc.communicate(
+                    timeout=max(1.0, timeout - (time.monotonic() - started)) if timeout else None
+                )
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                _, stderr_b = proc.communicate()
+                timed_out = True
+            err = (stderr_b or b"").decode(errors="replace")
+            if on_progress and not timed_out:
+                total = expected_size if expected_size > 0 else received
+                on_progress(received, total)
+            rc = 124 if timed_out else int(proc.returncode or 0)
+        except Exception as exc:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            raise CliError(f"stream_stdout_file failed: {exc}", exit_code=1) from exc
+        return ProcessResult(
+            argv=tuple(full_argv),
+            returncode=rc,
+            stdout="",
+            stderr=err,
+            timed_out=timed_out,
+        )

@@ -33,8 +33,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "config" and not getattr(args, "config_action", None):
         args.config_action = "show"
     if args.command == "service" and not getattr(args, "service_action", None):
-        print("error: service requires install|uninstall|status", file=sys.stderr)
+        print(
+            "error: service requires install|uninstall|status|"
+            "sync-install|sync-uninstall|sync-status",
+            file=sys.stderr,
+        )
         return USAGE
+    if args.command == "sync" and not getattr(args, "sync_action", None):
+        print("error: sync requires a target (home or dev)", file=sys.stderr)
+        return USAGE
+    if args.command == "keychain" and not getattr(args, "keychain_action", None):
+        args.keychain_action = "show"
 
     no_color = bool(os.environ.get("NO_COLOR", "").strip())
     try:
@@ -81,9 +90,14 @@ def _dispatch(command: str):
         doctor,
         heal,
         init_cmd,
+        keychain_cmd,
         monitor,
+        remote_install_cmd,
         service_cmd,
+        speedtest_cmd,
+        ssh_config_cmd,
         status,
+        sync_cmd,
         tb,
         topo,
         up,
@@ -100,7 +114,12 @@ def _dispatch(command: str):
         "topo": topo.run,
         "doctor": doctor.run,
         "bench": bench.run,
+        "speedtest": speedtest_cmd.run,
         "service": service_cmd.run,
+        "sync": sync_cmd.run,
+        "remote-install": remote_install_cmd.run,
+        "ssh-config": ssh_config_cmd.run,
+        "keychain": keychain_cmd.run,
     }
     return table.get(command)
 

@@ -1,4 +1,4 @@
-"""Reachability (ping/SSH) port."""
+"""Reachability (ping / TCP / SSH) port."""
 
 from __future__ import annotations
 
@@ -18,6 +18,20 @@ class ReachabilityResult:
 
 
 class ReachabilityPort(Protocol):
-    def ping(self, host: str, *, timeout: float = 2.0) -> ReachabilityResult: ...
+    def ping(
+        self,
+        host: str,
+        *,
+        timeout: float = 2.0,
+        source: str | None = None,
+    ) -> ReachabilityResult: ...
+
+    def tcp_probe(
+        self,
+        host: str,
+        *,
+        port: int = 22,
+        timeout: float = 1.5,
+    ) -> ReachabilityResult: ...
 
     def ssh_probe(self, target: str, *, timeout: float = 3.0) -> ReachabilityResult: ...

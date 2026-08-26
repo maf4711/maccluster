@@ -15,3 +15,12 @@ def test_json_schema(fake_ctx):
     assert data["schema_version"] == 1
     assert data["command"] == "status"
     assert "nodes" in data["data"]
+    assert "mesh" in data["data"]
+    assert data["data"]["mesh"]["verdict"] in (
+        "ok",
+        "partial",
+        "isolated",
+        "single",
+        "unknown",
+    )
+    assert "rdma" in data["data"]

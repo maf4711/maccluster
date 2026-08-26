@@ -3,12 +3,72 @@
 | | |
 |---|---|
 | **Projekt** | `projects/maccluster` |
-| **Version** | 0.1.0 |
-| **Datum** | 2026-08-01 |
+| **Version** | **0.2.4** (Stand Suite-Nachweis) |
+| **Datum** | 2026-08-11 (Nachweis) · Basis-QA 2026-08-01 |
 | **Rolle** | Testarchitekt / Bughunter |
 | **Suite** | `python3 -m pytest -q` |
-| **Ergebnis** | **GRÜN** — 102 bestanden, 0 fehlgeschlagen |
+| **Ergebnis** | **GRÜN** — **186** bestanden, 0 fehlgeschlagen (2026-08-11) |
 | **Freigabe-Empfehlung** | **Freigabefähig** (Muss-Abdeckung automatisiert + CLI-Smoke; Live-4-Node-HW nicht in CI) |
+
+---
+
+## 0. Suite-Nachweis v0.2.4 (2026-08-11) — H8 / L-NEU-003
+
+Code-Release `1fead99` (mesh health, RDMA probe, exo correlator, heal watchdog,
+bench quality, sync/icloud-Materialize) war **neuer** als der letzte QA/Abnahme-
+Commit → Autoheal **H8**. Suite- und Security-Diff nachgezogen.
+
+### 0.1 Suite-Ergebnis (reproduziert)
+
+```text
+cd projects/maccluster && python3 -m pytest -q
+........................................................................ [ 38%]
+........................................................................ [ 77%]
+..........................................                               [100%]
+186 passed in 0.43s
+```
+
+| Metrik | 2026-08-01 (0.1.0) | **2026-08-11 (0.2.4)** |
+|---|---|---|
+| Tests bestanden | 102 | **186** |
+| Fehlgeschlagen | 0 | **0** |
+| Dauer (lokal) | — | **0.43 s** |
+| Exit | 0 | **0** |
+
+### 0.2 Security-Diff (seit 0.1.0-Abnahme)
+
+| Thema | Bewertung | Nachweis |
+|---|---|---|
+| Offline / keine Cloud-Clients | unverändert grün | `tests/integration/test_offline_no_cloud_imports.py`, `tests/unit/test_no_network_clients.py` |
+| ProcessRunner shell=False / argv | unverändert grün | `test_process_runner`, `test_process_argv_special_chars` |
+| Secrets in Config/Example | unverändert grün | examples ohne Secrets; Keychain-Pfade lokal |
+| Keychain | gehärtet (0.2.1+) | kein `-U`-Rewrite; locked-Keychain ehrlich; keine iCloud-Sync-Fiktion |
+| RDMA | **read-only** Status-Probe; enable nur Recovery-OS (Doku) | `adapters/rdma_ctl.py`, doctor/status/tb RO |
+| exo correlation | **opt-in**, nur Loopback `127.0.0.1:52415` | `services/exo_correlator.py` + Unit-Tests |
+| Heal watchdog LaunchAgent | lokal user-domain; kickstart hung heal | `heal_heartbeat`, `service_mgmt`, doctor checks |
+| Network mutation | unverändert Root/Privilege-Pfad; kein Remote-Write | mutate/heal Guard-Tests |
+| Sync home / iCloud materialize | best-effort lokal + TB-SSH; dataless skip | Unit-Tests materialize/sync; keine Cloud-API-Packages |
+
+**Fazit Security:** Keine neuen Cloud-LLM-/Netz-Client-Packages; keine Secret-Dumps;
+RDMA/exo bewusst RO bzw. Loopback. Diff **akzeptiert** für Freeze/Operate ohne neue
+Abnahme-Welle (Feature-Erweiterungen abgedeckt durch +84 Tests).
+
+### 0.3 Neue / erweiterte Testflächen seit 0.1.0 (Stichprobe)
+
+| Bereich | Beispiele |
+|---|---|
+| Mesh health | `tests/unit/health/test_mesh.py`, `doctor_logic/test_mesh_checks.py` |
+| Bench quality | `tests/unit/health/test_bench_quality.py`, iperf3 adapter |
+| exo correlator | `tests/unit/services/test_exo_correlator.py` |
+| Heal heartbeat | `tests/unit/services/test_heal_heartbeat.py` |
+| iCloud materialize | `tests/unit/services/test_icloud_materialize.py` |
+| Sync parser | `tests/unit/cli/test_sync_parser.py` |
+| Status JSON | `tests/integration/test_status_json_schema.py` (erweitert) |
+
+### 0.4 Was bewusst **nicht** erneut live war
+
+- Physisches 2–4-Node-TB-Mesh / Root-`up`/`heal` (NFA-048, Fakes)
+- Live-exo-Cluster und Live-`rdma_ctl enable` (RO-Probe + Doku)
 
 ---
 
@@ -27,16 +87,18 @@
 
 ---
 
-## 2. Suite-Ergebnis
+## 2. Suite-Ergebnis (Basis-QA 2026-08-01 · 0.1.0)
+
+> **Aktuell (0.2.4):** siehe **§0** — **186 passed**, 0 failed (2026-08-11).
 
 ```text
 cd projects/maccluster && python3 -m pytest -q
 ........................................................................ [ 70%]
 ..............................                                           [100%]
-# 102 passed, 0 failed
+# 102 passed, 0 failed   ← historisch 0.1.0
 ```
 
-| Metrik | Wert |
+| Metrik | Wert (0.1.0) |
 |---|---|
 | Tests gesamt | **102** |
 | Bestanden | **102** |
@@ -178,7 +240,7 @@ Keine produktseitigen Smoke-Bugs gefunden (frühere Exit-0-Artefakte stammten vo
 
 ## 9. Bewertung / Empfehlung
 
-- **Suite: GRÜN (102/102).**
+- **Suite: GRÜN** — historisch 102/102 (0.1.0); **aktuell 186/186 (0.2.4, 2026-08-11)**.
 - **Muss-Anforderungen:** alle 31 mit automatisiertem und/oder Smoke-Nachweis zuordenbar; Lücken aus dem QA-Lauf geschlossen.
-- **Produktcode:** in diesem Lauf **keine Fixes** nötig.
-- **Empfehlung:** **freigabefähig** für Abnahme unter den dokumentierten Rest-Risiken (Live-HW, Root-Pfad, Agent-KeepAlive). Optional vor Produktion: einmaliger manueller 2-Node-Bring-up mit sudo.
+- **Produktcode:** Basis-QA ohne Fixes; 0.2.x-Features mit zusätzlichen Unit-/Integrationstests (siehe §0).
+- **Empfehlung:** **freigabefähig** unter den dokumentierten Rest-Risiken (Live-HW, Root-Pfad, Agent-KeepAlive). Optional vor Produktion: einmaliger manueller 2-Node-Bring-up mit sudo.

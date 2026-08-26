@@ -714,3 +714,11 @@ Pure Validierung vor jedem Mutate (fail-closed):
 ---
 
 *Ende ARCHITEKTUR.md — verbindlich für Planung und Implementierung.*
+
+## Wissensbasis (Zitate)
+
+Nachgetragen 2026-08-09 (Roadmap v2.1 — pre-wissen FERTIG-Produkte im Kreislauf messbar machen).
+
+- `company/wissen/muster/distribution.md`
+- `company/wissen/muster/agenten-orchestrierung.md`
+- `company/wissen/ERKENNTNISSE.md`

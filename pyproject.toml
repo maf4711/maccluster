@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "maccluster"
-version = "0.1.0"
+version = "0.2.7"
 description = "CLI tool for Thunderbolt-networked Apple Silicon Mac mini clusters (2–4 nodes)"
 readme = "README.md"
 license = "MIT"
@@ -29,7 +29,7 @@ dependencies = []
 [project.optional-dependencies]
 monitor = ["rich>=13.7,<15"]
 dev = [
-  "pytest>=8.0",
+  "pytest>=9.0.3",
   "ruff>=0.6",
   "pip-audit>=2.7",
 ]
@@ -38,8 +38,12 @@ dev = [
 maccluster = "maccluster.cli.main:main"
 
 [project.urls]
-Homepage = "https://github.com/example/maccluster"
-Documentation = "https://github.com/example/maccluster#readme"
+Homepage = "https://github.com/maf4711/maccluster"
+Documentation = "https://github.com/maf4711/maccluster#readme"
+Repository = "https://github.com/maf4711/maccluster"
+Issues = "https://github.com/maf4711/maccluster/issues"
+Download = "https://github.com/maf4711/maccluster/archive/refs/heads/main.zip"
+RawInstall = "https://raw.githubusercontent.com/maf4711/maccluster/main/install.sh"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/maccluster"]

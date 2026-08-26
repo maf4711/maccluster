@@ -7,8 +7,10 @@ import re
 from ipaddress import ip_address
 
 from maccluster.constants import TIMEOUT_IPERF
+from maccluster.domain.enums import BenchQuality
 from maccluster.domain.models import BenchResult
 from maccluster.errors import CliError
+from maccluster.health.bench_quality import assess_bench_quality
 from maccluster.ports.process import ProcessRunnerPort
 
 
@@ -23,7 +25,13 @@ class Iperf3Bench:
         except CliError:
             return False
 
-    def run(self, target: str, *, duration: int = 5) -> BenchResult:
+    def run(
+        self,
+        target: str,
+        *,
+        duration: int = 5,
+        bind_ip: str | None = None,
+    ) -> BenchResult:
         if not self.available():
             return BenchResult(
                 target=target,
@@ -39,8 +47,12 @@ class Iperf3Bench:
                 raise CliError(f"invalid bench target: {target!r}", exit_code=2) from None
         duration = max(1, min(int(duration), 60))
         abs_iperf = self._runner.resolve("iperf3")
+        argv = [abs_iperf, "-c", target, "-t", str(duration), "-J"]
+        # Force traffic out the TB bridge Self-IP (not Wi‑Fi)
+        if bind_ip:
+            argv.extend(["-B", str(bind_ip)])
         result = self._runner.run(
-            [abs_iperf, "-c", target, "-t", str(duration), "-J"],
+            argv,
             timeout=TIMEOUT_IPERF + duration,
         )
         if result.returncode != 0:
@@ -49,47 +61,80 @@ class Iperf3Bench:
                 mbps=None,
                 success=False,
                 message=(result.stderr or result.stdout or "iperf3 failed")[:300],
+                quality=BenchQuality.UNKNOWN,
             )
-        mbps = _parse_iperf_json(result.stdout)
+        mbps, retrans = _parse_iperf_json(result.stdout)
+        quality, flags = assess_bench_quality(mbps, retransmits=retrans)
         return BenchResult(
             target=target,
             mbps=mbps,
             success=mbps is not None,
             message="ok" if mbps is not None else "could not parse iperf3 output",
+            retransmits=retrans,
+            quality=quality,
+            flags=flags,
         )
 
 
-def _parse_iperf_json(text: str) -> float | None:
+def _parse_iperf_json(text: str) -> tuple[float | None, int | None]:
+    """Return (mbps, retransmits)."""
     try:
         data = json.loads(text)
         # bits_per_second in end.sum_sent or end.sum_received
         end = data.get("end") or {}
+        mbps: float | None = None
+        retrans: int | None = None
         for key in ("sum_sent", "sum_received", "sum"):
             block = end.get(key)
             if isinstance(block, dict) and "bits_per_second" in block:
-                return float(block["bits_per_second"]) / 1_000_000.0
+                mbps = float(block["bits_per_second"]) / 1_000_000.0
+                if "retransmits" in block:
+                    try:
+                        retrans = int(block["retransmits"])
+                    except (TypeError, ValueError):
+                        retrans = None
+                break
+        if mbps is not None:
+            return mbps, retrans
     except (json.JSONDecodeError, TypeError, ValueError):
         pass
     m = re.search(r"([\d.]+)\s*Mbits/sec", text)
     if m:
-        return float(m.group(1))
-    return None
+        return float(m.group(1)), None
+    return None, None
 
 
 class FakeBench:
-    def __init__(self, *, available: bool = True, mbps: float = 1000.0) -> None:
+    def __init__(
+        self,
+        *,
+        available: bool = True,
+        mbps: float = 1000.0,
+        retransmits: int | None = 0,
+    ) -> None:
         self._available = available
         self._mbps = mbps
+        self._retransmits = retransmits
 
     def available(self) -> bool:
         return self._available
 
-    def run(self, target: str, *, duration: int = 5) -> BenchResult:
+    def run(self, target: str, *, duration: int = 5, bind_ip: str | None = None) -> BenchResult:
         if not self._available:
             return BenchResult(
                 target=target,
                 mbps=None,
                 success=False,
                 message="iperf3 not found — install via Homebrew: brew install iperf3",
+                quality=BenchQuality.UNKNOWN,
             )
-        return BenchResult(target=target, mbps=self._mbps, success=True, message="ok")
+        quality, flags = assess_bench_quality(self._mbps, retransmits=self._retransmits)
+        return BenchResult(
+            target=target,
+            mbps=self._mbps,
+            success=True,
+            message="ok",
+            retransmits=self._retransmits,
+            quality=quality,
+            flags=flags,
+        )
