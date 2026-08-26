@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.8 — 2026-08-26
+
+### Changed — dependency refresh
+- `ruff` 0.13.3 → **0.16.4**, `pytest` 9.0.3 → 9.1.1, `rich` 14.2.0 → 15.0.0,
+  `hatchling` 1.31.0 → 1.32.0
+- CI actions: `actions/checkout` 4 → 7, `actions/setup-python` 5 → 7
+
+These six Dependabot PRs had been sitting open since early August, all showing
+red CI. The failures were stale: the runs dated from 2026-08-01 and had been
+executed against a much older `main`. After rebasing each branch onto current
+`main`, every check passed — the bumps themselves were never the problem.
+Verified on the merge result: 220 tests pass, `ruff check` clean, `ruff format`
+reports 231 files already formatted.
+
 ## 0.2.7 — 2026-08-25
 
 ### Added — MCPRT before `sync dev`
