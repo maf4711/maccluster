@@ -25,6 +25,14 @@ class ProcessRunnerPort(Protocol):
         check: bool = False,
     ) -> ProcessResult: ...
 
+    def run_pipe(
+        self,
+        producer: Sequence[str],
+        consumer: Sequence[str],
+        *,
+        timeout: float,
+    ) -> ProcessResult: ...
+
     def resolve(self, basename: str) -> str:
         """Return absolute path for allowlisted basename."""
         ...

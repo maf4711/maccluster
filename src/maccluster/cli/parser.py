@@ -156,6 +156,12 @@ def _add_sync_tree_flags(
         help="Skip TB cable/speedtest preflight",
     )
     parser.add_argument(
+        "--no-stream",
+        action="store_true",
+        help="Stage push.cpio to disk, copy, then unpack (pre-0.3 path) "
+        "instead of piping ditto -c straight into the peer's ditto -x",
+    )
+    parser.add_argument(
         "--timeout",
         type=float,
         default=None,

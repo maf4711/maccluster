@@ -16,6 +16,7 @@ from maccluster.services.sync_filters import merge_includes, resolve_presets
 from maccluster.services.sync_service import (
     _REMOTE_INVENTORY_PY,
     FileMeta,
+    _transfer_push_once,
     apply_batch_limits,
     exit_code_for_sync,
     inventory_local,
@@ -436,3 +437,88 @@ def test_plan_transfers_complete_remote_still_pushes_only_local():
     assert "only-local.txt" in push
     assert stats["only_local"] == 1
     assert stats["remote_unknown"] == 0
+
+
+class PipeRecordingRunner(RecordingRunner):
+    """RecordingRunner that also implements the run_pipe port method."""
+
+    def __init__(self, *, fail_ssh: bool = False) -> None:
+        super().__init__(fail_ssh=fail_ssh)
+        self.pipes: list[tuple[tuple[str, ...], tuple[str, ...]]] = []
+
+    def run_pipe(
+        self,
+        producer: Sequence[str],
+        consumer: Sequence[str],
+        *,
+        timeout: float = 15.0,
+    ) -> ProcessResult:
+        self.pipes.append((tuple(producer), tuple(consumer)))
+        return ProcessResult(tuple(producer), 0, "", "", False)
+
+
+def _push_fixture(tmp_path: Path) -> tuple[Path, Path, list[str], dict[str, int]]:
+    home = tmp_path / "home"
+    (home / "repo").mkdir(parents=True)
+    (home / "repo" / "a.txt").write_text("hello", encoding="utf-8")
+    work = tmp_path / "work"
+    work.mkdir()
+    return home, work, ["repo/a.txt"], {"repo/a.txt": 5}
+
+
+def test_push_streams_instead_of_staging_an_archive(fake_ctx, tmp_path: Path):
+    """Default push pipes ditto -c into the peer's ditto -x.
+
+    Staging push.cpio, copying it, then unpacking it walks the same bytes three
+    times and leaves the link idle for two of those passes — measured at 27%
+    wire-active on a Thunderbolt pair. The pipeline overlaps all three.
+    """
+    home, work, rels, sizes = _push_fixture(tmp_path)
+    runner = PipeRecordingRunner()
+    fake_ctx.runner = runner
+    rc, out, err, _ = _transfer_push_once(
+        fake_ctx,
+        abs_ditto="/usr/bin/ditto",
+        abs_ssh="/usr/bin/ssh",
+        abs_scp="/usr/bin/scp",
+        ssh_target="a321@10.42.0.1",
+        local_home=home,
+        remote_home="/Users/a321/home",
+        rels=rels,
+        sizes=sizes,
+        dry_run=False,
+        timeout=60,
+        work=work,
+    )
+    assert rc == 0, err
+    assert "streamed" in out
+    assert len(runner.pipes) == 1
+    producer, consumer = runner.pipes[0]
+    assert producer[0].endswith("ditto") and producer[-1] == "-"
+    assert "ditto -x -" in " ".join(consumer)
+    # No archive was copied over the wire, and none was left on disk.
+    assert not any(Path(c[0]).name == "scp" for c in runner.calls)
+    assert not (work / "push.cpio").exists()
+
+
+def test_push_no_stream_keeps_the_archive_path(fake_ctx, tmp_path: Path):
+    """--no-stream still stages, copies and unpacks — the escape hatch works."""
+    home, work, rels, sizes = _push_fixture(tmp_path)
+    runner = PipeRecordingRunner()
+    fake_ctx.runner = runner
+    _transfer_push_once(
+        fake_ctx,
+        abs_ditto="/usr/bin/ditto",
+        abs_ssh="/usr/bin/ssh",
+        abs_scp="/usr/bin/scp",
+        ssh_target="a321@10.42.0.1",
+        local_home=home,
+        remote_home="/Users/a321/home",
+        rels=rels,
+        sizes=sizes,
+        dry_run=False,
+        timeout=60,
+        work=work,
+        stream=False,
+    )
+    assert runner.pipes == []

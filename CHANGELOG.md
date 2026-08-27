@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.3.0 — 2026-08-27
+
+### Changed — push streams instead of staging an archive
+
+`push` piped through four serial phases per batch: hardlink the files into a
+stage dir, `ditto -c` that into `push.cpio`, `scp` the archive, then `ditto -x`
+it on the peer. Three full passes over the same bytes, and the link sat idle
+during two of them. Counted over a real run: the wire moved data in **27%** of
+wall time (`extract` 6465 samples, `transfer` 4681, `archive` 4312, `stage`
+2192).
+
+The archive now goes straight into the peer: `ditto -c stage -` piped into
+`ssh peer 'ditto -x - dest'`. Packing, transfer and unpacking overlap. Metadata
+semantics are unchanged — verified that xattrs survive the stream roundtrip
+identically to the file path. `--no-stream` restores the old behaviour.
+
+Measured on this Thunderbolt pair to size the gap, same 416 MB / 22,820-file
+corpus:
+
+| transport | throughput |
+|---|---|
+| `maccluster sync` (staged) | ~10 MB/s |
+| straight pipe, 1 stream | 36 MB/s |
+| straight pipe, 2 streams | 47 MB/s |
+| straight pipe, 4 or 8 streams | 47-48 MB/s |
+
+Parallelism saturates at two streams, so the ceiling is APFS file creation
+(2,653 files/s), not the network: the same link carries 45.8 Gbit/s with iperf3
+and 110 MB/s for a single large file over `scp`. For a tree of small files no
+transport can beat the filesystem — but it can stop idling, and that is the 4.8x
+this change targets (34.66 GB projected 59 min staged vs ~12 min piped).
+
+### Added
+- `ProcessRunnerPort.run_pipe(producer, consumer)` — runs two argv concurrently.
+  A non-zero producer status wins over a consumer that exited 0 after reading a
+  truncated stream; producer stderr goes to a temp file because draining it from
+  a pipe while waiting on the consumer can deadlock.
+- `--no-stream` on `sync home` / `sync dev`
+
+### Not verified
+The streaming push has unit coverage and `run_pipe` was exercised against real
+`ditto` processes, but no end-to-end run over SSH to a live peer: the cluster
+peer went offline mid-sync (`Connection reset by peer`, then unreachable on
+Thunderbolt, `.local` and Tailscale alike) and this Mac has Remote Login off.
+
 ## 0.2.9 — 2026-08-27
 
 ### Fixed — sync re-copied the whole tree instead of the delta

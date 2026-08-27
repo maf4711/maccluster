@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import tempfile
 import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -87,6 +88,88 @@ class ProcessRunner:
             if val:
                 env[key] = val
         return env
+
+    def run_pipe(
+        self,
+        producer: Sequence[str],
+        consumer: Sequence[str],
+        *,
+        timeout: float = TIMEOUT_GENERIC,
+    ) -> ProcessResult:
+        """Run ``producer | consumer`` concurrently; return the consumer result.
+
+        Staging an archive to disk, copying it, then unpacking it serialises
+        three phases that can all run at once. Piping overlaps them, which is
+        where the wall-clock win comes from.
+
+        A producer that dies must not be masked by a consumer that cheerfully
+        unpacked a truncated stream, so a non-zero producer status wins.
+        Producer stderr goes to a temp file: reading it from a pipe while
+        waiting on the consumer can deadlock once the buffer fills.
+        """
+        p_argv = self._prepare_argv(producer)
+        c_argv = self._prepare_argv(consumer)
+        env = self._child_env()
+        argv_repr = (*p_argv, "|", *c_argv)
+        with tempfile.TemporaryFile() as perr:
+            try:
+                prod = subprocess.Popen(  # noqa: S603 — shell=False, allowlisted argv
+                    p_argv, stdout=subprocess.PIPE, stderr=perr, env=env, shell=False
+                )
+            except OSError as exc:
+                return ProcessResult(argv_repr, 127, "", str(exc), False)
+            try:
+                assert prod.stdout is not None
+                cons = subprocess.Popen(  # noqa: S603 — shell=False, allowlisted argv
+                    c_argv,
+                    stdin=prod.stdout,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    env=env,
+                    shell=False,
+                )
+            except OSError as exc:
+                prod.kill()
+                prod.wait()
+                return ProcessResult(argv_repr, 127, "", str(exc), False)
+            # Close our copy so the producer sees EPIPE if the consumer exits.
+            prod.stdout.close()
+            timed_out = False
+            try:
+                out_b, err_b = cons.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                cons.kill()
+                prod.kill()
+                out_b, err_b = cons.communicate()
+            try:
+                prod.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                prod.kill()
+                prod.wait()
+            perr.seek(0)
+            p_err = perr.read().decode("utf-8", errors="replace")
+
+        def _txt(blob: object) -> str:
+            if blob is None:
+                return ""
+            if isinstance(blob, bytes):
+                return blob.decode("utf-8", errors="replace")
+            return str(blob)
+
+        out, err = _txt(out_b), _txt(err_b)
+        if timed_out:
+            return ProcessResult(argv_repr, 124, out, (err + p_err).strip(), True)
+        if prod.returncode:
+            # Producer failure is the real cause even when the consumer exits 0.
+            return ProcessResult(
+                argv_repr,
+                prod.returncode,
+                out,
+                (p_err or err or "pipe producer failed").strip(),
+                False,
+            )
+        return ProcessResult(argv_repr, cons.returncode, out, (err + p_err).strip(), False)
 
     def run(
         self,

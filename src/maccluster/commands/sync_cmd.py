@@ -171,6 +171,7 @@ def run(ctx: AppContext, args) -> int:
         apfs_snapshot=bool(getattr(args, "apfs_snapshot", False)),
         notify=bool(getattr(args, "notify", False)),
         no_speedtest=bool(getattr(args, "no_speedtest", False)),
+        no_stream=bool(getattr(args, "no_stream", False)),
         min_free_bytes=getattr(args, "min_free", None),
         timeout=timeout,
         progress=progress,
