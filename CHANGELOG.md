@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.2.9 — 2026-08-27
+
+### Fixed — sync re-copied the whole tree instead of the delta
+
+`sync` pushed 83.5 GB where the real difference was a few hundred MB. Three
+defects compounded:
+
+- **The remote walk spawned one Python interpreter per directory.** That child
+  process was added in 0.2.3 to survive iCloud/FileProvider hangs, but it costs
+  a process start per folder: measured 167 files/s. `scandir` now runs
+  in-process for `sync dev`, whose tree (`~/Developer`) never reaches a cloud
+  provider. `sync home` can reach iCloud-backed Documents/Desktop and keeps the
+  killable child, so the 0.2.3 fix stands where it was needed. Force either way
+  with `MACCLUSTER_INV_SAFE_SCANDIR=1`. Measured on the cluster peer:
+  **889,344 files in 38 s (23,404/s) instead of 40,050 in 240 s** — 140x faster,
+  and the walk finishes instead of being cut off.
+- **A truncated inventory was returned as if it were complete.** At 167 files/s
+  the 240 s budget always tripped, leaving 0.9% of a 4.4M-file tree listed. The
+  code detected this (`# inventory time budget`), wrote it into a note string,
+  and planned against the partial list anyway. Worse, the empty case returned
+  `{}` "so push can proceed" — which reads as "the peer has nothing".
+- **`plan_transfers` read absence as deletion-worthy fact.** A file missing from
+  the inventory became `only_local` and was pushed, so every file the walk never
+  reached was re-sent.
+
+`_remote_inventory` now reports completeness, `plan_transfers` takes
+`remote_complete`, and files the walk never reached are counted as
+`remote_unknown` and left for the next run rather than blindly pushed. Default
+budget raised 240s -> 900s and the SSH-side cap 360s -> 1200s so the cap can no
+longer kill the walk before its own budget applies.
+
+### Changed
+- `MACCLUSTER_INV_MAX_SEC` default 240 -> 900
+- New: `MACCLUSTER_INV_SAFE_SCANDIR=1` forces per-directory child processes;
+  `sync home` sets it automatically, `sync dev` does not
+
 ## 0.2.8 — 2026-08-26
 
 ### Changed — dependency refresh

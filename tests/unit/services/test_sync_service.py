@@ -400,3 +400,39 @@ def test_ditto_allowlisted(tmp_path):
         raise AssertionError("expected CliError")
     except CliError as e:
         assert e.exit_code == 1
+
+
+def test_plan_transfers_partial_remote_does_not_push_unlisted():
+    """A truncated remote inventory must not be read as "file absent on peer".
+
+    The remote walk runs under a time budget. When it trips, the inventory
+    covers only part of the tree. Treating everything it never reached as
+    only_local turns a delta sync into a full re-copy: observed in the field
+    as 83.5 GB pushed for a delta of a few hundred MB, because the walk had
+    listed 40050 of 4384872 files (0.9%) before the budget stopped it.
+    """
+    local = {
+        "seen-newer.txt": FileMeta(mtime_ns=200, size=1),
+        "seen-equal.txt": FileMeta(mtime_ns=50, size=1),
+        "never-listed.txt": FileMeta(mtime_ns=1, size=1),
+    }
+    remote = {
+        "seen-newer.txt": FileMeta(mtime_ns=100, size=1),
+        "seen-equal.txt": FileMeta(mtime_ns=50, size=1),
+    }
+    push, _pull, stats = plan_transfers(local, remote, remote_complete=False)
+    # A positively observed difference still moves.
+    assert "seen-newer.txt" in push
+    # A file the walk never reached is unknown, not absent.
+    assert "never-listed.txt" not in push
+    assert stats["remote_unknown"] == 1
+    assert stats["only_local"] == 0
+
+
+def test_plan_transfers_complete_remote_still_pushes_only_local():
+    """With a complete inventory, absent really does mean absent."""
+    local = {"only-local.txt": FileMeta(mtime_ns=1, size=1)}
+    push, _pull, stats = plan_transfers(local, {}, remote_complete=True)
+    assert "only-local.txt" in push
+    assert stats["only_local"] == 1
+    assert stats["remote_unknown"] == 0
