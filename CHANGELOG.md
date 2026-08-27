@@ -4,8 +4,11 @@
 
 ### Fixed — sync re-copied the whole tree instead of the delta
 
-`sync` pushed 83.5 GB where the real difference was a few hundred MB. Three
-defects compounded:
+`sync dev` planned an 83.5 GB push against a peer it had barely looked at.
+Measured after the fix, on the same pair: the real plan is 34.66 GB push
+(398,825 files) plus 19.97 GB pull (62,203 files). So the truncation caused a
+2.4x over-push and hid the pull direction almost entirely, because files only
+the peer had were never listed. Three defects compounded:
 
 - **The remote walk spawned one Python interpreter per directory.** That child
   process was added in 0.2.3 to survive iCloud/FileProvider hangs, but it costs
@@ -15,7 +18,9 @@ defects compounded:
   killable child, so the 0.2.3 fix stands where it was needed. Force either way
   with `MACCLUSTER_INV_SAFE_SCANDIR=1`. Measured on the cluster peer:
   **889,344 files in 38 s (23,404/s) instead of 40,050 in 240 s** — 140x faster,
-  and the walk finishes instead of being cut off.
+  and the walk finishes instead of being cut off. In the real sync path the
+  remote inventory went from 40,050 files (truncated) to 372,156 (complete),
+  and the whole compare from 4:57 to 1:22.
 - **A truncated inventory was returned as if it were complete.** At 167 files/s
   the 240 s budget always tripped, leaving 0.9% of a 4.4M-file tree listed. The
   code detected this (`# inventory time budget`), wrote it into a note string,
