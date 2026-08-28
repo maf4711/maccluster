@@ -8,6 +8,7 @@ from maccluster.domain.models import (
     DoctorReport,
     HealthSnapshot,
     InterfaceTraffic,
+    MeshBenchReport,
     RdmaStatus,
     ServiceState,
     ThunderboltSnapshot,
@@ -16,6 +17,7 @@ from maccluster.domain.models import (
 from maccluster.health.traffic import format_bps, format_pps
 from maccluster.render.sanitize import sanitize
 from maccluster.render.symbols import link_symbol, reachability_symbol
+from maccluster.services.fleet_heal_service import FleetHealReport
 
 
 def render_tb(snap: ThunderboltSnapshot, *, rdma: RdmaStatus | None = None) -> str:
@@ -201,3 +203,45 @@ def render_service(state: ServiceState) -> str:
         f"interval_seconds: {state.interval_seconds if state.interval_seconds is not None else '-'}\n"
         f"detail: {sanitize(state.detail)}"
     )
+
+
+def render_mesh_bench(report: MeshBenchReport) -> str:
+    orch = "yes" if report.orchestrated else "no"
+    lines = [f"mesh bench  Δ{report.duration_s}s  path={report.bind_mode}  orchestrated={orch}"]
+    if report.busy_skipped:
+        lines.append(sanitize(report.summary))
+        return "\n".join(lines)
+    for p in report.paths:
+        thr = f"{p.mbps:.0f} Mbit/s" if p.mbps is not None else "n/a"
+        extra = ""
+        if p.retransmits is not None:
+            extra += f"  retransmits={p.retransmits}"
+        if p.flags:
+            extra += "  flags=" + ",".join(p.flags)
+        if p.reverse:
+            extra += "  reverse"
+        lines.append(f"  {p.src_id} → {p.dst_id}  {thr}  quality={p.quality.value}{extra}")
+        if not p.ok and p.message:
+            lines.append(f"    {sanitize(p.message)}")
+    lines.append(f"summary: {sanitize(report.summary)}")
+    return "\n".join(lines)
+
+
+def render_fleet_heal(report: FleetHealReport, *, dry_run: bool = False) -> str:
+    mode = "dry-run" if dry_run else "apply"
+    tog = " together" if report.together else ""
+    lines = [f"heal --fleet ({mode}{tog})  {sanitize(report.summary)}"]
+    if report.self_result is not None:
+        lines.append(f"  self: {sanitize(report.self_result.message)}")
+    elif report.self_degraded:
+        lines.append("  self: degraded")
+    for hop in report.hops:
+        if hop.ok:
+            state = "ok"
+        elif hop.skipped:
+            state = "skipped"
+        else:
+            state = "fail"
+        extra = f" — {sanitize(hop.message)}" if hop.message else ""
+        lines.append(f"  {hop.node_id} ({hop.peer_ip}): {state}{extra}")
+    return "\n".join(lines)

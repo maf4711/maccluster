@@ -48,6 +48,28 @@ No. Same package and config structure on every member. Self is resolved per host
 
 **Degraded**, not a crash: e.g. a peer is down, or `up` set bridge/IP but there is **no TB link**. Scriptable and distinct from exit 1 (error) and 2 (usage/config).
 
+### How do I heal every member from one Mac?
+
+SSH keys on the TB IPs, then:
+
+```bash
+maccluster heal --fleet --dry-run
+sudo maccluster heal --fleet
+maccluster heal --fleet --together    # also kickstart the heal LaunchAgent
+```
+
+Each peer runs its own `maccluster heal` (no remote `ifconfig` from here). If a peer prints `admin/sudo required`, run `sudo maccluster heal` on that machine.
+
+### How do I see RAM / disk / thermal on every mini?
+
+```bash
+maccluster doctor --host
+maccluster doctor --host --fleet
+maccluster doctor --host --fleet --peer node-b
+```
+
+Page size is read from the `vm_stat` header (16 KiB on Apple Silicon). Default `doctor` does not run these tools. A peer that does not answer SSH is `host:<id>` WARN (exit 3); missing `sntp` is skipped.
+
 ### Will the cluster heal after reboot automatically?
 
 **Best-effort only.** `service install` runs `heal --loop` as a **user** LaunchAgent. If macOS requires root to create the bridge or set the IP, the agent cannot elevate silently — run `sudo maccluster heal` after login, or accept that recovery needs privileges. There is **no HA/SLA** promise.
@@ -58,7 +80,18 @@ Yes. Core commands use only local OS tools (`system_profiler`, `ifconfig`, `ping
 
 ### Optional bandwidth test?
 
-Install `iperf3`, start a server on the peer, then `maccluster bench <peer-ip>`. Missing `iperf3` fails only `bench` (exit 1), not the rest of the CLI.
+Install `iperf3`, then `maccluster bench <peer-ip>` (traffic is bound to the TB Self-IP). Missing `iperf3` fails only `bench` (exit 1), not the rest of the CLI.
+
+Full mesh (one pair at a time, never in parallel):
+
+```bash
+maccluster bench --mesh
+maccluster bench --mesh --peer node-b
+```
+
+If SSH over the bridge works, MacCluster starts `iperf3 -s -B <dst>` on the far end. If not, only Self→peer is measured.
+
+To avoid saturating the fabric (for example during live work), set `MACCLUSTER_BUSY=1` or write a reason to `~/.config/maccluster/busy`. `bench --mesh` and `speedtest` then exit **3**. Override with `--force`.
 
 ### SSH probes?
 

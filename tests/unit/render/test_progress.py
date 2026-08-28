@@ -18,8 +18,35 @@ def test_format_bytes_and_rate():
     assert format_bytes(500) == "500 B"
     assert "KB" in format_bytes(12_000)
     assert "MB" in format_bytes(3_500_000)
-    assert format_rate(0) == "— B/s"
+    # Always numeric — never a dash (D/U must stay readable)
+    assert format_rate(0) == "0 B/s"
     assert "/s" in format_rate(1_000_000)
+
+
+def test_progress_always_shows_d_u():
+    buf = io.StringIO()
+    p = SyncProgress(enabled=True, stream=buf, force=True, min_interval_s=0)
+    p.phase("inventory", direction="local")
+    p.update(files_done=100, bytes_done=50_000, force=True)
+    text = buf.getvalue()
+    assert "D:" in text
+    assert "U:" in text
+    # Inventory also reports scan rate
+    assert "scan:" in text or "f/s" in text
+
+
+def test_progress_push_updates_u_lane():
+    import time
+
+    buf = io.StringIO()
+    p = SyncProgress(enabled=True, stream=buf, force=True, min_interval_s=0)
+    p.phase("transfer", direction="push")
+    p.update(bytes_done=0, bytes_total=10_000_000, force=True)
+    time.sleep(0.25)
+    p.update(bytes_done=5_000_000, bytes_total=10_000_000, force=True)
+    text = buf.getvalue()
+    assert "D:" in text and "U:" in text
+    assert "push" in text
 
 
 def test_render_bar_bounds():

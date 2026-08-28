@@ -90,6 +90,7 @@ def _resolve_peers(
     *,
     peer_filter: str | None,
     default_user: str,
+    peer_limit: int | None = None,
 ) -> list[tuple[Node, str]]:
     peers: list[tuple[Node, str]] = []
     for n in cfg_nodes:
@@ -107,6 +108,12 @@ def _resolve_peers(
         )
     if not peers:
         raise CliError("no peers in config to sync with", exit_code=2)
+    if peer_limit is not None:
+        if peer_limit < 1:
+            raise CliError("--limit must be >= 1", exit_code=2)
+        peers = peers[:peer_limit]
+        if not peers:
+            raise CliError("no peers left after --limit", exit_code=2)
     return peers
 
 
@@ -235,38 +242,158 @@ def is_excluded(rel: str, patterns: tuple[str, ...]) -> bool:
     return False
 
 
+# Prefer these roots first so push starts useful data before iCloud trees.
+_INV_PREF = ("Developer", "Downloads", ".ssh", ".config", "Desktop", "Documents")
+_INV_SKIP_NAMES = frozenset(
+    {
+        "imessage_export",
+        "node_modules",
+        ".git",
+        "DerivedData",
+        "__pycache__",
+        ".venv",
+        "venv",
+        ".Trash",
+        "Library",  # full Library only when walking $HOME root
+    }
+)
+_UF_DATALESS = 0x40000000
+
+
+def _safe_scandir(
+    path: Path | str,
+    *,
+    timeout_s: float = 6.0,
+) -> list[tuple[str, str, bool, bool]] | None:
+    """List directory in a killable child — iCloud/FP hangs ignore SIGALRM."""
+    import json
+    import subprocess
+    import sys
+
+    code = (
+        "import os,json,sys\n"
+        "p=sys.argv[1]\n"
+        "o=[]\n"
+        "try:\n"
+        "  for e in os.scandir(p):\n"
+        "    try:\n"
+        "      o.append([e.name,e.path,e.is_dir(follow_symlinks=False),"
+        "e.is_file(follow_symlinks=False)])\n"
+        "    except OSError:\n"
+        "      pass\n"
+        "except Exception:\n"
+        "  sys.exit(2)\n"
+        "print(json.dumps(o))\n"
+    )
+    try:
+        r = subprocess.run(
+            [sys.executable, "-c", code, str(path)],
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+            check=False,
+        )
+    except Exception:
+        return None
+    if r.returncode != 0:
+        return None
+    try:
+        raw = json.loads(r.stdout or "[]")
+        out: list[tuple[str, str, bool, bool]] = []
+        for row in raw:
+            if len(row) >= 4:
+                out.append((str(row[0]), str(row[1]), bool(row[2]), bool(row[3])))
+        return out
+    except Exception:
+        return None
+
+
 def inventory_local(
     root: Path,
     excludes: tuple[str, ...],
     includes: tuple[str, ...] = (),
+    *,
+    progress: ProgressLike | None = None,
+    max_sec: float | None = None,
+    dir_sec: float | None = None,
 ) -> dict[str, FileMeta]:
     """Walk home (or only ``includes`` roots); regular files + symlinks only.
 
-    Skips iCloud ``UF_DATALESS`` placeholders so open/ditto cannot hang.
-    When *includes* is set, only those subtrees are walked (much faster).
+    Hang-safe for iCloud Desktop/Documents (killable scandir child). Fast
+    ``os.walk`` for Developer/Downloads/.ssh/.config. Skips ``UF_DATALESS``.
+    When *includes* is set, only those subtrees are walked. Optional *progress*
+    reports live file counts so the bar is not stuck at 0%.
     """
+    prog = progress or NullProgress()
     out: dict[str, FileMeta] = {}
-    root = root.resolve()
-    # (walk_path, rel_prefix under home)
-    walk_roots: list[tuple[Path, str]] = []
-    if includes:
-        for inc in includes:
-            base = inc.replace("\\", "/").strip("/").rstrip("/")
-            if not base or ".." in base.split("/"):
-                continue
-            p = root / base
-            if p.exists():
-                walk_roots.append((p, base))
-    else:
-        walk_roots.append((root, ""))
+    root = root.expanduser()
+    try:
+        root = root.resolve()
+    except OSError:
+        root = root.absolute()
 
-    for walk_path, _prefix in walk_roots:
+    max_s = float(
+        max_sec if max_sec is not None else os.environ.get("MACCLUSTER_INV_MAX_SEC", "240")
+    )
+    dir_s = float(dir_sec if dir_sec is not None else os.environ.get("MACCLUSTER_INV_DIR_SEC", "6"))
+    t0 = time.time()
+    n_emit = 0
+    bytes_emit = 0
+    last_prog = 0.0
+
+    def _budget_ok() -> bool:
+        return (time.time() - t0) <= max_s
+
+    def _tick(detail: str) -> None:
+        nonlocal last_prog
+        now = time.time()
+        if now - last_prog < 0.2 and n_emit % 1000 != 0:
+            return
+        last_prog = now
+        elapsed = int(now - t0)
+        prog.update(
+            phase="inventory",
+            direction="local",
+            files_done=n_emit,
+            bytes_done=bytes_emit,
+            detail=f"{n_emit} files · {elapsed}s · {detail}",
+            path=detail,
+            force=True,
+        )
+
+    def _emit_path(path: Path, rel: str) -> bool:
+        nonlocal n_emit, bytes_emit
+        if is_excluded(rel, excludes):
+            return False
+        try:
+            st = path.lstat()
+        except OSError:
+            return False
+        if not (stat.S_ISREG(st.st_mode) or stat.S_ISLNK(st.st_mode)):
+            return False
+        if getattr(st, "st_flags", 0) & _UF_DATALESS:
+            return False
+        out[rel] = FileMeta(mtime_ns=st.st_mtime_ns, size=st.st_size)
+        n_emit += 1
+        bytes_emit += max(0, int(st.st_size))
+        if n_emit % 250 == 0:
+            _tick(rel)
+        return True
+
+    def _fast_walk(walk_path: Path, label: str) -> None:
+        """os.walk for trees that do not hang (Developer, Downloads, …)."""
         for dirpath, dirnames, filenames in os.walk(walk_path, followlinks=False):
+            if not _budget_ok():
+                return
             rel_dir = os.path.relpath(dirpath, root)
             if rel_dir == ".":
                 rel_dir = ""
             keep: list[str] = []
             for d in dirnames:
+                if d in _INV_SKIP_NAMES:
+                    continue
+                if d.startswith(".") and d not in (".ssh", ".config"):
+                    continue
                 rel = f"{rel_dir}/{d}" if rel_dir else d
                 rel = rel.replace("\\", "/")
                 if is_excluded(rel, excludes) or is_excluded(rel + "/", excludes):
@@ -274,21 +401,92 @@ def inventory_local(
                 keep.append(d)
             dirnames[:] = keep
             for name in filenames:
+                if name == ".DS_Store":
+                    continue
                 rel = f"{rel_dir}/{name}" if rel_dir else name
                 rel = rel.replace("\\", "/")
-                if is_excluded(rel, excludes):
-                    continue
-                path = Path(dirpath) / name
+                _emit_path(Path(dirpath) / name, rel)
+            _tick(label)
+
+    def _safe_walk(start: str, label: str) -> None:
+        """Killable scandir walk for iCloud Desktop/Documents."""
+        stack = [start]
+        while stack and _budget_ok():
+            cur = stack.pop()
+            entries = _safe_scandir(cur, timeout_s=dir_s)
+            if entries is None:
                 try:
-                    st = path.lstat()
-                except OSError:
+                    rel_h = os.path.relpath(cur, root).replace("\\", "/")
+                except Exception:
+                    rel_h = cur
+                prog.note(f"  skip-hang local: {rel_h}")
+                continue
+            for name, path, is_dir, _is_file in entries:
+                if not _budget_ok():
+                    break
+                if name in _INV_SKIP_NAMES or name == ".DS_Store":
                     continue
-                if not (stat.S_ISREG(st.st_mode) or stat.S_ISLNK(st.st_mode)):
+                if name.startswith(".") and name not in (".ssh", ".config"):
+                    if is_dir:
+                        continue
+                if is_dir:
+                    rel = os.path.relpath(path, root).replace("\\", "/")
+                    if is_excluded(rel, excludes) or is_excluded(rel + "/", excludes):
+                        continue
+                    stack.append(path)
+                else:
+                    rel = os.path.relpath(path, root).replace("\\", "/")
+                    _emit_path(Path(path), rel)
+            _tick(label)
+
+    # Prefer Developer/Downloads before iCloud Desktop/Documents
+    raw_includes = [i.replace("\\", "/").strip("/").rstrip("/") for i in includes if i]
+    raw_includes = [i for i in raw_includes if i and ".." not in i.split("/")]
+    raw_includes.sort(
+        key=lambda x: _INV_PREF.index(x.split("/")[0]) if x.split("/")[0] in _INV_PREF else 99
+    )
+
+    # (path, label, safe_mode)
+    walk_jobs: list[tuple[str, str, bool]] = []
+    if raw_includes:
+        for inc in raw_includes:
+            p0 = os.path.join(str(root), inc)
+            if not os.path.lexists(p0):
+                continue
+            base = inc.split("/")[0]
+            hang_prone = base in ("Documents", "Desktop")
+            if hang_prone and "/" not in inc:
+                kids = _safe_scandir(p0, timeout_s=dir_s)
+                if kids is None:
+                    prog.note(f"  skip-hang local: {inc}")
                     continue
-                # Skip iCloud dataless stubs (transfer would hang)
-                if getattr(st, "st_flags", 0) & 0x40000000:
-                    continue
-                out[rel] = FileMeta(mtime_ns=st.st_mtime_ns, size=st.st_size)
+                for name, path, is_dir, is_file in kids:
+                    if name in _INV_SKIP_NAMES or name == ".DS_Store":
+                        continue
+                    if is_dir:
+                        walk_jobs.append((path, f"{inc}/{name}", True))
+                    elif is_file:
+                        rel = os.path.relpath(path, root).replace("\\", "/")
+                        _emit_path(Path(path), rel)
+            else:
+                walk_jobs.append((p0, inc, hang_prone))
+    else:
+        # Full home: safe mode (Library skipped by name)
+        walk_jobs.append((str(root), ".", True))
+
+    for walk_path, label, safe_mode in walk_jobs:
+        if not _budget_ok():
+            prog.note("  local inventory time budget reached (partial)")
+            break
+        prog.note(f"  local walk: {label}")
+        _tick(label)
+        if safe_mode:
+            _safe_walk(walk_path, label)
+        else:
+            _fast_walk(Path(walk_path), label)
+
+    if not _budget_ok():
+        prog.note(f"  local inventory partial: {len(out)} files (budget {int(max_s)}s)")
     return out
 
 
@@ -493,6 +691,151 @@ def classify_compare(
         "remote_newer": remote_newer,
         "equal": equal,
     }
+
+
+@dataclass(frozen=True)
+class DeltaBucket:
+    """One inventory-diff bucket with count + total bytes + sample paths."""
+
+    count: int
+    bytes: int
+    samples: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class PreciseDelta:
+    """Inventory → compare result: exact file deltas, not bulk size guesses.
+
+    Built from local/remote inventories (relpath → mtime_ns + size) and the
+    same conflict policy as ``plan_transfers``. Transfer lists are the only
+    payload that should be synced (difference only).
+    """
+
+    policy: str
+    local_files: int
+    remote_files: int
+    local_bytes: int
+    remote_bytes: int
+    only_local: DeltaBucket
+    only_remote: DeltaBucket
+    local_newer: DeltaBucket
+    remote_newer: DeltaBucket
+    equal: DeltaBucket
+    conflicts_skipped: int
+    to_push: tuple[str, ...]
+    to_pull: tuple[str, ...]
+    push_bytes: int
+    pull_bytes: int
+
+    @property
+    def delta_files(self) -> int:
+        return len(self.to_push) + len(self.to_pull)
+
+    @property
+    def delta_bytes(self) -> int:
+        return self.push_bytes + self.pull_bytes
+
+    @property
+    def in_sync(self) -> bool:
+        return self.delta_files == 0
+
+
+def _bucket_from(
+    rels: list[str],
+    inv: dict[str, FileMeta],
+    *,
+    sample: int = 8,
+) -> DeltaBucket:
+    total = 0
+    for r in rels:
+        m = inv.get(r)
+        if m is not None:
+            total += max(0, int(m.size))
+    samples = tuple(f"{r} ({format_bytes(inv[r].size)})" if r in inv else r for r in rels[:sample])
+    return DeltaBucket(count=len(rels), bytes=total, samples=samples)
+
+
+def precise_delta(
+    local: dict[str, FileMeta],
+    remote: dict[str, FileMeta],
+    *,
+    policy: str = "newer",
+    sample: int = 8,
+) -> PreciseDelta:
+    """Read two inventories, classify exact deltas, plan difference transfer.
+
+    Pure function — no I/O. Prefer this over bulk ``du``/full-tree copies:
+    only missing/newer files (by policy) enter ``to_push`` / ``to_pull``.
+    """
+    buckets = classify_compare(local, remote)
+    to_push, to_pull, stats = plan_transfers(local, remote, policy=policy)
+    push_bytes = sum(max(0, int(local[r].size)) for r in to_push if r in local)
+    pull_bytes = sum(max(0, int(remote[r].size)) for r in to_pull if r in remote)
+    return PreciseDelta(
+        policy=policy,
+        local_files=len(local),
+        remote_files=len(remote),
+        local_bytes=sum(max(0, int(m.size)) for m in local.values()),
+        remote_bytes=sum(max(0, int(m.size)) for m in remote.values()),
+        only_local=_bucket_from(buckets["only_local"], local, sample=sample),
+        only_remote=_bucket_from(buckets["only_remote"], remote, sample=sample),
+        local_newer=_bucket_from(buckets["local_newer"], local, sample=sample),
+        remote_newer=_bucket_from(buckets["remote_newer"], remote, sample=sample),
+        equal=_bucket_from(buckets["equal"], local, sample=sample),
+        conflicts_skipped=int(stats.get("conflicts_skipped", 0)),
+        to_push=tuple(to_push),
+        to_pull=tuple(to_pull),
+        push_bytes=push_bytes,
+        pull_bytes=pull_bytes,
+    )
+
+
+def format_precise_delta(
+    delta: PreciseDelta,
+    *,
+    peer_id: str,
+    peer_ip: str = "",
+) -> list[str]:
+    """Human-readable lines for one peer delta report."""
+    where = f"{peer_id}" + (f" ({peer_ip})" if peer_ip else "")
+    lines = [
+        f"delta vs {where}  policy={delta.policy}",
+        f"  inventory: local={delta.local_files:,} files "
+        f"({format_bytes(delta.local_bytes)}) · "
+        f"remote={delta.remote_files:,} files ({format_bytes(delta.remote_bytes)})",
+        f"  buckets: only_local={delta.only_local.count:,}/"
+        f"{format_bytes(delta.only_local.bytes)}  "
+        f"only_remote={delta.only_remote.count:,}/"
+        f"{format_bytes(delta.only_remote.bytes)}  "
+        f"local_newer={delta.local_newer.count:,}/"
+        f"{format_bytes(delta.local_newer.bytes)}  "
+        f"remote_newer={delta.remote_newer.count:,}/"
+        f"{format_bytes(delta.remote_newer.bytes)}  "
+        f"equal={delta.equal.count:,}",
+        f"  plan: push {len(delta.to_push):,} files "
+        f"({format_bytes(delta.push_bytes)}) · "
+        f"pull {len(delta.to_pull):,} files ({format_bytes(delta.pull_bytes)}) · "
+        f"delta_total={format_bytes(delta.delta_bytes)}",
+    ]
+    if delta.conflicts_skipped:
+        lines.append(f"  conflicts_skipped={delta.conflicts_skipped:,}")
+    if delta.in_sync:
+        lines.append("  status: in sync (no delta)")
+    else:
+        lines.append(f"  status: {delta.delta_files:,} files differ")
+    if delta.only_local.samples or delta.local_newer.samples:
+        for s in (delta.only_local.samples + delta.local_newer.samples)[:6]:
+            lines.append(f"    push + {s}")
+        extra = len(delta.to_push) - min(6, len(delta.to_push))
+        if extra > 0:
+            lines.append(f"    push … +{extra} more")
+    if delta.only_remote.samples or delta.remote_newer.samples:
+        for s in (delta.only_remote.samples + delta.remote_newer.samples)[:6]:
+            lines.append(f"    pull + {s}")
+        extra = len(delta.to_pull) - min(6, len(delta.to_pull))
+        if extra > 0:
+            lines.append(f"    pull … +{extra} more")
+    return lines
 
 
 # Large ditto CPIO archives (>~2–4 GiB) often fail with "cpio read error" after scp.
@@ -1561,6 +1904,7 @@ def sync_home(
     *,
     dry_run: bool = False,
     peer: str | None = None,
+    peer_limit: int | None = None,
     push_only: bool = False,
     pull_only: bool = False,
     user: str | None = None,
@@ -1681,7 +2025,13 @@ def sync_home(
     includes_resolved = merge_includes(presets, includes)
     extra_dev = SYNC_DEV_EXCLUDES if target == "dev" else ()
     excludes = tuple(SYNC_HOME_EXCLUDES) + extra_dev + file_excludes + tuple(extra_excludes)
-    peers = _resolve_peers(cfg.nodes, self_node, peer_filter=peer, default_user=default_user)
+    peers = _resolve_peers(
+        cfg.nodes,
+        self_node,
+        peer_filter=peer,
+        default_user=default_user,
+        peer_limit=peer_limit,
+    )
     if via_n == "wifi":
         no_speedtest = True
         mapped: list[tuple[Node, str]] = []
@@ -1820,7 +2170,14 @@ def sync_home(
 
         if local_inv is None:
             prog.phase("inventory", direction="local", detail=str(local_home))
-            local_inv = inventory_local(local_home, excludes, includes_resolved)
+            local_inv = inventory_local(
+                local_home,
+                excludes,
+                includes_resolved,
+                progress=prog,
+                # Keep local inventory bounded; same default as remote script
+                max_sec=min(240.0, max(60.0, timeout * 0.5)),
+            )
             local_inv = filter_inventory(local_inv, includes_resolved)
             if quick and last_ts_ns > 0:
                 cutoff = last_ts_ns - SYNC_QUICK_SLACK_S * 1_000_000_000
@@ -1831,6 +2188,13 @@ def sync_home(
         with tempfile.TemporaryDirectory(prefix="maccluster-sync-") as tmp:
             work = Path(tmp)
             prog.phase("inventory", direction="remote", detail=ssh_target)
+            prog.update(
+                phase="inventory",
+                direction="remote",
+                detail=f"listing on {ssh_target}…",
+                path=ssh_target,
+                force=True,
+            )
             remote_inv, inv_err, inv_complete = _remote_inventory(
                 ctx,
                 abs_ssh,
@@ -1994,22 +2358,24 @@ def sync_home(
             v_checked = v_mis = 0
 
             if compare_only:
-                buckets = classify_compare(local_inv, remote_inv)
+                pd = precise_delta(local_inv, remote_inv, policy=policy, sample=8)
                 messages.append(
-                    f"compare only_local={len(buckets['only_local'])} "
-                    f"only_remote={len(buckets['only_remote'])} "
-                    f"local_newer={len(buckets['local_newer'])} "
-                    f"remote_newer={len(buckets['remote_newer'])} "
-                    f"equal={len(buckets['equal'])}"
+                    f"delta only_local={pd.only_local.count}/"
+                    f"{format_bytes(pd.only_local.bytes)} "
+                    f"only_remote={pd.only_remote.count}/"
+                    f"{format_bytes(pd.only_remote.bytes)} "
+                    f"local_newer={pd.local_newer.count}/"
+                    f"{format_bytes(pd.local_newer.bytes)} "
+                    f"remote_newer={pd.remote_newer.count}/"
+                    f"{format_bytes(pd.remote_newer.bytes)} "
+                    f"equal={pd.equal.count} "
+                    f"plan_push={len(pd.to_push)}/{format_bytes(pd.push_bytes)} "
+                    f"plan_pull={len(pd.to_pull)}/{format_bytes(pd.pull_bytes)}"
                 )
-                push_out = _sample_list(
-                    buckets["only_local"] + buckets["local_newer"],
-                    label="would push",
-                )
-                pull_out = _sample_list(
-                    buckets["only_remote"] + buckets["remote_newer"],
-                    label="would pull",
-                )
+                for line in format_precise_delta(pd, peer_id=node.id, peer_ip=str(node.ip)):
+                    prog.note(f"  {line}")
+                push_out = _sample_list(list(pd.to_push), label="would push")
+                pull_out = _sample_list(list(pd.to_pull), label="would pull")
             else:
                 if safetynet and not dry_run and not push_only and to_pull:
                     if sn_run is None:

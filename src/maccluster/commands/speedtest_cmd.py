@@ -14,6 +14,7 @@ def run(ctx: AppContext, args) -> int:
         duration=int(getattr(args, "duration", 5) or 5),
         skip_iperf=bool(getattr(args, "cable_only", False)),
         try_start_server=not bool(getattr(args, "no_server", False)),
+        force=bool(getattr(args, "force", False)),
     )
     if ctx.json_mode:
         print(dumps("speedtest", to_jsonable(report)))

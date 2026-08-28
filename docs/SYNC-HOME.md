@@ -6,6 +6,12 @@ useful **Carbon Copy Cloner** ideas (compare, filters, SafetyNet, verify, schedu
 — but **two-way**, **Home-only**, **no deletes**, over TB/SSH with Apple `ditto`.
 
 ```bash
+maccluster delta                            # inventory → precise deltas (report)
+maccluster delta --apply                    # transfer only the difference
+maccluster delta --peer node-b --limit 1
+maccluster pull                             # two-way Home + ~/Developer
+maccluster push                             # local → peer Home + ~/Developer
+maccluster pull --dry-run --peer node-b
 maccluster sync home --compare
 maccluster sync home --dry-run
 maccluster sync home --safetynet --verify
@@ -67,6 +73,45 @@ maccluster sync dev --wifi-top 5
 list. `--wifi-top 0` disables the pass. Needs a `*.local` hostname on the
 peer in `cluster.toml`. `sync home` is unchanged (TB only).
 
+## `maccluster delta` — inventory first, then difference
+
+Unlike bulk size checks (`du`) or full-tree copies, **delta** always:
+
+1. **Reads inventories** on this Mac and selected peers (all inventory peers,
+   `--peer`, or first `--limit N`)
+2. **Compares** path → `(mtime_ns, size)` with the conflict policy
+3. **Reports** exact buckets with **file counts + byte totals**
+4. With **`--apply`**, transfers **only** planned push/pull files via ditto
+
+```bash
+maccluster delta --no-speedtest
+maccluster delta --peer node-b --preset ssh,config
+maccluster delta --apply --safetynet --verify
+```
+
+## `maccluster pull` / `maccluster push` (shortcuts)
+
+Daily one-liners for the paths that matter most across minis:
+
+| Default presets | Paths under `$HOME` |
+|-----------------|---------------------|
+| documents, desktop, downloads | `Documents/`, `Desktop/`, `Downloads/` |
+| **developer** | **`Developer/`** (`~/Developer`) |
+| ssh, config | `.ssh/`, `.config/` |
+
+```bash
+maccluster pull                  # two-way, newer mtime wins
+maccluster push                  # local → peer only (same scope)
+maccluster push --both           # two-way like pull
+maccluster pull --pull-only      # peer → local only
+maccluster pull --push-only      # local → peer only
+maccluster pull --full-home      # entire $HOME (still uses default excludes)
+maccluster push --full-home
+maccluster pull --preset developer   # override: only Developer/
+```
+
+Same engine and flags as `sync home` (SafetyNet, verify, peer, notify, …).
+
 ## Why Apple `ditto` (not Homebrew rsync)
 
 | Tool | Role |
@@ -127,6 +172,9 @@ Per peer:
 ## Usage
 
 ```bash
+maccluster delta -v
+maccluster delta --apply --peer node-b
+maccluster delta --limit 2 --preset documents,developer
 maccluster sync home --compare -v
 maccluster sync home --dry-run
 maccluster sync home --safetynet --verify --notify

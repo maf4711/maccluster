@@ -73,8 +73,17 @@ ALLOWLIST_BASENAMES = frozenset(
         "git",  # MCPRT preflight (commit / merge / push)
         "gh",  # MCPRT: merge open PR
         "bash",  # TestFlight ship.sh
+        "vm_stat",
+        "df",
+        "uptime",
+        "pmset",
+        "sntp",
     }
 )
+
+# doctor --host thresholds
+DISK_FREE_WARN_GIB = 20.0
+NTP_OFFSET_WARN_S = 2.0
 
 # Keychain (local login keychain only — security cannot create iCloud-sync items)
 KEYCHAIN_SERVICE_CONFIG = "ai.maccluster.cluster-config"
@@ -131,6 +140,17 @@ SYNC_PATH_PRESETS: dict[str, tuple[str, ...]] = {
     "config": (".config/",),
 }
 
+# Default scope for `maccluster pull` — practical Home + ~/Developer
+# (full $HOME without filters is huge / iCloud-heavy; use --full-home).
+SYNC_PULL_DEFAULT_PRESETS: tuple[str, ...] = (
+    "documents",
+    "desktop",
+    "downloads",
+    "developer",
+    "ssh",
+    "config",
+)
+
 # Conflict policies (CCC-inspired; default newer = mtime newest-wins)
 SYNC_CONFLICT_POLICIES = frozenset(
     {
@@ -162,6 +182,8 @@ HEAL_HEARTBEAT_FILE_NAME = "heal_heartbeat.json"
 BENCH_EXCELLENT_MBPS = 30_000.0  # ~30 Gbit/s — healthy TB5 TCP
 BENCH_GOOD_MBPS = 1_000.0
 BENCH_MARGINAL_MBPS = 100.0
+# Flag mesh paths below this (20G cables stay out of the red)
+TB_TCP_FLOOR_MBPS = 15_000.0
 
 # Optional exo local API (correlation only; never required)
 EXO_DEFAULT_BASE_URL = "http://127.0.0.1:52415"

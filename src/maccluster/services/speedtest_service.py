@@ -23,6 +23,8 @@ def run_speedtest(
     duration: int = 5,
     skip_iperf: bool = False,
     try_start_server: bool = True,
+    force: bool = False,
+    busy_path=None,
 ) -> SpeedtestReport:
     """
     1) Classify TB cable/link (40G ideal, 20G ok).
@@ -31,6 +33,13 @@ def run_speedtest(
     cfg, self_node = load_and_bind_self(ctx)
     bind_ip = str(self_node.ip)
     duration = max(1, min(int(duration), 30))
+    if not skip_iperf and not force:
+        from maccluster.errors import DegradedError
+        from maccluster.services.busy_guard import read_busy_state
+
+        busy = read_busy_state(busy_path=busy_path)
+        if busy.busy:
+            raise DegradedError(f"fabric busy: {busy.reason} — skip saturation")
 
     try:
         tb = probe_tb(ctx)
@@ -198,7 +207,11 @@ def _reverse_iperf(
         return None
     if res.returncode != 0:
         return None
-    mbps = _parse_iperf_json(res.stdout)
+    parsed = _parse_iperf_json(res.stdout)
+    if isinstance(parsed, tuple):
+        mbps, retrans = parsed
+    else:
+        mbps, retrans = parsed, None
     if mbps is None:
         return None
     return BenchResult(
@@ -206,6 +219,7 @@ def _reverse_iperf(
         mbps=mbps,
         success=True,
         message="ok (reverse: peer→self)",
+        retransmits=retrans,
     )
 
 

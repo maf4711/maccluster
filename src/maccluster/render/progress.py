@@ -1,4 +1,7 @@
-"""Terminal progress bar for sync home (stderr; TTY-aware)."""
+"""Terminal progress bar for sync home (stderr; TTY-aware).
+
+Always shows download (D) and upload (U) rates so speed is never blank.
+"""
 
 from __future__ import annotations
 
@@ -17,9 +20,18 @@ def format_bytes(n: float) -> str:
 
 
 def format_rate(bps: float) -> str:
+    """Human rate; always a number (never a dash) so D/U stays readable."""
     if bps <= 0:
-        return "— B/s"
+        return "0 B/s"
     return f"{format_bytes(bps)}/s"
+
+
+def format_files_rate(fps: float) -> str:
+    if fps <= 0:
+        return "0 f/s"
+    if fps >= 1000:
+        return f"{fps / 1000:.1f}k f/s"
+    return f"{fps:.0f} f/s"
 
 
 def format_eta(seconds: float | None) -> str:
@@ -53,10 +65,16 @@ def shorten_path(path: str, max_len: int = 42) -> str:
     return path[:head] + "…" + path[-tail:]
 
 
+def _ema(prev: float, instant: float, *, alpha: float = 0.35) -> float:
+    if prev <= 0:
+        return instant
+    return alpha * instant + (1.0 - alpha) * prev
+
+
 @dataclass
 class ProgressState:
     phase: str = ""
-    direction: str = ""  # push | pull | plan | inv
+    direction: str = ""  # push | pull | local | remote | plan
     path: str = ""
     file_index: int = 0
     file_total: int = 0
@@ -69,7 +87,10 @@ class ProgressState:
 
 @dataclass
 class SyncProgress:
-    """Progress on stderr: live bar on TTY, periodic lines when piped (unless force)."""
+    """Progress on stderr: live bar on TTY, periodic lines when piped (unless force).
+
+    Rate display is always ``D:<rate> U:<rate>`` (download / upload).
+    """
 
     enabled: bool = True
     stream: TextIO = field(default_factory=lambda: sys.stderr)
@@ -79,9 +100,17 @@ class SyncProgress:
     plain_interval_s: float = 1.0  # non-TTY: emit at most ~1 line/s
     _started: float = field(default_factory=time.monotonic, init=False)
     _last_draw: float = field(default=0.0, init=False)
-    _last_bytes: int = field(default=0, init=False)
     _last_rate_t: float = field(default_factory=time.monotonic, init=False)
-    _rate_bps: float = field(default=0.0, init=False)
+    # Separate D/U byte counters for transfer phases
+    _last_down_bytes: int = field(default=0, init=False)
+    _last_up_bytes: int = field(default=0, init=False)
+    _down_bps: float = field(default=0.0, init=False)
+    _up_bps: float = field(default=0.0, init=False)
+    # Inventory / scan rate (files + scanned bytes)
+    _last_files: int = field(default=0, init=False)
+    _last_scan_bytes: int = field(default=0, init=False)
+    _files_fps: float = field(default=0.0, init=False)
+    _scan_bps: float = field(default=0.0, init=False)
     _state: ProgressState = field(default_factory=ProgressState, init=False)
     _dirty: bool = field(default=False, init=False)
     _finished: bool = field(default=False, init=False)
@@ -98,8 +127,14 @@ class SyncProgress:
     def reset_timer(self) -> None:
         self._started = time.monotonic()
         self._last_rate_t = self._started
-        self._last_bytes = 0
-        self._rate_bps = 0.0
+        self._last_down_bytes = 0
+        self._last_up_bytes = 0
+        self._down_bps = 0.0
+        self._up_bps = 0.0
+        self._last_files = 0
+        self._last_scan_bytes = 0
+        self._files_fps = 0.0
+        self._scan_bps = 0.0
 
     def set_totals(self, *, files: int = 0, bytes_: int = 0) -> None:
         self._state.files_total = max(0, files)
@@ -114,6 +149,18 @@ class SyncProgress:
         if detail:
             self._state.detail = detail
         self._state.path = ""
+        # Phase change: reset sample window so rates don't spike from stale counters
+        now = time.monotonic()
+        self._last_rate_t = now
+        self._last_down_bytes = (
+            self._state.bytes_done if direction == "pull" else self._last_down_bytes
+        )
+        self._last_up_bytes = self._state.bytes_done if direction == "push" else self._last_up_bytes
+        if name == "inventory":
+            self._last_files = self._state.files_done
+            self._last_scan_bytes = self._state.bytes_done
+            self._files_fps = 0.0
+            self._scan_bps = 0.0
         self._dirty = True
         self._draw(force=True)
 
@@ -139,13 +186,8 @@ class SyncProgress:
             st.file_index = file_index
         if file_total is not None:
             st.file_total = file_total
-        if bytes_done is not None:
-            st.bytes_done = max(0, bytes_done)
-            self._update_rate(st.bytes_done)
         if bytes_total is not None:
             st.bytes_total = max(0, bytes_total)
-        if files_done is not None:
-            st.files_done = files_done
         if files_total is not None:
             st.files_total = files_total
         if direction is not None:
@@ -154,25 +196,70 @@ class SyncProgress:
             st.phase = phase
         if detail is not None:
             st.detail = detail
+
+        if files_done is not None:
+            st.files_done = max(0, files_done)
+
+        if bytes_done is not None:
+            st.bytes_done = max(0, bytes_done)
+
+        self._refresh_rates()
         self._dirty = True
         self._draw(force=force)
 
-    def _update_rate(self, bytes_done: int) -> None:
+    def _traffic_lane(self) -> str:
+        """Which rate bucket current phase/direction feeds: down | up | scan."""
+        st = self._state
+        d = (st.direction or "").lower()
+        p = (st.phase or "").lower()
+        if d == "pull" or "pull" in p:
+            return "down"
+        if d == "push" or "push" in p:
+            return "up"
+        if p == "inventory" or d in ("local", "remote"):
+            return "scan"
+        # default: treat as upload when transferring without explicit direction
+        if p in ("transfer", "stage", "copy"):
+            return "up"
+        return "scan"
+
+    def _refresh_rates(self) -> None:
+        """Update D/U/scan rates from current counters (EMA, ≥0.2s window)."""
         now = time.monotonic()
         dt = now - self._last_rate_t
-        if dt >= 0.25:
-            db = bytes_done - self._last_bytes
+        if dt < 0.2:
+            return
+        st = self._state
+        lane = self._traffic_lane()
+
+        if lane == "down":
+            db = st.bytes_done - self._last_down_bytes
             if db >= 0 and dt > 0:
-                instant = db / dt
-                # EMA for smoother display
-                self._rate_bps = (
-                    instant if self._rate_bps <= 0 else (0.35 * instant + 0.65 * self._rate_bps)
-                )
-            self._last_bytes = bytes_done
-            self._last_rate_t = now
-        elif bytes_done < self._last_bytes:
-            self._last_bytes = bytes_done
-            self._last_rate_t = now
+                self._down_bps = _ema(self._down_bps, db / dt)
+            self._last_down_bytes = st.bytes_done
+            # Decay idle opposite lane slowly so it does not stick forever
+            self._up_bps *= 0.85 if self._up_bps > 0 else 0.0
+        elif lane == "up":
+            db = st.bytes_done - self._last_up_bytes
+            if db >= 0 and dt > 0:
+                self._up_bps = _ema(self._up_bps, db / dt)
+            self._last_up_bytes = st.bytes_done
+            self._down_bps *= 0.85 if self._down_bps > 0 else 0.0
+        else:
+            # Inventory / scan: track files/s and scanned bytes/s; D/U stay 0
+            df = st.files_done - self._last_files
+            if df >= 0 and dt > 0:
+                self._files_fps = _ema(self._files_fps, df / dt)
+            self._last_files = st.files_done
+            sb = st.bytes_done - self._last_scan_bytes
+            if sb >= 0 and dt > 0:
+                self._scan_bps = _ema(self._scan_bps, sb / dt)
+            self._last_scan_bytes = st.bytes_done
+            # No transfer: show D/U as idle (0)
+            self._down_bps = 0.0
+            self._up_bps = 0.0
+
+        self._last_rate_t = now
 
     def _pct(self) -> float:
         st = self._state
@@ -182,7 +269,24 @@ class SyncProgress:
             return 100.0 * min(st.files_done, st.files_total) / st.files_total
         if st.file_total > 0 and st.file_index > 0:
             return 100.0 * min(st.file_index, st.file_total) / st.file_total
+        # Indeterminate phase (inventory): pulse by elapsed time so bar is not stuck
+        if st.phase == "inventory" or st.files_done > 0:
+            elapsed = max(0.0, time.monotonic() - self._started)
+            # Slow sawtooth 5–35% so it looks alive without lying about completion
+            return 5.0 + (elapsed % 40.0) * 0.75
         return 0.0
+
+    def _rate_part(self) -> str:
+        """Always show D/U; during inventory also show scan speed."""
+        st = self._state
+        d_u = f"D:{format_rate(self._down_bps)} U:{format_rate(self._up_bps)}"
+        lane = self._traffic_lane()
+        if lane == "scan" or st.phase == "inventory":
+            # Prefer scan B/s when we have sizes; always show files/s too
+            scan = format_rate(self._scan_bps) if self._scan_bps > 0 else format_rate(0)
+            fps = format_files_rate(self._files_fps)
+            return f"{d_u} scan:{scan} {fps}"
+        return d_u
 
     def _draw(self, *, force: bool = False) -> None:
         if not self.enabled or self._finished:
@@ -192,20 +296,28 @@ class SyncProgress:
             return
         if not self._dirty and not force:
             return
+        # Keep rates fresh even if only files tick without new bytes
+        self._refresh_rates()
         self._last_draw = now
         self._dirty = False
 
         st = self._state
         pct = self._pct()
         bar = render_bar(pct, width=self.bar_width)
-        rate = self._rate_bps
-        if st.bytes_total > 0 and rate > 0:
+
+        active = self._down_bps if self._traffic_lane() == "down" else self._up_bps
+        if self._traffic_lane() == "scan":
+            active = self._scan_bps
+        if st.bytes_total > 0 and active > 0:
             remain = max(0, st.bytes_total - st.bytes_done)
-            eta = format_eta(remain / rate)
+            eta = format_eta(remain / active)
         elif st.files_total > 0 and st.files_done > 0:
             elapsed = max(1e-6, now - self._started)
             per = elapsed / st.files_done
             eta = format_eta(per * max(0, st.files_total - st.files_done))
+        elif st.phase == "inventory" and self._files_fps > 0:
+            # No known total — show time running
+            eta = f"t+{int(now - self._started)}s"
         else:
             eta = format_eta(None)
 
@@ -217,15 +329,21 @@ class SyncProgress:
             size_part = f"{st.files_done}/{st.files_total} files"
         elif st.file_total > 0:
             size_part = f"{st.file_index}/{st.file_total} files"
+        elif st.files_done > 0:
+            # Indeterminate inventory: count climbs without a known total
+            if st.bytes_done > 0:
+                size_part = f"{st.files_done} files {format_bytes(st.bytes_done)}"
+            else:
+                size_part = f"{st.files_done} files"
         else:
             size_part = st.detail or "…"
 
         what = st.path or st.detail or ""
-        what = shorten_path(what, 40) if what else "—"
+        what = shorten_path(what, 36) if what else "—"
 
         body = (
             f"[{bar}] {pct:5.1f}%  {dir_tag}{phase}  "
-            f"{size_part}  {format_rate(rate)}  {eta}  {what}"
+            f"{size_part}  {self._rate_part()}  {eta}  {what}"
         )
         try:
             if self._tty:

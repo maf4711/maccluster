@@ -82,6 +82,72 @@ class NetworkApply:
             if add2.returncode != 0:
                 self._raise_privilege_or_fail(add2.stderr or add.stderr or add.stdout)
 
+    def protect_wifi_from_bridge(self, cluster_ip: str, *, dry_run: bool = False) -> None:
+        """TB Bridge must not be a default gateway. Wi-Fi stays first.
+
+        Best-effort: missing admin rights are ignored so unprivileged heal
+        still reports IP status. Run `sudo maccluster up` to persist prefs.
+        """
+        from maccluster.services.wifi_guard import (
+            PREFS_PLIST,
+            TB_SERVICE,
+            order_wifi_first_tb_last,
+            parse_networksetup_info,
+            parse_networksetup_services,
+            router_steals_internet,
+        )
+
+        if dry_run:
+            return
+        info = self._runner.run(
+            ["/usr/sbin/networksetup", "-getinfo", TB_SERVICE],
+            timeout=TIMEOUT_GENERIC,
+        )
+        fields = parse_networksetup_info(info.stdout or "")
+        if router_steals_internet(fields.get("Router"), cluster_ip):
+            uuid = self._tb_service_uuid()
+            if uuid:
+                pb = self._runner.run(
+                    [
+                        "/usr/libexec/PlistBuddy",
+                        "-c",
+                        f"Delete :NetworkServices:{uuid}:IPv4:Router",
+                        PREFS_PLIST,
+                    ],
+                    timeout=TIMEOUT_GENERIC,
+                )
+                if pb.returncode != 0:
+                    err = (pb.stderr or pb.stdout or "").lower()
+                    if "permission" in err or "not permitted" in err:
+                        return
+
+        listed = self._runner.run(
+            ["/usr/sbin/networksetup", "-listallnetworkservices"],
+            timeout=TIMEOUT_GENERIC,
+        )
+        names = parse_networksetup_services(listed.stdout or "")
+        wanted = order_wifi_first_tb_last(names)
+        if wanted and wanted != names:
+            self._runner.run(
+                ["/usr/sbin/networksetup", "-ordernetworkservices", *wanted],
+                timeout=TIMEOUT_GENERIC,
+            )
+
+    def _tb_service_uuid(self) -> str | None:
+        import plistlib
+        from pathlib import Path
+
+        from maccluster.services.wifi_guard import PREFS_PLIST, TB_SERVICE
+
+        try:
+            data = plistlib.loads(Path(PREFS_PLIST).read_bytes())
+        except OSError:
+            return None
+        for uuid, svc in (data.get("NetworkServices") or {}).items():
+            if (svc.get("UserDefinedName") or "") == TB_SERVICE:
+                return str(uuid)
+        return None
+
     @staticmethod
     def _raise_privilege_or_fail(msg: str) -> None:
         low = msg.lower()
@@ -127,3 +193,6 @@ class FakeNetworkApply:
             raise PrivilegeError()
         if self.fail:
             raise CliError("fake apply failed", exit_code=1)
+
+    def protect_wifi_from_bridge(self, cluster_ip: str, *, dry_run: bool = False) -> None:
+        self.calls.append(("protect_wifi", cluster_ip, dry_run))

@@ -229,6 +229,21 @@ class HealAction:
 
 
 @dataclass(frozen=True)
+class HostSnapshot:
+    """RAM / load / disk / thermal / NTP from a Mac (local or fleet hop)."""
+
+    node_id: str
+    ram_used_gb: float | None
+    ram_free_gb: float | None
+    load_1m: float | None
+    disk_free_gb: float | None
+    cpu_speed_limit_pct: int | None  # None = not reported
+    ntp_offset_s: float | None
+    error: str | None = None
+    ntp_missing: bool = False
+
+
+@dataclass(frozen=True)
 class DoctorFinding:
     check_id: str
     severity: CheckSeverity
@@ -343,6 +358,31 @@ class BenchResult:
     retransmits: int | None = None
     quality: BenchQuality = BenchQuality.UNKNOWN
     flags: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class MeshPathResult:
+    src_id: str
+    dst_id: str
+    src_ip: str
+    dst_ip: str
+    mbps: float | None
+    retransmits: int | None
+    quality: BenchQuality
+    flags: tuple[str, ...]
+    ok: bool
+    message: str
+    reverse: bool = False
+
+
+@dataclass(frozen=True)
+class MeshBenchReport:
+    bind_mode: str  # "tb-bridge"
+    duration_s: int
+    orchestrated: bool
+    busy_skipped: bool
+    paths: tuple[MeshPathResult, ...]
+    summary: str
 
 
 @dataclass(frozen=True)

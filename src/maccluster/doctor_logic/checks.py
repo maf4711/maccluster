@@ -82,6 +82,25 @@ def check_cable(tb: ThunderboltSnapshot | None) -> DoctorFinding:
     )
 
 
+def check_tb_gateway(router: str | None) -> DoctorFinding:
+    """WARN when Thunderbolt Bridge has a Router (kills Wi-Fi internet)."""
+    from maccluster.services.wifi_guard import router_steals_internet
+
+    if not router_steals_internet(router):
+        return DoctorFinding(
+            "tb_gateway",
+            CheckSeverity.OK,
+            "TB Bridge has no default router",
+            "Wi-Fi keeps internet",
+        )
+    return DoctorFinding(
+        "tb_gateway",
+        CheckSeverity.WARN,
+        f"TB Bridge Router={router} steals default route",
+        "sudo maccluster up  (clears router, Wi-Fi first)",
+    )
+
+
 def check_bridge(bridge: BridgeInterface | None, desired_ip: str | None) -> DoctorFinding:
     if bridge is None:
         return DoctorFinding("bridge", CheckSeverity.WARN, "bridge not probed", "")
@@ -235,3 +254,116 @@ def check_iperf(available: bool) -> DoctorFinding:
         "iperf3 not found (optional)",
         "brew install iperf3",
     )
+
+
+def _host_cid(base: str, node_id: str, *, peer: bool) -> str:
+    return f"{base}:{node_id}" if peer else base
+
+
+def _fmt_gib(value: float | None) -> str:
+    if value is None:
+        return "n/a"
+    return f"{value:.2f}"
+
+
+def check_host(snap, *, peer: bool = False) -> DoctorFinding:
+    from maccluster.domain.models import HostSnapshot
+
+    if not isinstance(snap, HostSnapshot):
+        return DoctorFinding("host", CheckSeverity.INFO, "host not probed", "")
+    cid = _host_cid("host", snap.node_id, peer=peer)
+    if snap.error:
+        return DoctorFinding(
+            cid,
+            CheckSeverity.WARN,
+            f"host {snap.node_id} {snap.error}",
+            snap.error,
+        )
+    if snap.ram_used_gb is None and snap.ram_free_gb is None and snap.load_1m is None:
+        return DoctorFinding(cid, CheckSeverity.WARN, "host parse failed", "")
+    return DoctorFinding(
+        cid,
+        CheckSeverity.INFO,
+        (
+            f"{snap.node_id} ram_used={_fmt_gib(snap.ram_used_gb)} GiB "
+            f"ram_free={_fmt_gib(snap.ram_free_gb)} GiB load={_fmt_gib(snap.load_1m)}"
+        ),
+        "",
+    )
+
+
+def check_disk(snap, *, peer: bool = False) -> DoctorFinding:
+    from maccluster.constants import DISK_FREE_WARN_GIB
+    from maccluster.domain.models import HostSnapshot
+
+    if not isinstance(snap, HostSnapshot):
+        return DoctorFinding("disk", CheckSeverity.INFO, "disk not probed", "")
+    cid = _host_cid("disk", snap.node_id, peer=peer)
+    if snap.error:
+        return DoctorFinding(
+            cid, CheckSeverity.WARN, f"host {snap.node_id} {snap.error}", snap.error
+        )
+    if snap.disk_free_gb is None:
+        return DoctorFinding(cid, CheckSeverity.WARN, "disk parse failed", "")
+    if snap.disk_free_gb < DISK_FREE_WARN_GIB:
+        return DoctorFinding(
+            cid,
+            CheckSeverity.WARN,
+            f"{snap.node_id} disk free {_fmt_gib(snap.disk_free_gb)} GiB < {DISK_FREE_WARN_GIB:g} GiB",
+            "",
+        )
+    return DoctorFinding(
+        cid,
+        CheckSeverity.OK,
+        f"{snap.node_id} disk free {_fmt_gib(snap.disk_free_gb)} GiB",
+        "",
+    )
+
+
+def check_thermal(snap, *, peer: bool = False) -> DoctorFinding:
+    from maccluster.domain.models import HostSnapshot
+
+    if not isinstance(snap, HostSnapshot):
+        return DoctorFinding("thermal", CheckSeverity.INFO, "thermal not probed", "")
+    cid = _host_cid("thermal", snap.node_id, peer=peer)
+    if snap.error:
+        return DoctorFinding(
+            cid, CheckSeverity.WARN, f"host {snap.node_id} {snap.error}", snap.error
+        )
+    limit = snap.cpu_speed_limit_pct
+    if limit is None:
+        return DoctorFinding(cid, CheckSeverity.INFO, f"{snap.node_id} thermal not reported", "")
+    if limit < 100:
+        return DoctorFinding(
+            cid,
+            CheckSeverity.WARN,
+            f"{snap.node_id} CPU_Speed_Limit={limit}",
+            "",
+        )
+    return DoctorFinding(cid, CheckSeverity.OK, f"{snap.node_id} CPU_Speed_Limit={limit}", "")
+
+
+def check_ntp(snap, *, peer: bool = False) -> DoctorFinding:
+    from maccluster.constants import NTP_OFFSET_WARN_S
+    from maccluster.domain.models import HostSnapshot
+
+    if not isinstance(snap, HostSnapshot):
+        return DoctorFinding("ntp", CheckSeverity.SKIPPED, "ntp not probed", "")
+    cid = _host_cid("ntp", snap.node_id, peer=peer)
+    if snap.error:
+        return DoctorFinding(
+            cid, CheckSeverity.WARN, f"host {snap.node_id} {snap.error}", snap.error
+        )
+    if snap.ntp_missing:
+        return DoctorFinding(cid, CheckSeverity.SKIPPED, "sntp not found", "")
+    if snap.ntp_offset_s is None:
+        return DoctorFinding(cid, CheckSeverity.SKIPPED, "ntp not measured", "")
+    off = snap.ntp_offset_s
+    if abs(off) > NTP_OFFSET_WARN_S:
+        return DoctorFinding(
+            cid,
+            CheckSeverity.WARN,
+            f"{snap.node_id} ntp offset {off:.3f}s",
+            f"|offset| > {NTP_OFFSET_WARN_S:g}s",
+        )
+    return DoctorFinding(cid, CheckSeverity.OK, f"{snap.node_id} ntp offset {off:.3f}s", "")
