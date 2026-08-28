@@ -162,6 +162,7 @@ def run(ctx: AppContext, args) -> int:
         exclude_from=getattr(args, "exclude_from", None),
         presets=presets,
         includes=includes,
+        full_home=bool(getattr(args, "full_home", False)),
         conflict_policy=getattr(args, "conflict_policy", None) or "newer",
         safetynet=bool(getattr(args, "safetynet", False)),
         verify=bool(getattr(args, "verify", False)),

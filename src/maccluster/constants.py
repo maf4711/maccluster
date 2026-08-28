@@ -99,6 +99,12 @@ SYNC_HOME_EXCLUDES: tuple[str, ...] = (
     ".cache/",
     "Library/Caches/",
     "Library/Logs/",
+    "Library/CloudStorage/",  # OneDrive/Google Drive/iCloud mounts hang os.walk
+    "Library/Mobile Documents/",
+    "Library/Containers/",
+    "Library/Group Containers/",
+    "Library/Mail/",
+    "Library/Messages/",
     "Library/Developer/Xcode/DerivedData/",
     "Library/Developer/CoreSimulator/",
     "Library/Application Support/MobileSync/",
@@ -108,8 +114,16 @@ SYNC_HOME_EXCLUDES: tuple[str, ...] = (
     "**/__pycache__/",
     "**/.venv/",
     "**/venv/",
+    "**/.git/",
+    "**/.next/",
+    "**/.vercel/",
+    "**/.turbo/",
+    "**/Pods/",
     ".DS_Store",
     ".maccluster-safetynet/",  # never re-sync SafetyNet undo tree
+    ".orbstack/",
+    ".docker/",
+    ".grok/sessions/",
 )
 
 # Extra excludes when the tree root is ~/Developer (`maccluster sync dev`)
@@ -125,6 +139,64 @@ SYNC_DEV_EXCLUDES: tuple[str, ...] = (
     "**/.ruff_cache/",
     "**/DerivedData/",
 )
+
+# When user runs bare `sync home` without --include/--preset/--full-home,
+# only walk these roots (full $HOME inventory hangs on Library/CloudStorage).
+SYNC_DEFAULT_PRESETS: tuple[str, ...] = (
+    "documents",
+    "desktop",
+    "downloads",
+    "developer",
+    "ssh",
+    "config",
+)
+
+# Dir basenames skipped during inventory (in addition to exclude patterns).
+# Prevents iCloud/FP/cloud FUSE hangs and multi-hour scans of junk trees.
+SYNC_INV_SKIP_DIR_NAMES: frozenset[str] = frozenset(
+    {
+        "imessage_export",
+        "node_modules",
+        ".git",
+        "DerivedData",
+        "__pycache__",
+        ".venv",
+        "venv",
+        ".Trash",
+        "Library",  # full-home only; includes under Library/ still walk
+        ".npm",
+        ".cache",
+        ".orbstack",
+        ".docker",
+        "CloudStorage",
+        "Mobile Documents",
+        "Containers",
+        "Group Containers",
+        "CoreSimulator",
+        ".grok",
+        ".next",
+        ".vercel",
+        ".turbo",
+        ".parcel-cache",
+        "dist",
+        "build",
+        "target",  # rust
+        ".build",  # swift
+        "Pods",
+        "Carthage",
+        ".gradle",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".tox",
+        ".eggs",
+        "Horos Data",  # medical imaging volume
+        "DATABASE.noindex",
+    }
+)
+
+# Inventory time budgets (override via env)
+SYNC_INV_MAX_SEC = float(os.environ.get("MACCLUSTER_INV_MAX_SEC", "240"))
+SYNC_INV_DIR_SEC = float(os.environ.get("MACCLUSTER_INV_DIR_SEC", "6"))
 
 # CCC-style path presets → include roots under $HOME (comma-separated via --preset)
 SYNC_PATH_PRESETS: dict[str, tuple[str, ...]] = {

@@ -162,3 +162,9 @@ def test_parse_identical_and_force_icloud():
     assert args.icloud_timeout == 15.0
     assert args.icloud_max_seconds == 120.0
     assert args.peer == "node-b"
+
+
+def test_parse_full_home():
+    parser = build_parser()
+    args = parser.parse_args(["sync", "home", "--full-home", "--no-speedtest"])
+    assert args.full_home is True

@@ -87,6 +87,38 @@ def test_inventory_local_respects_excludes(tmp_path: Path):
     assert not any(k.startswith("Library/Caches") for k in inv)
 
 
+def test_inventory_local_skips_library_on_full_home(tmp_path: Path):
+    (tmp_path / "Documents").mkdir()
+    (tmp_path / "Documents" / "ok.txt").write_text("x", encoding="utf-8")
+    (tmp_path / "Library").mkdir()
+    (tmp_path / "Library" / "CloudStorage").mkdir()
+    (tmp_path / "Library" / "CloudStorage" / "hang.txt").write_text("z", encoding="utf-8")
+    inv = inventory_local(tmp_path, ())
+    assert "Documents/ok.txt" in inv
+    assert not any(k.startswith("Library/") for k in inv)
+
+
+def test_inventory_local_includes_scope(tmp_path: Path):
+    (tmp_path / "Documents").mkdir()
+    (tmp_path / "Documents" / "a.txt").write_text("a", encoding="utf-8")
+    (tmp_path / "Movies").mkdir()
+    (tmp_path / "Movies" / "b.mov").write_text("b", encoding="utf-8")
+    inv = inventory_local(tmp_path, (), ("Documents/",))
+    assert "Documents/a.txt" in inv
+    assert "Movies/b.mov" not in inv
+
+
+def test_inventory_local_skips_node_modules(tmp_path: Path):
+    proj = tmp_path / "Developer" / "app"
+    nm = proj / "node_modules" / "pkg"
+    nm.mkdir(parents=True)
+    (nm / "index.js").write_text("x", encoding="utf-8")
+    (proj / "src.js").write_text("y", encoding="utf-8")
+    inv = inventory_local(tmp_path, (), ("Developer/",))
+    assert "Developer/app/src.js" in inv
+    assert not any("node_modules" in k for k in inv)
+
+
 def test_parse_inventory_text():
     text = "Documents/a.txt\t123\t10\nbadline\nfoo\tnotint\t1\n"
     inv = parse_inventory_text(text)
@@ -160,8 +192,8 @@ def test_sync_home_ssh_fail(fake_ctx, tmp_path: Path):
 
 def test_sync_home_ditto_dry_run_ok(fake_ctx, tmp_path: Path):
     home = tmp_path / "home"
-    home.mkdir()
-    (home / "note.txt").write_text("local", encoding="utf-8")
+    (home / "Documents").mkdir(parents=True)
+    (home / "Documents" / "note.txt").write_text("local", encoding="utf-8")
     fake_ctx.runner = RecordingRunner(fail_ssh=False)
     result = sync_home(
         fake_ctx,
@@ -306,8 +338,8 @@ def test_remote_inventory_script_includes_git_when_dotdirs(tmp_path: Path):
 
 def test_sync_home_compare(fake_ctx, tmp_path: Path):
     home = tmp_path / "home"
-    home.mkdir()
-    (home / "note.txt").write_text("local", encoding="utf-8")
+    (home / "Documents").mkdir(parents=True)
+    (home / "Documents" / "note.txt").write_text("local", encoding="utf-8")
     fake_ctx.runner = RecordingRunner(fail_ssh=False)
     result = sync_home(
         fake_ctx,
@@ -323,6 +355,50 @@ def test_sync_home_compare(fake_ctx, tmp_path: Path):
     assert result.compare_only
     assert result.peers[0].ok
     assert result.peers[0].only_local >= 1
+
+
+def test_sync_home_bare_call_skips_root_level_files(fake_ctx, tmp_path: Path):
+    """Without --full-home/--preset/--include, only default-preset roots are
+    walked — a file sitting directly at $HOME (e.g. a stray CloudStorage
+    mount) must not be found."""
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "root-level.txt").write_text("local", encoding="utf-8")
+    (home / "Documents").mkdir()
+    (home / "Documents" / "note.txt").write_text("local", encoding="utf-8")
+    fake_ctx.runner = RecordingRunner(fail_ssh=False)
+    result = sync_home(
+        fake_ctx,
+        peer="node-b",
+        home=home,
+        remote_home=str(home),
+        user="a321",
+        timeout=60,
+        compare_only=True,
+        no_speedtest=True,
+        write_log=False,
+    )
+    assert result.peers[0].only_local == 1
+
+
+def test_sync_home_full_home_and_preset_is_usage_error(fake_ctx, tmp_path: Path):
+    home = tmp_path / "home"
+    home.mkdir()
+    fake_ctx.runner = RecordingRunner(fail_ssh=False)
+    with pytest.raises(CliError) as ei:
+        sync_home(
+            fake_ctx,
+            peer="node-b",
+            home=home,
+            remote_home=str(home),
+            user="a321",
+            timeout=60,
+            full_home=True,
+            presets=("documents",),
+            no_speedtest=True,
+            write_log=False,
+        )
+    assert ei.value.exit_code == 2
 
 
 def test_sync_home_with_progress_object(fake_ctx, tmp_path: Path):
