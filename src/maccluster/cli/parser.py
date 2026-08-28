@@ -204,6 +204,194 @@ def _add_sync_tree_flags(
     )
 
 
+def _add_home_dev_transfer_flags(
+    p: argparse.ArgumentParser,
+    *,
+    command: str,
+) -> None:
+    """Shared flags for ``maccluster pull`` / ``maccluster push``."""
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what ditto would transfer (no writes)",
+    )
+    p.add_argument(
+        "--compare",
+        action="store_true",
+        help="Diff-report only (counts + sample paths, no transfer)",
+    )
+    p.add_argument(
+        "--peer",
+        metavar="ID|IP",
+        default=None,
+        help="Only sync with this node id or IP (default: all peers)",
+    )
+    p.add_argument(
+        "--push-only",
+        action="store_true",
+        help="Only push local → peer",
+    )
+    p.add_argument(
+        "--pull-only",
+        action="store_true",
+        help="Only pull peer → local",
+    )
+    p.add_argument(
+        "--both",
+        action="store_true",
+        help="Two-way sync (overrides default one-way for push)",
+    )
+    p.add_argument(
+        "--user",
+        metavar="NAME",
+        default=None,
+        help="SSH username on peers (default: local $USER)",
+    )
+    p.add_argument(
+        "--home",
+        metavar="PATH",
+        default=None,
+        help="Local home path (default: ~)",
+    )
+    p.add_argument(
+        "--remote-home",
+        metavar="PATH",
+        default=None,
+        help="Remote home path (default: same as local home path)",
+    )
+    p.add_argument(
+        "--exclude",
+        action="append",
+        default=[],
+        metavar="PATTERN",
+        help="Extra exclude pattern (repeatable)",
+    )
+    p.add_argument(
+        "--exclude-from",
+        metavar="FILE",
+        default=None,
+        help="Exclude patterns file (default: ~/.config/maccluster/sync-excludes)",
+    )
+    p.add_argument(
+        "--preset",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help=(
+            f"Override default {command} presets (repeatable/comma). "
+            "Default: documents,desktop,downloads,developer,ssh,config"
+        ),
+    )
+    p.add_argument(
+        "--include",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="Extra path under Home (repeatable), e.g. Pictures/",
+    )
+    p.add_argument(
+        "--full-home",
+        action="store_true",
+        help="Sync entire $HOME (no preset filter); still uses default excludes",
+    )
+    p.add_argument(
+        "--conflict-policy",
+        choices=["newer", "larger", "prefer-local", "prefer-remote", "skip-conflict"],
+        default="newer",
+        help="On both-sides exist: newer (default) | larger | prefer-local | prefer-remote | skip-conflict",
+    )
+    p.add_argument(
+        "--safetynet",
+        action="store_true",
+        help="Before overwrite on pull: backup local file to ~/.maccluster-safetynet/",
+    )
+    p.add_argument(
+        "--verify",
+        action="store_true",
+        help="After pull: sample-check size/mtime of transferred files",
+    )
+    p.add_argument(
+        "--verify-sample",
+        type=int,
+        default=20,
+        help="Max files to verify after pull (default 20)",
+    )
+    p.add_argument(
+        "--quick",
+        action="store_true",
+        help="Quick update: prefer local files touched since last successful sync",
+    )
+    p.add_argument(
+        "--max-files",
+        type=int,
+        default=None,
+        help="Batch limit: max files this run",
+    )
+    p.add_argument(
+        "--max-bytes",
+        type=int,
+        default=None,
+        help="Batch limit: max payload bytes this run",
+    )
+    p.add_argument(
+        "--min-free",
+        type=int,
+        default=None,
+        metavar="BYTES",
+        help="Abort if free space on local or peer is below this many bytes",
+    )
+    p.add_argument(
+        "--apfs-snapshot",
+        action="store_true",
+        help="Opt-in: tmutil localsnapshot before transfer",
+    )
+    p.add_argument(
+        "--notify",
+        action="store_true",
+        help="macOS Notification Center on failure",
+    )
+    p.add_argument(
+        "--no-speedtest",
+        action="store_true",
+        help="Skip TB cable/speedtest preflight",
+    )
+    p.add_argument(
+        "--timeout",
+        type=float,
+        default=None,
+        help="Per-step timeout seconds (default 3600)",
+    )
+    p.add_argument(
+        "--no-progress",
+        action="store_true",
+        help="Disable live progress bar",
+    )
+    p.add_argument(
+        "--force-icloud",
+        action="store_true",
+        help="Materialize iCloud dataless stubs before sync",
+    )
+    p.add_argument(
+        "--identical",
+        action="store_true",
+        help="Best-effort 1:1: --force-icloud + both directions + --verify",
+    )
+    p.add_argument(
+        "--icloud-timeout",
+        type=float,
+        default=20.0,
+        metavar="SEC",
+        help="Per-file timeout when force-materializing iCloud stubs (default 20)",
+    )
+    p.add_argument(
+        "--icloud-max-seconds",
+        type=float,
+        default=900.0,
+        metavar="SEC",
+        help="Max seconds per tree for iCloud materialize (default 900)",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="maccluster",
@@ -273,6 +461,27 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="One-shot: if heal heartbeat stale, kickstart heal LaunchAgent",
     )
+    p_heal.add_argument(
+        "--fleet",
+        action="store_true",
+        help="Heal self, then run maccluster heal on peers over the TB bridge",
+    )
+    p_heal.add_argument(
+        "--together",
+        action="store_true",
+        help="With --fleet: kickstart com.maccluster.heal on self and peers",
+    )
+    p_heal.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Plan only (no network mutate, no remote heal)",
+    )
+    p_heal.add_argument(
+        "--peer",
+        default=None,
+        metavar="ID|IP",
+        help="With --fleet: only this peer",
+    )
 
     p_status = sub.add_parser("status", help="Cluster status snapshot")
     p_status.add_argument(
@@ -308,6 +517,22 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="URL",
         help="exo base URL (default http://127.0.0.1:52415)",
     )
+    p_doc.add_argument(
+        "--host",
+        action="store_true",
+        help="Include RAM/load/disk/thermal/NTP snapshot (off by default)",
+    )
+    p_doc.add_argument(
+        "--fleet",
+        action="store_true",
+        help="With --host: also snapshot each peer over TB SSH (JSON hop)",
+    )
+    p_doc.add_argument(
+        "--peer",
+        default=None,
+        metavar="ID|IP",
+        help="With --host --fleet: only this peer",
+    )
 
     p_bench = sub.add_parser("bench", help="Bandwidth test via iperf3")
     p_bench.add_argument("target", nargs="?", help="Peer IP or node id")
@@ -316,6 +541,22 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=5,
         help="iperf3 duration seconds (max 60)",
+    )
+    p_bench.add_argument(
+        "--mesh",
+        action="store_true",
+        help="Sequential full-mesh iperf3 on the TB bridge (all directed pairs)",
+    )
+    p_bench.add_argument(
+        "--peer",
+        default=None,
+        metavar="ID|IP",
+        help="With --mesh: only paths involving this peer",
+    )
+    p_bench.add_argument(
+        "--force",
+        action="store_true",
+        help="Run even if MACCLUSTER_BUSY or ~/.config/maccluster/busy is set",
     )
 
     p_st = sub.add_parser(
@@ -346,6 +587,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Do not try to start remote iperf3 -s via SSH",
     )
+    p_st.add_argument(
+        "--force",
+        action="store_true",
+        help="Run iperf3 even if the fabric busy guard is set",
+    )
 
     p_svc = sub.add_parser(
         "service",
@@ -367,6 +613,45 @@ def build_parser() -> argparse.ArgumentParser:
     )
     svc_sub.add_parser("sync-uninstall", help="Remove sync home LaunchAgent")
     svc_sub.add_parser("sync-status", help="Show sync home LaunchAgent status")
+
+    p_delta = sub.add_parser(
+        "delta",
+        help=(
+            "Inventory peers → precise file deltas (counts+bytes) → optional "
+            "difference sync. Not bulk: only missing/newer files by policy."
+        ),
+    )
+    p_delta.add_argument(
+        "--apply",
+        action="store_true",
+        help="After inventory/compare: transfer only planned deltas (Apple ditto)",
+    )
+    p_delta.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Only the first N peers from cluster inventory (after self)",
+    )
+    _add_home_dev_transfer_flags(p_delta, command="delta")
+
+    p_pull = sub.add_parser(
+        "pull",
+        help=(
+            "Sync Home + ~/Developer with peers (two-way shortcut for "
+            "sync home --preset documents,desktop,downloads,developer,ssh,config)"
+        ),
+    )
+    _add_home_dev_transfer_flags(p_pull, command="pull")
+
+    p_push = sub.add_parser(
+        "push",
+        help=(
+            "Push Home + ~/Developer to peers (local → peer shortcut for "
+            "sync home --push-only --preset documents,desktop,downloads,developer,ssh,config)"
+        ),
+    )
+    _add_home_dev_transfer_flags(p_push, command="push")
 
     p_sync = sub.add_parser(
         "sync",

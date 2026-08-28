@@ -8,8 +8,26 @@ from maccluster.domain.models import DoctorFinding, DoctorReport
 
 # Cluster-relevant warn checks that should yield exit 3
 _CLUSTER_WARN_IDS = frozenset(
-    {"peers", "bridge", "self", "thunderbolt", "config", "mesh", "heal_heartbeat", "exo"}
+    {
+        "peers",
+        "bridge",
+        "self",
+        "thunderbolt",
+        "config",
+        "mesh",
+        "heal_heartbeat",
+        "exo",
+        "host",
+        "disk",
+        "thermal",
+    }
 )
+
+
+def _is_cluster_warn(check_id: str) -> bool:
+    if check_id in _CLUSTER_WARN_IDS:
+        return True
+    return check_id.split(":", 1)[0] in _CLUSTER_WARN_IDS
 
 
 def severity_rank(sev: CheckSeverity) -> int:
@@ -45,6 +63,6 @@ def exit_for_findings(
         return ERROR
     # Cluster warn → degraded
     for f in findings:
-        if f.severity == CheckSeverity.WARN and f.check_id in _CLUSTER_WARN_IDS:
+        if f.severity == CheckSeverity.WARN and _is_cluster_warn(f.check_id):
             return DEGRADED
     return OK

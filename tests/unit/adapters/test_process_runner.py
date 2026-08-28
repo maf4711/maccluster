@@ -25,7 +25,7 @@ def test_resolve_ping():
 
 def test_ditto_and_scp_allowlisted():
     runner = ProcessRunner()
-    for name in ("ditto", "scp"):
+    for name in ("ditto", "scp", "vm_stat", "df", "uptime", "pmset", "sntp"):
         try:
             path = runner.resolve(name)
             assert path.endswith(name)

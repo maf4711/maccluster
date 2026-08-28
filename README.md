@@ -69,17 +69,20 @@ targets are refused for write/lock paths.
 | `config show` | no | Print resolved config |
 | `config validate` | no | Validate + self-match |
 | `up` | yes (local) | Ensure bridge + fixed Self-IP; often needs admin |
-| `heal` | yes (local) | One-shot ensure (same path as `up`) |
+| `heal` | yes (local) | One-shot ensure (same path as `up`). **`--fleet`**: self first, then `maccluster heal` on peers over TB SSH. `--dry-run`, `--peer`, `--together` (kickstart only `com.maccluster.heal`). Not with `--loop` / `--watchdog` |
 | `heal --loop` | yes | Periodic heal (default 30 s, min 5 s); **best-effort**, not HA; writes heartbeat |
 | `heal --watchdog` | no* | If heal heartbeat stale → `launchctl kickstart` heal agent (*installs with service) |
 | `status` | no | Nodes + **mesh** (alive≠meshed) + TB + RDMA + heal heartbeat + TX/RX rates; `--exo` correlates local exo `:52415` |
 | `monitor` | no | Live refresh (`--interval`) with TX/RX Mb/s, pps, errors; Ctrl+C → exit 0 |
 | `topo` | no | Cable / topology map (no rewiring advice) |
-| `doctor` | no | Diagnostics (config, self, TB, cable, bridge, peers, **mesh**, RDMA, heal heartbeat); `--exo` optional |
-| `bench` | no | Optional `iperf3` to a peer IP (bound to TB Self-IP) + **path quality** / retransmits |
-| `speedtest` | no | TB **cable grade** (40G ideal) + iperf3 over bridge; also runs at start of `sync home` / `remote-install` |
+| `doctor` | no | Diagnostics (config, self, TB, cable, bridge, peers, **mesh**, RDMA, heal heartbeat); `--exo` optional. **`--host`**: RAM/load/disk/thermal/NTP. **`--host --fleet`**: same snapshot per peer over TB SSH |
+| `bench` | no | Optional `iperf3` to a peer IP (bound to TB Self-IP) + **path quality** / retransmits. **`bench --mesh`**: sequential directed full-mesh on the TB bridge (`-B` both ends when SSH works). `--peer` filters; `--force` ignores the busy guard |
+| `speedtest` | no | TB **cable grade** (40G ideal) + iperf3 over bridge; also runs at start of `sync home` / `remote-install`. Honors the busy guard (exit 3) unless `--force` |
 | `service install\|uninstall\|status` | plist | User LaunchAgent → `heal --loop` |
 | `service sync-install\|sync-uninstall\|sync-status` | plist | Scheduled `sync home` (CCC schedule analogue) |
+| `delta` | inventory → plan | **Precise deltas** across inventory peers (or `--peer` / `--limit N`): file-level counts+bytes, then optional `--apply` for difference-only sync. Not bulk. |
+| `pull` | files via SSH | Shortcut: two-way **Home + ~/Developer** (presets documents/desktop/downloads/developer/ssh/config). Same engine as `sync home`. |
+| `push` | files via SSH | Shortcut: **local → peer** Home + ~/Developer (same presets as `pull`). Use `--both` for two-way. |
 | `sync home` | files via SSH | Two-way **Home** via **Apple ditto** + CCC-inspired options (compare, presets, SafetyNet, verify, policies). See [`docs/SYNC-HOME.md`](docs/SYNC-HOME.md) |
 | `sync dev` | files via SSH | **MCPRT** (merge + cpr + TestFlight) on recent git repos, then two-way **`~/Developer`** via Apple ditto over TB plus those repos over Wi-Fi (`.local`). Alias: `sync developer` |
 | `remote-install` | peer install | Install wheel+config on peer over **TB bridge only** (`10.42.0.x`, BindAddress Self-IP). See [`docs/REMOTE-INSTALL.md`](docs/REMOTE-INSTALL.md) |
@@ -88,9 +91,10 @@ targets are refused for write/lock paths.
 
 Global flags: `--config`, `--json`, `-v` / `--verbose`.  
 Env: `NO_COLOR`, `MACCLUSTER_CONFIG`, `MACCLUSTER_SKIP_PLATFORM_GUARD=1` (tests only),
-`MACCLUSTER_RICH=0`.
+`MACCLUSTER_RICH=0`, `MACCLUSTER_BUSY=1` (skip saturating `bench --mesh` / `speedtest` iperf).
+Busy file: `~/.config/maccluster/busy` (first line = reason; symlinks refused).
 
-### Home sync (`maccluster sync home`)
+### Home sync (`maccluster pull` / `maccluster sync home`)
 
 Mesh bring-up does **not** copy files. To keep `~/` aligned across minis over TB,
 MacCluster uses **Apple `ditto`** (metadata-complete: xattrs, ACLs, resource forks)
@@ -99,6 +103,17 @@ placeholders (`UF_DATALESS`) hang open/ditto until materialised:
 
 ```bash
 # needs: ssh key login to peers (stock macOS ditto + scp)
+maccluster delta                            # inventory both/all peers → precise deltas
+maccluster delta --peer node-b              # one peer from inventory
+maccluster delta --limit 2                  # first N peers from cluster.toml
+maccluster delta --apply                    # transfer only planned differences
+maccluster pull                             # Home + ~/Developer (two-way)
+maccluster push                             # Home + ~/Developer → peers (local → peer)
+maccluster push --dry-run --peer node-b
+maccluster push --both                      # two-way like pull
+maccluster pull --dry-run --peer node-b
+maccluster pull --pull-only                 # only peer → local
+maccluster pull --full-home                 # entire $HOME (no preset filter)
 maccluster sync home --compare              # CCC-style diff only
 maccluster sync home --dry-run              # preview transfers
 maccluster sync home --safetynet --verify   # SafetyNet + sample verify

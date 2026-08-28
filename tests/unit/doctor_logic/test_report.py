@@ -30,3 +30,31 @@ def test_iperf_info_exit_0():
         ]
     )
     assert r.exit_code == 0
+
+
+def test_disk_and_peer_host_warn_exit_3():
+    r = build_report(
+        [
+            DoctorFinding("config", CheckSeverity.OK, "ok"),
+            DoctorFinding("disk", CheckSeverity.WARN, "low"),
+        ]
+    )
+    assert r.exit_code == 3
+    r2 = build_report(
+        [
+            DoctorFinding("config", CheckSeverity.OK, "ok"),
+            DoctorFinding("host:node-b", CheckSeverity.WARN, "unreachable"),
+        ]
+    )
+    assert r2.exit_code == 3
+
+
+def test_ntp_warn_does_not_degrade():
+    r = build_report(
+        [
+            DoctorFinding("config", CheckSeverity.OK, "ok"),
+            DoctorFinding("ntp", CheckSeverity.WARN, "offset"),
+            DoctorFinding("ntp", CheckSeverity.SKIPPED, "sntp missing"),
+        ]
+    )
+    assert r.exit_code == 0

@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.3.1 — 2026-08-28
+
+### Added — fleet commands, host doctor snapshot, mesh bench, TB-gateway guard
+- **`maccluster push` / `pull` / `delta`**: Home + `~/Developer` transfer shortcuts
+  (`home_dev_transfer`), byte-accurate delta planning (`precise_delta`)
+- **`doctor --host [--fleet]`**: optional RAM/load/disk/thermal host snapshot;
+  `--fleet` hops each peer over the TB bridge; default `doctor` stays fast
+- **`heal --fleet [--together] [--dry-run]`**: heal this Mac, then run
+  `maccluster heal` on each peer over the TB bridge; missing remote CLI or
+  required sudo is reported per-hop instead of failing the whole run
+- **`bench --mesh`**: sequential directed full-mesh iperf3 across all nodes
+- **Thunderbolt Bridge must not kill Wi-Fi**: a `Router` left on the TB Bridge
+  service made macOS prefer it as the default gateway and dropped internet;
+  `up` / `heal` now strip that Router and reorder services Wi-Fi-first,
+  TB-last; `doctor` warns on `tb_gateway` if a router is still set
+  (`maccluster.services.wifi_guard`)
+
+### Fixed
+- `heal --fleet --dry-run` no longer attempts a real `protect_wifi_from_bridge`
+  apply call
+
 ## 0.3.0 — 2026-08-27
 
 ### Changed — push streams instead of staging an archive

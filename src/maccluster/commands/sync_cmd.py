@@ -151,6 +151,7 @@ def run(ctx: AppContext, args) -> int:
         dry_run=bool(getattr(args, "dry_run", False)),
         compare_only=bool(getattr(args, "compare", False)),
         peer=getattr(args, "peer", None),
+        peer_limit=getattr(args, "peer_limit", None),
         push_only=bool(getattr(args, "push_only", False)),
         pull_only=bool(getattr(args, "pull_only", False)),
         user=getattr(args, "user", None),

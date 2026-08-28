@@ -7,8 +7,8 @@ from maccluster.app_factory import AppContext
 from maccluster.constants import LAUNCH_AGENT_LABEL
 from maccluster.doctor_logic import checks
 from maccluster.doctor_logic.report import build_report
-from maccluster.domain.enums import ReachabilityState
-from maccluster.domain.models import DoctorReport, NodeHealth
+from maccluster.domain.enums import CheckSeverity, ReachabilityState
+from maccluster.domain.models import DoctorFinding, DoctorReport, NodeHealth
 from maccluster.health.mesh import build_mesh_health
 from maccluster.services.config_service import load_and_bind_self, load_config
 from maccluster.services.heal_heartbeat import read_heartbeat
@@ -20,6 +20,9 @@ def run_doctor(
     *,
     include_exo: bool = False,
     exo_base_url: str | None = None,
+    include_host: bool = False,
+    include_fleet: bool = False,
+    peer: str | None = None,
 ) -> DoctorReport:
     findings = []
     cfg = None
@@ -60,6 +63,17 @@ def run_doctor(
         except Exception:
             bridge = None
     findings.append(checks.check_bridge(bridge, desired_ip))
+    try:
+        info = ctx.runner.run(
+            ["/usr/sbin/networksetup", "-getinfo", "Thunderbolt Bridge"],
+            timeout=5,
+        )
+        from maccluster.services.wifi_guard import parse_networksetup_info
+
+        router = parse_networksetup_info(info.stdout or "").get("Router")
+    except Exception:
+        router = None
+    findings.append(checks.check_tb_gateway(router))
 
     peers: list = []
     node_health: list[NodeHealth] = []
@@ -119,5 +133,29 @@ def run_doctor(
         except Exception:
             iperf_ok = False
     findings.append(checks.check_iperf(iperf_ok))
+
+    if include_host:
+        from maccluster.services.doctor_host import (
+            collect_fleet,
+            collect_local,
+            findings_from_snapshot,
+        )
+
+        self_id = self_node.id if self_node else "self"
+        local = collect_local(ctx, self_id)
+        findings.extend(findings_from_snapshot(local, peer=False))
+        if include_fleet:
+            if cfg is None or self_node is None:
+                findings.append(
+                    DoctorFinding(
+                        "host",
+                        CheckSeverity.WARN,
+                        "fleet host needs config and self",
+                        "",
+                    )
+                )
+            else:
+                for snap in collect_fleet(ctx, cfg, self_node, peer=peer):
+                    findings.extend(findings_from_snapshot(snap, peer=True))
 
     return build_report(findings)

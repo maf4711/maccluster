@@ -59,6 +59,11 @@ def ensure_local(ctx: AppContext, *, dry_run: bool = False) -> MutateResult:
 
         if result.already_configured:
             ctx.audit.record("ensure", "noop", iface=interface, ip=str(self_node.ip))
+            if not dry_run:
+                try:
+                    ctx.net_apply.protect_wifi_from_bridge(str(self_node.ip), dry_run=dry_run)
+                except Exception:
+                    pass
             if not result.tb_link_present:
                 raise DegradedError(
                     f"already configured {interface} {self_node.ip}; no TB link",
@@ -91,6 +96,11 @@ def ensure_local(ctx: AppContext, *, dry_run: bool = False) -> MutateResult:
             raise
 
         ctx.audit.record("ensure", "ok", iface=interface, ip=str(self_node.ip))
+        if not dry_run:
+            try:
+                ctx.net_apply.protect_wifi_from_bridge(str(self_node.ip), dry_run=dry_run)
+            except Exception:
+                pass
         result.message = f"configured {interface} {self_node.ip}"
 
         if not result.tb_link_present:

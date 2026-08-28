@@ -25,6 +25,7 @@ from maccluster.ports.audit import AuditPort
 from maccluster.ports.bench import BenchPort
 from maccluster.ports.clock import ClockPort
 from maccluster.ports.filesystem import FileSystemPort
+from maccluster.ports.host import HostPort
 from maccluster.ports.identity import IdentityPort
 from maccluster.ports.lock import LockPort
 from maccluster.ports.network import NetworkApplyPort, NetworkReadPort
@@ -54,6 +55,7 @@ class AppContext:
     identity: IdentityPort
     platform: PlatformPort
     audit: AuditPort
+    host: HostPort | None = None
 
     @staticmethod
     def production(
@@ -70,6 +72,8 @@ class AppContext:
         primary = SystemProfilerTB(runner)
         fallback = IoregTB(runner)
         tb = CompositeTB(primary, fallback)
+        from maccluster.adapters.host_macos import HostMacOS
+
         return AppContext(
             config_path=config_path,
             json_mode=json_mode,
@@ -88,6 +92,7 @@ class AppContext:
             identity=MacOSIdentity(runner),
             platform=MacOSPlatform(runner),
             audit=AuditLog(enabled=audit_enabled) if audit_enabled else NullAudit(),
+            host=HostMacOS(runner),
         )
 
 

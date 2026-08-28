@@ -12,6 +12,8 @@
 Verbindliche Dateibesitze und Akzeptanzkriterien: `BACKLOG.md`.  
 Maschinenlesbar: `wellen.json` (Format: `wellen[].nr` + `stories[{id,titel,dateien,abhaengigkeiten}]`).
 
+**Nach v1 (ab 0.3):** [`ROADMAP-0.3-fabric.md`](./ROADMAP-0.3-fabric.md) — `bench --mesh`, `heal --fleet`, `doctor --host`. Nicht in `wellen.json`.
+
 ---
 
 ## 1. Überblick

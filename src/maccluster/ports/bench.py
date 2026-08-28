@@ -10,4 +10,10 @@ from maccluster.domain.models import BenchResult
 class BenchPort(Protocol):
     def available(self) -> bool: ...
 
-    def run(self, target: str, *, duration: int = 5) -> BenchResult: ...
+    def run(
+        self,
+        target: str,
+        *,
+        duration: int = 5,
+        bind_ip: str | None = None,
+    ) -> BenchResult: ...
