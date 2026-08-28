@@ -52,7 +52,7 @@ def router_steals_internet(router: str | None, cluster_ip: str | None = None) ->
     if not router:
         return False
     router = router.strip()
-    if not router or router in ("0.0.0.0", "none", "None"):
+    if not router or router in ("0.0.0.0", "none", "None", "(null)"):
         return False
     return True
 
