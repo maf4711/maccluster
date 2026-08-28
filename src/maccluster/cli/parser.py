@@ -670,6 +670,15 @@ def build_parser() -> argparse.ArgumentParser:
         home_help="Local home path (default: ~)",
         remote_help="Remote home path (default: same as local home path)",
     )
+    p_home.add_argument(
+        "--full-home",
+        action="store_true",
+        help=(
+            "Inventory entire $HOME (slow). Default without --preset/--include "
+            "is documents,desktop,downloads,developer,ssh,config — avoids "
+            "Library/CloudStorage hangs."
+        ),
+    )
     p_dev = sync_sub.add_parser(
         "dev",
         aliases=["developer"],

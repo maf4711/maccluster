@@ -244,19 +244,35 @@ def is_excluded(rel: str, patterns: tuple[str, ...]) -> bool:
 
 # Prefer these roots first so push starts useful data before iCloud trees.
 _INV_PREF = ("Developer", "Downloads", ".ssh", ".config", "Desktop", "Documents")
-_INV_SKIP_NAMES = frozenset(
-    {
-        "imessage_export",
-        "node_modules",
-        ".git",
-        "DerivedData",
-        "__pycache__",
-        ".venv",
-        "venv",
-        ".Trash",
-        "Library",  # full Library only when walking $HOME root
-    }
-)
+
+
+def _inv_skip_names() -> frozenset[str]:
+    """Dir basenames that hang or bloat inventory (cloud FUSE, VCS, caches).
+
+    ``Library`` is only skipped on full-home walks; explicit includes under
+    Library/ (e.g. library-app preset) still walk.
+    """
+    try:
+        from maccluster.constants import SYNC_INV_SKIP_DIR_NAMES
+
+        return SYNC_INV_SKIP_DIR_NAMES
+    except Exception:
+        return frozenset(
+            {
+                "imessage_export",
+                "node_modules",
+                ".git",
+                "DerivedData",
+                "__pycache__",
+                ".venv",
+                "venv",
+                ".Trash",
+                "Library",
+            }
+        )
+
+
+_INV_SKIP_NAMES = _inv_skip_names()
 _UF_DATALESS = 0x40000000
 
 
@@ -331,7 +347,6 @@ def inventory_local(
         root = root.resolve()
     except OSError:
         root = root.absolute()
-
     max_s = float(
         max_sec if max_sec is not None else os.environ.get("MACCLUSTER_INV_MAX_SEC", "240")
     )
@@ -1914,6 +1929,7 @@ def sync_home(
     exclude_from: str | Path | None = None,
     presets: tuple[str, ...] = (),
     includes: tuple[str, ...] = (),
+    full_home: bool = False,
     conflict_policy: str = "newer",
     compare_only: bool = False,
     safetynet: bool = False,
@@ -2023,6 +2039,22 @@ def sync_home(
         Path(exclude_from) if exclude_from else default_sync_exclude_file()
     )
     includes_resolved = merge_includes(presets, includes)
+    # Bare `sync home` without scope hung for hours on Library/CloudStorage.
+    # Default to high-value roots unless --full-home or explicit includes/presets.
+    if target == "home" and not includes_resolved and not full_home:
+        from maccluster.constants import SYNC_DEFAULT_PRESETS
+
+        includes_resolved = merge_includes(SYNC_DEFAULT_PRESETS, ())
+        prog.note(
+            "default scope: "
+            + ", ".join(includes_resolved)
+            + "  (pass --full-home for entire $HOME, or --preset/--include)"
+        )
+    elif full_home and includes_resolved:
+        raise CliError(
+            "use either --full-home or --preset/--include, not both",
+            exit_code=2,
+        )
     extra_dev = SYNC_DEV_EXCLUDES if target == "dev" else ()
     excludes = tuple(SYNC_HOME_EXCLUDES) + extra_dev + file_excludes + tuple(extra_excludes)
     peers = _resolve_peers(
@@ -2125,6 +2157,22 @@ def sync_home(
         if not skip_ssh_check:
             fail = _preflight_ssh(ctx, abs_ssh, ssh_target, bind_ip=bind_ip)
             if fail is not None:
+                fail_l = fail.lower()
+                if "no route to host" in fail_l or "network is unreachable" in fail_l:
+                    ssh_msg = (
+                        f"peer unreachable on TB mesh ({node.ip}). "
+                        f"Cable may be up but peer IP stack is down — on peer run: "
+                        f"`sudo maccluster up` then `maccluster status`. "
+                        f"detail: {fail}"
+                    )
+                elif "permission denied" in fail_l or "publickey" in fail_l:
+                    ssh_msg = (
+                        f"SSH login failed (BatchMode). Fix keys: "
+                        f"ssh-copy-id {ssh_target} — see docs/PEER-SSH.md. "
+                        f"detail: {fail}"
+                    )
+                else:
+                    ssh_msg = f"SSH failed to {ssh_target} (bind {bind_ip}). detail: {fail}"
                 peer_results.append(
                     SyncPeerResult(
                         peer_id=node.id,
@@ -2134,11 +2182,7 @@ def sync_home(
                         push_rc=-1,
                         pull_rc=-1,
                         ok=False,
-                        message=(
-                            f"SSH login failed (BatchMode). Fix keys: "
-                            f"ssh-copy-id {ssh_target} — see docs/PEER-SSH.md. "
-                            f"detail: {fail}"
-                        ),
+                        message=ssh_msg,
                         free_bytes_local=free_local,
                     )
                 )
