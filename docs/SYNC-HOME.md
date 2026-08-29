@@ -3,7 +3,9 @@
 MacCluster **bring-up** (`up` / `heal` / `status`) only manages the TB mesh IP stack.
 It does **not** clone disks. Home file sync is an explicit CLI layer, inspired by
 useful **Carbon Copy Cloner** ideas (compare, filters, SafetyNet, verify, schedule)
-— but **two-way**, **Home-only**, **no deletes**, over TB/SSH with Apple `ditto`.
+— but **two-way**, **Home-only**, **no deletes**, over a transport ladder
+`rdma` (arep) → `tb` (SSH over the bridge) → `wifi` (SSH via `.local`), with
+Apple `ditto` on the SSH rungs. See [Transport ladder](#transport-ladder-rdma--tb--wifi).
 
 ```bash
 maccluster delta                            # inventory → precise deltas (report)
@@ -71,7 +73,9 @@ maccluster sync dev --wifi-top 5
 
 `--include` on the Wi-Fi pass is an **intersection** with the recent-repo
 list. `--wifi-top 0` disables the pass. Needs a `*.local` hostname on the
-peer in `cluster.toml`. `sync home` is unchanged (TB only).
+peer in `cluster.toml`. `sync home` has no top-N pass; it only reaches Wi-Fi
+as the last rung of the transport ladder. `--transport` on `sync dev` replaces
+both passes with a single one on the chosen rung.
 
 ## `maccluster delta` — inventory first, then difference
 
@@ -117,7 +121,8 @@ Same engine and flags as `sync home` (SafetyNet, verify, peer, notify, …).
 | Tool | Role |
 |------|------|
 | **`/usr/bin/ditto`** | Apple system copy — resource forks, xattrs, ACLs, quarantine |
-| **`ssh` / `scp`** | Transport over TB fixed IPs (`10.42.0.x`) |
+| **`ssh` / `scp`** | Transport over TB fixed IPs (`10.42.0.x`) or `.local` (rungs `tb` / `wifi`) |
+| **`arep`** (optional) | Rung `rdma`: RDMA over the Thunderbolt link device, fed by a manifest |
 | mtime / policy | Conflict resolution (default **newest wins**) |
 | Deletes | **Never** |
 
@@ -150,9 +155,145 @@ Per peer:
 2. **Inventory** local + remote (excludes / includes / presets)  
 3. **Plan** by conflict policy  
 4. Optional **SafetyNet** backup of local files about to be overwritten  
-5. **Push** — hardlink-stage → `ditto -c` → `scp` → remote `ditto -x`  
-6. **Pull** — same in reverse  
-7. Optional **verify** sample + **run log** JSON  
+5. **Transport ladder** picks the first usable rung (`rdma` → `tb` → `wifi`,
+   see below)  
+6. **Push** — `rdma`: plan handed to `arep xfer push`; `tb` / `wifi`:
+   hardlink-stage → `ditto -c` → `scp` → remote `ditto -x`  
+7. **Pull** — same in reverse (`arep xfer pull` / `ditto`)  
+8. Optional **verify** sample + **run log** JSON  
+
+## Transport ladder (`rdma` → `tb` → `wifi`)
+
+Inventory and planning never change. What changes per peer is **how the planned
+bytes move**: the transfer stage walks a ladder of transports and steps down one
+rung when the current one fails.
+
+| Prio | Rung | Data path | Available when |
+|---|---|---|---|
+| 1 | `rdma` | `arep xfer push\|pull` — autoreplikator (`arep`) moves the files over **RDMA on the Thunderbolt link device** (bypasses `bridge0`, encrypted with the arep session key) | `arep status --json` lists the peer with `trust = "trusted"` **and** `"rdma"` in `transportCapable` (arep found a link device straight to that peer) |
+| 2 | `tb` | `ssh` / `scp` / `ditto` to `user@10.42.0.x`, bound to the TB Self-IP | the peer's cluster IP answers `ping` on the bridge |
+| 3 | `wifi` | same `ssh` / `scp` / `ditto` to `user@<host>.local`, never bound | a `*.local` hostname for the peer in `cluster.toml` (+ SSH user) |
+
+The peer is looked up in `arep status --json` by `displayName` (Bonjour name,
+`.local` and case ignored) or `fingerprint` against the node's `hostnames` and
+`id`. `arep` is optional: without it (or with `arep status` failing) the `rdma`
+rung is simply skipped and the reason shows up in the peer row. MacCluster
+never enables RDMA itself — `rdma_ctl` is Recovery-OS only.
+
+### Order, downgrade, re-plan
+
+- Order = `transport_priority` from `cluster.toml` (default
+  `["rdma", "tb", "wifi"]`), filtered to the rungs that are available right now.
+- The first rung runs **push**, then **pull**. If it raises or returns rc ≠ 0
+  the run logs **exactly one line** and continues with the next rung:
+
+  ```text
+  transport downgrade <from>→<to>: <reason>
+  ```
+
+  Examples: `transport downgrade rdma→tb: arep exit 3: link lost`,
+  `transport downgrade tb→wifi: push rc=255: ssh: connect to host 10.42.0.2 port 22: No route to host`.
+  `<reason>` is the arep `error` reason / exit code + stderr tail / timeout for
+  `rdma`, and `push|pull rc=N: <first stderr line>` (≤ 160 chars) for the SSH
+  rungs. The line goes to the progress notes, is printed under the peer row in
+  plain output and is kept verbatim in `peers[].downgrades` (`--json`).
+- After a **partial** rung (some bytes already moved) both sides are re-stat'ed
+  for the planned files only and the plan is recomputed, so the next rung only
+  carries what is still missing — nothing is transferred twice.
+- Last rung fails → the usual failure shape (rc ≠ 0 + stderr, peer FAIL).
+  No rung available → `no transport available: <reasons>`, rc −1 for that peer.
+- `--dry-run` / `--compare` **never spawn arep**: the first rung is reported and
+  the existing SSH dry-run summaries are produced.
+
+### Config key — `transport_priority`
+
+```toml
+# ~/.config/maccluster/cluster.toml (top level, optional)
+transport_priority = ["rdma", "tb", "wifi"]   # default when omitted
+```
+
+Rules (`config validate` exits **2** otherwise): array of strings, non-empty,
+only `rdma` / `tb` / `wifi`, no duplicates. `config show` prints the key only
+when it differs from the default. Typical variants:
+
+```toml
+transport_priority = ["tb", "wifi"]     # never try arep / RDMA
+transport_priority = ["rdma", "tb"]     # never fall back to Wi-Fi
+```
+
+### CLI flag — `--transport rdma|tb|wifi`
+
+`sync home` and `sync dev` accept `--transport` to **force exactly one rung**:
+no probing of the others, no downgrade. An unavailable forced rung fails the peer
+with the probe reason (e.g. `unavailable: arep peer trust=<state> (run arep pair)`
+or `unavailable: 10.42.0.2 not reachable on bridge`);
+an unknown name is a usage error (exit **2**).
+
+```bash
+maccluster sync home --transport rdma --peer node-b   # RDMA or fail, no fallback
+maccluster sync home --transport tb                    # classic TB ssh/ditto only
+maccluster sync dev  --transport wifi                  # whole ~/Developer over .local
+```
+
+On `sync dev`, `--transport` is mutually exclusive with `--no-wifi` /
+`--wifi-only` and **disables the Wi-Fi top-N pass**: the tree runs once on the
+chosen rung (`--transport wifi` moves the whole tree over `.local`, not just the
+recent repos).
+
+### What you see
+
+- Progress bar phase: `transfer transport=rdma` (also `tb` / `wifi`)
+- Notes: `transport=rdma → node-b`, then any `transport downgrade …` lines
+- Plain peer row: `[OK] node-b (10.42.0.2) via a321@10.42.0.2 [tb] transport=rdma push=… pull=…`
+- `--json`: `peers[].transport` (rung that ran last, `""` if none),
+  `peers[].downgrades` (exact lines, in order), `transport_priority` (ladder
+  order this run used)
+- `maccluster doctor`: `rdma_no_device_to_peer` **WARN** when `rdma_ctl` reports
+  RDMA enabled but `arep status --json` lists no peer with `rdma` in
+  `transportCapable` (detail: `arep peers=N; check TB link + pairing`). It is
+  advisory and does not change the doctor exit code. With a usable path the
+  finding is `rdma_device_to_peer` INFO (`rdma path to 1 peer(s): mac-mini-b`);
+  with RDMA off or `rdma_ctl` missing: `rdma peer path not assessed`. `doctor`
+  only calls `arep` when RDMA is enabled.
+
+### The `arep xfer` contract (rung 1)
+
+MacCluster keeps inventory and planning; arep moves the bytes. Per direction it
+spawns one process (allowlisted binary, resolved from `~/.local/bin`,
+`/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`; minimal env
+`PATH`/`HOME`/`USER`/`LANG=C`):
+
+```text
+arep xfer push|pull --node <cluster.toml node id> --manifest -
+```
+
+**stdin — manifest, JSON-Lines, one file per line, plan order:**
+
+```json
+{"rel": "Documents/notes.txt", "size": 1234, "mtimeNs": 1756450000123456789}
+```
+
+`rel` is relative to the tree root (`~` for `sync home`, `~/Developer` for
+`sync dev`), `size` in bytes, `mtimeNs` nanoseconds since the epoch — taken from
+the local inventory for `push` and from the remote inventory for `pull`. Every
+planned file must be present in the inventory; a missing entry aborts before
+arep is spawned (a silently dropped file would look like a successful sync).
+
+**stdout — progress, JSON-Lines (non-JSON lines are ignored):**
+
+```json
+{"event": "progress", "done": 1048576, "total": 5242880}
+{"event": "done", "bytes": 5242880}
+{"event": "error", "reason": "link lost"}
+```
+
+`done` / `total` are bytes and feed the progress bar; `done.bytes` (else the
+last `progress.done`) is the byte count reported for the rung.
+
+**exit code:** `0` = all files transferred, `1` (any non-zero) = abort. An
+`error` event, a non-zero exit, a kill after `--timeout` (default 3600 s,
+reported as rc 124) or a process that cannot start all raise a transport failure
+→ downgrade to the next rung. Empty manifest = no-op, arep is not spawned.
 
 ## Prerequisites
 
@@ -168,6 +309,9 @@ Per peer:
    See [PEER-SSH.md](./PEER-SSH.md) if auth closes after accepting the key.
 
 4. Remote Login on; stock `/usr/bin/ditto` and `/usr/bin/python3`
+5. Optional, for the `rdma` rung: `arep` in `~/.local/bin` on both Macs, peers
+   paired (`arep pair`), `arep status --json` showing the peer as `trusted`
+   with `rdma` in `transportCapable`. Without it the ladder starts at `tb`.
 
 ## Usage
 
@@ -188,6 +332,8 @@ maccluster sync home --quick --max-files 500 --max-bytes 1073741824
 maccluster sync home --min-free 5368709120
 maccluster sync home --apfs-snapshot
 maccluster sync home --last
+maccluster sync home --transport tb          # skip arep/RDMA, classic ssh/ditto
+maccluster sync home --transport rdma --peer node-b
 maccluster --json sync home --compare
 maccluster service sync-install --interval 3600
 maccluster service sync-status
@@ -219,8 +365,9 @@ maccluster service sync-uninstall
 | `--apfs-snapshot` | `tmutil localsnapshot` first |
 | `--notify` | Notify on failure |
 | `--no-speedtest` | Skip cable/iperf preflight |
-| `--timeout SEC` | Budget per heavy step (default 3600) |
+| `--timeout SEC` | Budget per heavy step (default 3600); also the `arep xfer` kill timeout |
 | `--no-progress` | Disable live progress bar |
+| `--transport rdma\|tb\|wifi` | Force one rung of the transport ladder (no downgrade); `sync dev`: single pass, no Wi-Fi top-N |
 | `--no-wifi` | `sync dev` only: skip Wi-Fi recent-repo pass |
 | `--wifi-only` | `sync dev` only: skip TB; Wi-Fi top-N only |
 | `--wifi-top N` | `sync dev` only: how many recent git repos (default 10; 0 off) |

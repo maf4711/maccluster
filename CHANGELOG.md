@@ -1,5 +1,49 @@
 # Changelog
 
+## Unreleased
+
+### Added — sync transport ladder `rdma` → `tb` → `wifi`
+
+Inventory and planning are unchanged; the transfer stage of every sync
+(`sync home`, `sync dev`, `pull`, `push`, `delta --apply`) now walks a per-peer
+ladder and steps down one rung on failure:
+
+| Prio | Rung | Data path | Available when |
+|---|---|---|---|
+| 1 | `rdma` | `arep xfer push\|pull` — autoreplikator moves the planned files over RDMA on the Thunderbolt link device (`services/sync_rdma.py`) | `arep status --json`: peer `trusted` + `rdma` in `transportCapable` |
+| 2 | `tb` | existing ssh/scp/ditto, bound to the TB Self-IP | peer IP answers on `bridge0` |
+| 3 | `wifi` | existing ssh/scp/ditto via `user@host.local`, no bind | `*.local` hostname in `cluster.toml` |
+
+- A failing rung (exception or rc ≠ 0) logs exactly
+  `transport downgrade <from>→<to>: <reason>`; after a partial run both sides
+  are re-stat'ed for the planned files (`services/sync_replan.py`) so the next
+  rung only carries what is still missing. Last rung failing keeps the old
+  failure shape; no rung available → `no transport available: <reasons>`,
+  rc −1. `--dry-run` never spawns arep.
+- **`arep xfer` contract**: manifest as JSON-Lines `{"rel","size","mtimeNs"}` on
+  stdin, progress as JSON-Lines `{"event":"progress","done","total"}` /
+  `{"event":"done","bytes"}` / `{"event":"error","reason"}` on stdout, exit 0
+  ok / non-zero abort. `arep` joins the subprocess allowlist (resolved from
+  `~/.local/bin` too); an `error` event, non-zero exit, `--timeout` kill
+  (rc 124) or a start failure all downgrade.
+- **`cluster.toml`**: optional `transport_priority = ["rdma", "tb", "wifi"]`
+  (default). Validated: non-empty, known names only, no duplicates; dumped by
+  `config show` only when non-default.
+- **CLI**: `--transport rdma|tb|wifi` on `sync home` / `sync dev` forces one
+  rung — no probing of the others, no downgrade; an unavailable rung fails the
+  peer with the probe reason. On `sync dev` it is exclusive with
+  `--no-wifi` / `--wifi-only` and disables the Wi-Fi top-N pass.
+- **Output**: peer rows show `transport=<rung>` and the downgrade lines;
+  progress phase reads `transfer transport=rdma`; `--json` adds
+  `peers[].transport`, `peers[].downgrades`, `transport_priority`.
+- **`doctor`**: new finding `rdma_no_device_to_peer` (WARN, advisory — exit
+  code unchanged) when `rdma_ctl` reports RDMA enabled but `arep status --json`
+  lists no rdma-capable peer; `rdma_device_to_peer` INFO otherwise. arep is only
+  queried when RDMA is enabled. Nothing switches `rdma_ctl` (Recovery-OS only).
+
+Spec: autoreplikator `docs/superpowers/specs/2026-08-29-rdma-transport-design.md` §5.
+Docs: `docs/SYNC-HOME.md` → "Transport ladder".
+
 ## 0.3.2 — 2026-08-29
 
 ### Fixed — topo matches peers via Thunderbolt domain UUID
