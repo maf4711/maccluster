@@ -55,6 +55,12 @@ _EXPORTS: dict[str, tuple[str, ...]] = {
         "_transfer_pull_once",
         "_transfer_pull",
     ),
+    "maccluster.services.sync_push": (
+        "_stage_hardlinks",
+        "_transfer_large_files_push",
+        "_transfer_push_once",
+        "_transfer_push",
+    ),
 }
 
 
