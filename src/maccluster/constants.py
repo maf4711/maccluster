@@ -70,6 +70,7 @@ ALLOWLIST_BASENAMES = frozenset(
         "tmutil",  # optional APFS local snapshot before pull
         "osascript",  # optional Notification Center on sync fail
         "rdma_ctl",  # macOS RDMA status (read-only; enable is Recovery-OS only)
+        "arep",  # autoreplikator peer daemon: status --json / xfer (RDMA rung)
         "git",  # MCPRT preflight (commit / merge / push)
         "gh",  # MCPRT: merge open PR
         "bash",  # TestFlight ship.sh

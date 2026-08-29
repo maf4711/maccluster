@@ -42,7 +42,7 @@ class ProcessRunner:
                 exit_code=1,
             )
         paths = self._search
-        if basename in ("iperf3", "ssh", "scp", "git", "gh", "bash"):
+        if basename in ("iperf3", "ssh", "scp", "git", "gh", "bash", "arep"):
             paths = self._search + self._extra
         for directory in paths:
             candidate = Path(directory) / basename
