@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.2 — 2026-08-29
+
+### Fixed — topo matches peers via Thunderbolt domain UUID
+- system_profiler names a TB peer only by model code ("Mac16,11"), and the
+  parser even kept the local bus Device Name ("MacBook Pro") as peer — with
+  two identical Mac minis the topology could never tell which cable goes to
+  which node (`matched=-`, `unmatched peers`). The parser now reads the
+  nested attached-device block (real peer model + the peer port's own
+  Domain UUID → `ThunderboltPort.peer_domain_uuid`), and matching prefers
+  that UUID against a new optional per-node `tb_domain_uuids` list in
+  cluster.toml, falling back to hostname matching. `topo` now renders
+  `peer=Mac16,11 matched=node-a` per link.
+
 ## 0.3.1 — 2026-08-28
 
 ### Added — fleet commands, host doctor snapshot, mesh bench, TB-gateway guard
