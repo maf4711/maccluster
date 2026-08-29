@@ -61,6 +61,13 @@ _EXPORTS: dict[str, tuple[str, ...]] = {
         "_transfer_push_once",
         "_transfer_push",
     ),
+    "maccluster.services.sync_prep": (
+        "_free_bytes",
+        "_remote_free_bytes",
+        "_maybe_apfs_snapshot",
+        "_notify_fail",
+        "_run_force_icloud",
+    ),
 }
 
 
