@@ -206,11 +206,14 @@ def select_transports(
                 f"--transport {override} cannot be combined with the wifi pass", exit_code=2
             )
         return TransportChoice(rungs=("wifi",), detail="wifi pass")
+    # The inventory behind this plan already ran over target.ssh_target on the
+    # bridge, so tb is proven reachable; ICMP (often firewalled on a peer) must
+    # never veto the rung that just worked.
     probe = probe_transports(
         target.node,
         ctx,
         arep_status=arep_status or arep_status_json,
-        tb_ping=tb_ping,
+        tb_ping=tb_ping or (lambda _ip: True),
         wifi_target=lambda _node: target.wifi_target,
     )
     try:

@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from ipaddress import IPv4Address
 from pathlib import Path
 
+from maccluster.domain.enums import ReachabilityState
 from maccluster.domain.models import Node
 from maccluster.ports.process import ProcessResult
 from maccluster.render.progress import NullProgress
@@ -16,6 +17,7 @@ from maccluster.services.sync_transport import (
     TransferTarget,
     TransportChoice,
     run_transfer_ladder,
+    select_transports,
 )
 from maccluster.services.transport_ladder import TransportFailed
 
@@ -162,3 +164,29 @@ def test_silent_push_success_then_pull_failure_does_not_resend_push(fake_ctx, tm
     assert fake_ctx.runner.calls, "a rung that moved bytes must trigger a re-stat"
     assert [list(c["rels"]) for c in push.calls] == [[]]
     assert [list(c["rels"]) for c in pull.calls] == [["c.txt"]]
+
+
+# --- tb never vetoed by ICMP -----------------------------------------------------------
+
+
+def test_select_transports_keeps_tb_when_icmp_ping_fails(fake_ctx, tmp_path: Path):
+    fake_ctx.reachability.states["10.42.0.2"] = ReachabilityState.DOWN
+    home = tmp_path / "home"
+    home.mkdir()
+    choice = select_transports(
+        _target(home),
+        fake_ctx,
+        via="tb",
+        priority=("rdma", "tb", "wifi"),
+        arep_status=lambda: AREP_STATUS,
+    )
+    assert choice.rungs == ("rdma", "tb", "wifi")
+    forced = select_transports(
+        _target(home),
+        fake_ctx,
+        via="tb",
+        priority=("rdma", "tb", "wifi"),
+        override="tb",
+        arep_status=lambda: None,
+    )
+    assert forced.rungs == ("tb",)
