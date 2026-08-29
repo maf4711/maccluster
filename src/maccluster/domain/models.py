@@ -41,6 +41,11 @@ class Node:
         )
 
 
+# Sync transport rungs, tried in this order: arep RDMA → ssh over bridge0 → ssh via .local.
+DEFAULT_TRANSPORT_PRIORITY: tuple[str, ...] = ("rdma", "tb", "wifi")
+TRANSPORT_NAMES: frozenset[str] = frozenset(DEFAULT_TRANSPORT_PRIORITY)
+
+
 @dataclass(frozen=True)
 class ClusterConfig:
     schema_version: int
@@ -52,6 +57,7 @@ class ClusterConfig:
     ssh_probes_enabled: bool = False
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    transport_priority: tuple[str, ...] = DEFAULT_TRANSPORT_PRIORITY
 
 
 @dataclass(frozen=True)

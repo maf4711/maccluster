@@ -11,7 +11,12 @@ from maccluster.constants import (
     DEFAULT_HEAL_INTERVAL_S,
     SCHEMA_VERSION,
 )
-from maccluster.domain.models import ClusterConfig, Node
+from maccluster.domain.models import (
+    DEFAULT_TRANSPORT_PRIORITY,
+    TRANSPORT_NAMES,
+    ClusterConfig,
+    Node,
+)
 from maccluster.errors import ConfigError
 
 
@@ -46,6 +51,7 @@ def load_dict(data: dict[str, Any]) -> ClusterConfig:
     bridge = str(data.get("bridge_interface", DEFAULT_BRIDGE)).strip()
     heal = int(data.get("heal_interval_seconds", DEFAULT_HEAL_INTERVAL_S))
     ssh = bool(data.get("ssh_probes_enabled", False))
+    transport_priority = _parse_transport_priority(data.get("transport_priority"))
 
     nodes_raw = data.get("nodes")
     if not isinstance(nodes_raw, list):
@@ -65,7 +71,26 @@ def load_dict(data: dict[str, Any]) -> ClusterConfig:
         nodes=tuple(nodes),
         heal_interval_seconds=heal,
         ssh_probes_enabled=ssh,
+        transport_priority=transport_priority,
     )
+
+
+def _parse_transport_priority(raw: Any) -> tuple[str, ...]:
+    """Optional ``transport_priority = ["rdma", "tb", "wifi"]``; absent → default."""
+    if raw is None:
+        return DEFAULT_TRANSPORT_PRIORITY
+    allowed = ", ".join(DEFAULT_TRANSPORT_PRIORITY)
+    if not isinstance(raw, list) or not all(isinstance(x, str) for x in raw):
+        raise ConfigError(f"transport_priority must be an array of strings (allowed: {allowed})")
+    names = tuple(x.strip().lower() for x in raw)
+    if not names:
+        raise ConfigError(f"transport_priority must not be empty (allowed: {allowed})")
+    unknown = [n for n in names if n not in TRANSPORT_NAMES]
+    if unknown:
+        raise ConfigError(f"transport_priority: unknown transport {unknown!r} (allowed: {allowed})")
+    if len(set(names)) != len(names):
+        raise ConfigError(f"transport_priority: duplicate entries in {list(names)!r}")
+    return names
 
 
 def _parse_node(raw: dict[str, Any], index: int) -> Node:
