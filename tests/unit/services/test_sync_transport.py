@@ -174,6 +174,57 @@ def test_target_ssh_for_rung_uses_wifi_without_bind(tmp_path: Path):
     assert tgt.ssh_for("wifi") == ("a321@mac-mini-b.local", None)
 
 
+# --- direction attribution on exceptions (sync F13) -------------------------------
+
+
+class RaisingSsh:
+    """Raises for the direction named in *raise_on* ("push" | "pull")."""
+
+    def __init__(self, raise_on: str) -> None:
+        self.raise_on = raise_on
+        self.calls: list[dict] = []
+
+    def __call__(self, ctx, **kw) -> tuple[int, str, str, int]:
+        self.calls.append(kw)
+        rels = list(kw["rels"])
+        if self.raise_on == "pull" and rels and rels[0] in kw["sizes"] and "c" in "".join(rels):
+            raise OSError("pull side blew up")
+        if self.raise_on == "push":
+            raise OSError("push side blew up")
+        return 0, "ok", "", sum(kw["sizes"].get(r, 0) for r in rels)
+
+
+def test_pull_only_exception_is_attributed_to_pull_not_push(fake_ctx, tmp_path: Path):
+    # With --pull-only the push step is skipped; an exception from the pull call
+    # must not be recorded as a push failure with pull_rc left at 0.
+    pull = RaisingSsh(raise_on="pull")
+    out = _run(
+        fake_ctx,
+        tmp_path,
+        ["wifi"],  # single rung so the failure is the final outcome
+        ssh_push=FakeSsh(),
+        ssh_pull=pull,
+        pull_only=True,
+    )
+    assert out.push_rc == 0, "nothing was pushed under --pull-only"
+    assert out.pull_rc == 1, "the failure belongs to the pull direction"
+    assert "pull" in out.pull_stderr
+
+
+def test_push_only_exception_is_attributed_to_push(fake_ctx, tmp_path: Path):
+    push = RaisingSsh(raise_on="push")
+    out = _run(
+        fake_ctx,
+        tmp_path,
+        ["wifi"],
+        ssh_push=push,
+        ssh_pull=FakeSsh(),
+        push_only=True,
+    )
+    assert out.push_rc == 1
+    assert out.pull_rc == 0
+
+
 # --- ladder iteration -------------------------------------------------------------
 
 

@@ -262,8 +262,10 @@ def _run_ssh_rung(
         bind_ip=bind_ip,
     )
     prog.update(transport=rung)
+    stage = "push"  # which direction is in flight, so an exception is attributed right
     try:
         if not pull_only:
+            stage = "push"
             r.push = push(
                 ctx,
                 rels=list(plan.to_push),
@@ -282,6 +284,7 @@ def _run_ssh_rung(
             else:
                 r.push_done = True
         if not push_only:
+            stage = "pull"
             r.pull = pull(
                 ctx,
                 rels=list(plan.to_pull),
@@ -299,10 +302,13 @@ def _run_ssh_rung(
     except Exception as exc:  # a broken rung must never abort the whole peer
         r.reason = _fail_reason(exc)
         r.moved = True  # unknown how far it got → re-stat before the next rung
-        if not r.push_done:
-            r.push = (1, "", r.reason, r.push[3])
-        else:
+        # Attribute the failure to the direction that was actually in flight,
+        # not to push by default: under --pull-only the push step never ran, so
+        # a pull exception must land on pull, leaving push_rc at 0.
+        if stage == "pull":
             r.pull = (1, "", r.reason, r.pull[3])
+        else:
+            r.push = (1, "", r.reason, r.push[3])
     return r
 
 
