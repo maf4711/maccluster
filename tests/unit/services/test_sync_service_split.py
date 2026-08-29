@@ -18,6 +18,20 @@ _EXPORTS: dict[str, tuple[str, ...]] = {
         "_ssh_cat_read_argv",
         "_scp_one_file",
     ),
+    "maccluster.services.sync_inventory": (
+        "_REMOTE_INVENTORY_PY",
+        "FileMeta",
+        "_norm_rel",
+        "is_excluded",
+        "_INV_PREF",
+        "_inv_skip_names",
+        "_INV_SKIP_NAMES",
+        "_UF_DATALESS",
+        "_safe_scandir",
+        "inventory_local",
+        "parse_inventory_text",
+        "_remote_inventory",
+    ),
 }
 
 
