@@ -34,6 +34,7 @@ from maccluster.constants import (
 from maccluster.domain.models import Node, SyncHomeResult, SyncPeerResult
 from maccluster.errors import CliError
 from maccluster.render.progress import NullProgress, ProgressLike, format_bytes, format_rate
+from maccluster.services import sync_transport
 from maccluster.services.config_service import load_and_bind_self
 from maccluster.services.sync_wifi import wifi_ssh_target
 
@@ -1953,6 +1954,7 @@ def sync_home(
     icloud_max_seconds: float = 900.0,
     target: str = "home",
     via: str = "tb",
+    transport: str | None = None,
 ) -> SyncHomeResult:
     """
     Two-way tree sync via Apple ``ditto`` (metadata-complete) over SSH.
@@ -1995,7 +1997,8 @@ def sync_home(
             exit_code=2,
         )
     target = normalize_sync_target(target) or "home"
-    via_n = (via or "tb").strip().lower()
+    transport = sync_transport.normalize_transport(transport)
+    via_n = "wifi" if transport == "wifi" else (via or "tb").strip().lower()
     if via_n not in ("tb", "wifi"):
         raise CliError(f"invalid sync via {via!r} (use tb or wifi)", exit_code=2)
     if compare_only:
@@ -2395,7 +2398,7 @@ def sync_home(
             push_rc = pull_rc = 0
             push_out = pull_out = push_err = pull_err = ""
             messages: list[str] = []
-            done_bytes = 0
+            outcome = sync_transport.NO_TRANSFER
             t_peer = time.monotonic()
             sn_count = 0
             v_ok: bool | None = None
@@ -2436,55 +2439,33 @@ def sync_home(
                     if sn_count:
                         prog.note(f"  SafetyNet: backed up {sn_count} files → {sn_run}")
 
-                if not pull_only:
-                    push_rc, push_out, push_err, _pb = _transfer_push(
-                        ctx,
-                        abs_ditto=abs_ditto,
-                        abs_ssh=abs_ssh,
-                        abs_scp=abs_scp,
-                        ssh_target=ssh_target,
-                        local_home=local_home,
-                        remote_home=remote_home_path,
-                        rels=to_push,
-                        sizes=push_sizes,
-                        dry_run=dry_run,
-                        timeout=timeout,
-                        work=work,
-                        progress=prog,
-                        bytes_base=0,
-                        bytes_total=total_bytes,
-                        bind_ip=bind_ip,
-                        stream=not no_stream,
-                    )
-                    done_bytes = push_bytes
-                    if push_rc != 0:
-                        messages.append(f"push failed rc={push_rc}")
-                    elif push_out:
-                        messages.append(push_out.split("\n", 1)[0])
-
-                if not push_only:
-                    pull_rc, pull_out, pull_err, _plb = _transfer_pull(
-                        ctx,
-                        abs_ditto=abs_ditto,
-                        abs_ssh=abs_ssh,
-                        abs_scp=abs_scp,
-                        ssh_target=ssh_target,
-                        local_home=local_home,
-                        remote_home=remote_home_path,
-                        rels=to_pull,
-                        sizes=pull_sizes,
-                        dry_run=dry_run,
-                        timeout=timeout,
-                        work=work,
-                        progress=prog,
-                        bytes_base=done_bytes,
-                        bytes_total=total_bytes,
-                        bind_ip=bind_ip,
-                    )
-                    if pull_rc != 0:
-                        messages.append(f"pull failed rc={pull_rc}")
-                    elif pull_out:
-                        messages.append(pull_out.split("\n", 1)[0])
+                # Transport ladder (rdma → tb → wifi) lives in sync_transport.py
+                wifi_tgt = wifi_ssh_target(node, default_user=default_user)
+                tgt = sync_transport.TransferTarget(
+                    node, ssh_target, bind_ip, wifi_tgt, local_home, remote_home_path
+                )
+                choice = sync_transport.select_transports(
+                    tgt, ctx, via=via_n, priority=cfg.transport_priority, override=transport
+                )
+                outcome = sync_transport.run_transfer_ladder(
+                    ctx,
+                    choice=choice,
+                    plan=sync_transport.TransferPlan(
+                        to_push, to_pull, push_sizes, pull_sizes, local_inv, remote_inv, policy
+                    ),
+                    target=tgt,
+                    dry_run=dry_run,
+                    timeout=timeout,
+                    work=work,
+                    progress=prog,
+                    stream=not no_stream,
+                    push_only=push_only,
+                    pull_only=pull_only,
+                )
+                push_rc, pull_rc = outcome.push_rc, outcome.pull_rc
+                push_out, pull_out = outcome.push_stdout, outcome.pull_stdout
+                push_err, pull_err = outcome.push_stderr, outcome.pull_stderr
+                messages.extend(outcome.messages)
 
                 if verify and not dry_run and pull_rc == 0 and to_pull:
                     # Expected meta from remote inventory for pulled files
@@ -2548,6 +2529,8 @@ def sync_home(
                     free_bytes_local=free_local,
                     free_bytes_remote=free_remote,
                     truncated=truncated,
+                    transport=outcome.transport,
+                    downgrades=outcome.downgrades,
                 )
             )
             status = "OK" if ok else "FAIL"
@@ -2581,6 +2564,7 @@ def sync_home(
         max_bytes=max_bytes,
         target=target,
         wifi_repos=includes_resolved if via_n == "wifi" else (),
+        transport_priority=tuple(cfg.transport_priority),
     )
 
     log_path: str | None = None
