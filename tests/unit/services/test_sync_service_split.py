@@ -49,6 +49,12 @@ _EXPORTS: dict[str, tuple[str, ...]] = {
         "_split_large_files",
         "_sample_list",
     ),
+    "maccluster.services.sync_pull": (
+        "_REMOTE_STAGE_PY",
+        "_transfer_large_files_pull",
+        "_transfer_pull_once",
+        "_transfer_pull",
+    ),
 }
 
 
