@@ -446,6 +446,7 @@ class MutateResult:
     ip: str = ""
     already_configured: bool = False
     tb_link_present: bool = False
+    tb_links: int = 0
     message: str = ""
     partial: bool = False
 
