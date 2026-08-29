@@ -123,17 +123,19 @@ def _parse_node(raw: dict[str, Any], index: int) -> Node:
     ssh_target = raw.get("ssh_target")
     ssh_target_s = str(ssh_target).strip() if ssh_target else None
 
-    tb_raw = raw.get("tb_domain_uuids")
-    if isinstance(tb_raw, list):
-        tb_domain_uuids = tuple(str(u).strip() for u in tb_raw if str(u).strip())
-    else:
-        tb_domain_uuids = ()
-
     return Node(
         id=nid,
         hostnames=hostnames,
         ip=ip,
         hw_uuid=hw_uuid,
         ssh_target=ssh_target_s,
-        tb_domain_uuids=tb_domain_uuids,
+        tb_domain_uuids=_str_list(raw.get("tb_domain_uuids")),
+        tb_controller_uids=_str_list(raw.get("tb_controller_uids")),
     )
+
+
+def _str_list(raw: Any) -> tuple[str, ...]:
+    """Optional array of strings; blanks dropped, anything else → empty."""
+    if not isinstance(raw, list):
+        return ()
+    return tuple(str(u).strip() for u in raw if str(u).strip())

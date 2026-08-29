@@ -27,7 +27,10 @@ class Node:
     hw_uuid: str
     ssh_target: str | None = None
     role: NodeRole = NodeRole.UNKNOWN
+    # Thunderbolt domain UUIDs of this Mac's buses — regenerated on every reboot.
     tb_domain_uuids: tuple[str, ...] = ()
+    # Thunderbolt controller/switch UIDs (system_profiler ``switch_uid_key``) — stable.
+    tb_controller_uids: tuple[str, ...] = ()
 
     def with_role(self, role: NodeRole) -> Node:
         return Node(
@@ -38,6 +41,7 @@ class Node:
             ssh_target=self.ssh_target,
             role=role,
             tb_domain_uuids=self.tb_domain_uuids,
+            tb_controller_uids=self.tb_controller_uids,
         )
 
 
@@ -74,6 +78,7 @@ class ThunderboltPort:
     status_raw: str | None = None
     peer_mode: str | None = None  # e.g. "Thunderbolt 3", "USB4" from system_profiler
     peer_domain_uuid: str | None = None  # Domain UUID of the peer port (nested device block)
+    peer_uid: str | None = None  # Controller UID of the attached device, when it exposes one
 
 
 @dataclass(frozen=True)
@@ -138,6 +143,11 @@ class NodeHealth:
     link_speed_gbps: float | None = None
     rtt_ms: float | None = None
     notes: str = ""
+    # Sync transport rung to this peer: rdma | tb | wifi | unknown ("self" for this Mac),
+    # derived from `arep status --json` and the last `maccluster sync` run log.
+    transport: str = "unknown"
+    transport_source: str = ""  # sync-last | arep | ""
+    transport_detail: str = ""  # last downgrade line / capability note
 
 
 @dataclass(frozen=True)
@@ -220,6 +230,9 @@ class TopologyLink:
     link_state: LinkState
     matched_node_id: str | None = None
     speed_gbps: float | None = None
+    peer_domain_uuid: str | None = None
+    peer_uid: str | None = None
+    matched_by: str | None = None  # uid | domain | hostname
 
 
 @dataclass(frozen=True)

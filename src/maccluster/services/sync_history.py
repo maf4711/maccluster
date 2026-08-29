@@ -76,20 +76,27 @@ def read_last_run(*, log_dir: Path | None = None) -> dict[str, Any] | None:
 def format_last_run(data: dict[str, Any] | None) -> str:
     if not data:
         return "no sync runs logged yet (run: maccluster sync home|dev)"
+    prio = data.get("transport_priority")
+    prio_note = f"  priority={'→'.join(map(str, prio))}" if isinstance(prio, list) and prio else ""
     lines = [
         f"last sync  strategy={data.get('strategy')}  dry_run={data.get('dry_run')}  "
-        f"compare={data.get('compare_only')}  policy={data.get('conflict_policy')}",
+        f"compare={data.get('compare_only')}  policy={data.get('conflict_policy')}{prio_note}",
         f"local={data.get('local_home')}",
         f"log={data.get('log_path') or '(inline)'}",
     ]
     for p in data.get("peers") or []:
         status = "OK" if p.get("ok") else "FAIL"
+        transport = p.get("transport")
+        tp = f"transport={transport}  " if transport else ""
         lines.append(
-            f"  [{status}] {p.get('peer_id')} ({p.get('peer_ip')})  "
+            f"  [{status}] {p.get('peer_id')} ({p.get('peer_ip')})  {tp}"
             f"push={p.get('push_files', 0)}/{p.get('push_bytes', 0)}B  "
             f"pull={p.get('pull_files', 0)}/{p.get('pull_bytes', 0)}B  "
             f"{p.get('message', '')}"
         )
+        downgrades = p.get("downgrades")
+        for row in downgrades if isinstance(downgrades, list) else []:
+            lines.append(f"      {row}")
     return "\n".join(lines)
 
 
@@ -139,12 +146,16 @@ def _result_to_dict(result: SyncHomeResult) -> dict[str, Any]:
                 "safetynet_backed_up": p.safetynet_backed_up,
                 "truncated": p.truncated,
                 "via": getattr(p, "via", "tb"),
+                # ladder rung that moved the bytes ("" = none ran) + downgrade lines
+                "transport": getattr(p, "transport", "") or "",
+                "downgrades": list(getattr(p, "downgrades", ()) or ()),
             }
         )
     return {
         "ts": datetime.now(UTC).isoformat(),
         "local_home": result.local_home,
         "target": getattr(result, "target", "home"),
+        "transport_priority": list(getattr(result, "transport_priority", ()) or ()),
         "wifi_repos": list(getattr(result, "wifi_repos", ()) or ()),
         "mcprt": (
             {

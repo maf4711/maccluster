@@ -10,6 +10,7 @@ from maccluster.doctor_logic.report import build_report
 from maccluster.domain.enums import CheckSeverity, ReachabilityState
 from maccluster.domain.models import DoctorFinding, DoctorReport, NodeHealth
 from maccluster.health.mesh import build_mesh_health
+from maccluster.mapping.tb_identity import check_tb_identity
 from maccluster.services.config_service import load_and_bind_self, load_config
 from maccluster.services.heal_heartbeat import read_heartbeat
 from maccluster.services.tb_service import probe_tb
@@ -55,6 +56,8 @@ def run_doctor(
         tb_error = str(exc)
     findings.append(checks.check_tb(tb, tb_error))
     findings.append(checks.check_cable(tb))
+    # Are cluster.toml's tb ids for this Mac still the live ones? (reboot → new UUIDs)
+    findings.append(check_tb_identity(self_node, tb))
 
     bridge = None
     desired_ip = str(self_node.ip) if self_node else None

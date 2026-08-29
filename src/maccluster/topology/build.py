@@ -10,7 +10,8 @@ from maccluster.domain.models import (
     Topology,
     TopologyLink,
 )
-from maccluster.topology.match import match_peer, topology_complete
+from maccluster.mapping.peer_match import match_node
+from maccluster.topology.match import topology_complete
 
 
 def build_topology(
@@ -26,12 +27,13 @@ def build_topology(
     peers = [n for n in cfg.nodes if self_node is None or n.id != self_node.id]
 
     for port in tb.ports:
-        matched = match_peer(
-            peer_hint=port.peer_name,
-            peer_domain_uuid=port.peer_domain_uuid,
+        match = match_node(
             nodes=cfg.nodes,
+            peer_uid=port.peer_uid,
+            peer_domain_uuid=port.peer_domain_uuid,
+            peer_hint=port.peer_name,
         )
-        if port.peer_name and not matched and port.link_state == LinkState.CONNECTED:
+        if port.peer_name and not match and port.link_state == LinkState.CONNECTED:
             unmatched.append(port.peer_name)
         links.append(
             TopologyLink(
@@ -39,8 +41,11 @@ def build_topology(
                 peer_hint=port.peer_name,
                 domain_uuid=port.domain_uuid,
                 link_state=port.link_state,
-                matched_node_id=matched,
+                matched_node_id=match.node_id if match else None,
                 speed_gbps=port.link_speed_gbps,
+                peer_domain_uuid=port.peer_domain_uuid,
+                peer_uid=port.peer_uid,
+                matched_by=match.by if match else None,
             )
         )
 

@@ -1,0 +1,81 @@
+Thunderbolt/USB4:
+
+    Thunderbolt/USB4 Bus 2:
+
+      Vendor Name: Apple Inc.
+      Device Name: Mac mini
+      UID: 0x05AC51E771159CF2
+      Route String: 0
+      Domain UUID: DFD77E42-7ED0-48E5-A840-94FD1522F505
+      Port:
+          Status: Device connected
+          Link Status: 0x2
+          Speed: 20 Gb/s
+          Receptacle: 3
+          Micro Firmware Version: 0.0.0
+
+        Studio Display:
+
+          Vendor Name: Apple Inc.
+          Device Name: Studio Display
+          Mode: Thunderbolt 3
+          Device ID: 0x801F
+          Vendor ID: 0x0001
+          Device Revision: 0x1
+          UID: 0x000196C394A8D900
+          Route String: 1
+          Firmware Version: 67.1
+          Port (Upstream):
+              Status: Device connected
+              Link Status: 0x2
+              Speed: 20 Gb/s
+              Link Controller Firmware Version: 1.45.0
+
+    Thunderbolt/USB4 Bus 1:
+
+      Vendor Name: Apple Inc.
+      Device Name: Mac mini
+      UID: 0x05AC51E771159CF1
+      Route String: 0
+      Domain UUID: 4FBE0A88-3F0B-46F4-9511-3713B2315360
+      Port:
+          Status: Device connected
+          Link Status: 0x2
+          Speed: 40 Gb/s
+          Receptacle: 2
+          Micro Firmware Version: 0.0.0
+
+        MacBook Pro:
+
+          Vendor Name: Apple Inc.
+          Device Name: Mac17,6
+          Device ID: 0xA
+          Vendor ID: 0x0A27
+          Domain UUID: BC5DEC53-7E36-4A9A-8459-456EBAB5E58A
+          Services:
+            Internet Protocol:
+              Protocol ID: 1
+              Protocol Version: 1
+              Protocol Revision: 1
+              Service UUID: 97879708-C925-4B8F-8588-A33BF8408272
+            Service: Unknown:
+              Protocol ID: 64087
+              Protocol Version: 1
+              Protocol Revision: 0
+              Service Key: ˇˇˇˇˇˇAD
+              Service UUID: FF4D01F1-0116-4E07-9099-4F58A02AA428
+
+    Thunderbolt/USB4 Bus 0:
+
+      Vendor Name: Apple Inc.
+      Device Name: Mac mini
+      UID: 0x05AC51E771159CF0
+      Route String: 0
+      Domain UUID: 3C9311A2-3DFC-44C4-AEC3-81086B2880BB
+      Port:
+          Status: No device connected
+          Link Status: 0x7
+          Speed: Up to 120 Gb/s
+          Receptacle: 1
+          Micro Firmware Version: 0.0.0
+

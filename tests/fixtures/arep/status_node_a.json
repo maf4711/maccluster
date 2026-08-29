@@ -1,0 +1,32 @@
+{
+  "acceptedHandshakes": 4,
+  "activePath": "thunderbolt",
+  "fingerprint": "SHA256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "paused": false,
+  "peers": [
+    {
+      "displayName": "mac-mini-b",
+      "fingerprint": "SHA256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "lastDowngradeReason": null,
+      "lastSeen": "2026-08-29T10:00:00Z",
+      "lastTransport": "rdma",
+      "publicKeyBase64": null,
+      "transportCapable": ["rdma", "tcp"],
+      "trust": "trusted"
+    },
+    {
+      "displayName": "mac-mini-c",
+      "fingerprint": "SHA256:ccccccccccccccccccccccccccccccccccccccccccc",
+      "lastDowngradeReason": "link-lost",
+      "lastSeen": "2026-08-29T10:00:00Z",
+      "lastTransport": "tcp",
+      "publicKeyBase64": null,
+      "transportCapable": ["tcp"],
+      "trust": "trusted"
+    }
+  ],
+  "rdmaDevices": ["rdma_en2", "rdma_en3", "rdma_en4"],
+  "rejectedHandshakes": 0,
+  "startedAt": "2026-08-29T09:00:00Z",
+  "version": "0.4.0"
+}
