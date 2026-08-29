@@ -572,6 +572,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Run even if MACCLUSTER_BUSY or ~/.config/maccluster/busy is set",
     )
+    p_bench.add_argument(
+        "--compare",
+        action="store_true",
+        help=(
+            "No bench: print last-vs-best throughput per peer/transport from "
+            "~/.local/state/maccluster/bench-history.jsonl and mark regressions > 15%% "
+            "(exit 3); --peer filters"
+        ),
+    )
 
     p_st = sub.add_parser(
         "speedtest",

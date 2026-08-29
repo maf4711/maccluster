@@ -20,6 +20,12 @@ def _no_real_arep(monkeypatch):
         monkeypatch.setattr(f"{module}.arep_status_json", lambda *a, **k: None, raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _isolated_bench_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """bench/speedtest append to a throughput history; never the real ~/.local/state."""
+    monkeypatch.setenv("MACCLUSTER_BENCH_HISTORY", str(tmp_path / "bench-history.jsonl"))
+
+
 @pytest.fixture
 def fixtures_dir() -> Path:
     return FIXTURES

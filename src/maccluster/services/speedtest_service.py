@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from maccluster.app_factory import AppContext
 from maccluster.cluster_ssh import node_ssh_user, ssh_bind_argv
 from maccluster.domain.cable import (
@@ -12,6 +14,7 @@ from maccluster.domain.cable import (
 from maccluster.domain.enums import NodeRole
 from maccluster.domain.models import SpeedtestPeerResult, SpeedtestReport
 from maccluster.errors import CliError
+from maccluster.services.bench_history import record_samples, samples_from_speedtest
 from maccluster.services.config_service import load_and_bind_self
 from maccluster.services.tb_service import probe_tb
 
@@ -25,10 +28,12 @@ def run_speedtest(
     try_start_server: bool = True,
     force: bool = False,
     busy_path=None,
+    history_path: Path | None = None,
 ) -> SpeedtestReport:
     """
     1) Classify TB cable/link (40G ideal, 20G ok).
     2) iperf3 client → each peer, bound to Self TB IP.
+    3) Append each successful iperf3 sample to the bench history (tb rung).
     """
     cfg, self_node = load_and_bind_self(ctx)
     bind_ip = str(self_node.ip)
@@ -147,7 +152,7 @@ def run_speedtest(
             )
         )
 
-    return SpeedtestReport(
+    report = SpeedtestReport(
         cable_summary=cable.summary,
         cable_grade=cable.overall_grade.value,
         cable_recommendation=cable.recommendation,
@@ -157,6 +162,8 @@ def run_speedtest(
         bind_ip=bind_ip,
         duration_s=duration,
     )
+    record_samples(samples_from_speedtest(report), path=history_path)
+    return report
 
 
 def reverse_iperf_remote_cmd(bind_ip: str, duration: int) -> str:
