@@ -11,6 +11,10 @@ from maccluster.services.config_service import load_and_bind_self, load_config, 
 
 def run(ctx: AppContext, args) -> int:
     action = getattr(args, "config_action", None) or getattr(args, "action", "show")
+    if action == "refresh-tb":
+        from maccluster.commands.config_refresh_tb import run as run_refresh_tb
+
+        return run_refresh_tb(ctx, args)
     if action == "validate":
         cfg, self_node = validate_only(ctx)
         if ctx.json_mode:

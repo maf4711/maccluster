@@ -451,6 +451,27 @@ def build_parser() -> argparse.ArgumentParser:
     cfg_sub = p_cfg.add_subparsers(dest="config_action", metavar="ACTION")
     cfg_sub.add_parser("show", help="Show config")
     cfg_sub.add_parser("validate", help="Validate config and self-match")
+    p_refresh = cfg_sub.add_parser(
+        "refresh-tb",
+        help=(
+            "Print this Mac's live Thunderbolt domain UUIDs (change on reboot) and "
+            "controller UIDs (stable) as a cluster.toml [[nodes]] snippet; dry-run "
+            "unless --apply"
+        ),
+    )
+    p_refresh.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the snippet only (default behaviour)",
+    )
+    p_refresh.add_argument(
+        "--apply",
+        action="store_true",
+        help=(
+            "Rewrite tb_domain_uuids + tb_controller_uids of the self node in "
+            "cluster.toml (a .bak-<timestamp> copy is kept)"
+        ),
+    )
 
     p_up = sub.add_parser("up", help="Ensure local bridge + fixed Self IP")
     p_up.add_argument("--dry-run", action="store_true", help="Plan only (no mutate)")

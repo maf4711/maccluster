@@ -1,0 +1,96 @@
+{
+  "SPThunderboltDataType" : [
+    {
+      "_items" : [
+        {
+          "_name" : "Studio Display",
+          "device_id_key" : "0x801F",
+          "device_name_key" : "Studio Display",
+          "device_revision_key" : "0x1",
+          "mode_key" : "thunderbolt_three",
+          "receptacle_upstream_ambiguous_tag" : {
+            "current_speed_key" : "20 Gb/s",
+            "lc_version_key" : "1.45.0",
+            "link_status_key" : "0x2",
+            "receptacle_status_key" : "receptacle_connected"
+          },
+          "route_string_key" : "1",
+          "switch_uid_key" : "0x000196C394A8D900",
+          "switch_version_key" : "67.1",
+          "vendor_id_key" : "0x0001",
+          "vendor_name_key" : "Apple Inc."
+        }
+      ],
+      "_name" : "thunderboltusb4_bus_2",
+      "device_name_key" : "Mac mini",
+      "domain_uuid_key" : "DFD77E42-7ED0-48E5-A840-94FD1522F505",
+      "receptacle_1_tag" : {
+        "current_speed_key" : "20 Gb/s",
+        "link_status_key" : "0x2",
+        "micro_version_key" : "0.0.0",
+        "receptacle_id_key" : "3",
+        "receptacle_status_key" : "receptacle_connected"
+      },
+      "route_string_key" : "0",
+      "switch_uid_key" : "0x05AC51E771159CF2",
+      "vendor_name_key" : "Apple Inc."
+    },
+    {
+      "_items" : [
+        {
+          "_name" : "MacBook Pro",
+          "device_id_key" : "0xA",
+          "device_name_key" : "Mac17,6",
+          "domain_uuid_key" : "BC5DEC53-7E36-4A9A-8459-456EBAB5E58A",
+          "services_title" : [
+            {
+              "_name" : "service_ip",
+              "protocol_id_key" : 1,
+              "protocol_revision_key" : 1,
+              "protocol_version_key" : 1,
+              "service_uuid_key" : "97879708-C925-4B8F-8588-A33BF8408272"
+            },
+            {
+              "_name" : "unknown_xd_service",
+              "protocol_id_key" : 64087,
+              "protocol_revision_key" : 0,
+              "protocol_version_key" : 1,
+              "service_key_key" : "ˇˇˇˇˇˇAD",
+              "service_uuid_key" : "FF4D01F1-0116-4E07-9099-4F58A02AA428"
+            }
+          ],
+          "vendor_id_key" : "0x0A27",
+          "vendor_name_key" : "Apple Inc."
+        }
+      ],
+      "_name" : "thunderboltusb4_bus_1",
+      "device_name_key" : "Mac mini",
+      "domain_uuid_key" : "4FBE0A88-3F0B-46F4-9511-3713B2315360",
+      "receptacle_1_tag" : {
+        "current_speed_key" : "40 Gb/s",
+        "link_status_key" : "0x2",
+        "micro_version_key" : "0.0.0",
+        "receptacle_id_key" : "2",
+        "receptacle_status_key" : "receptacle_connected"
+      },
+      "route_string_key" : "0",
+      "switch_uid_key" : "0x05AC51E771159CF1",
+      "vendor_name_key" : "Apple Inc."
+    },
+    {
+      "_name" : "thunderboltusb4_bus_0",
+      "device_name_key" : "Mac mini",
+      "domain_uuid_key" : "3C9311A2-3DFC-44C4-AEC3-81086B2880BB",
+      "receptacle_1_tag" : {
+        "current_speed_key" : "Up to 120 Gb/s",
+        "link_status_key" : "0x7",
+        "micro_version_key" : "0.0.0",
+        "receptacle_id_key" : "1",
+        "receptacle_status_key" : "receptacle_no_devices_connected"
+      },
+      "route_string_key" : "0",
+      "switch_uid_key" : "0x05AC51E771159CF0",
+      "vendor_name_key" : "Apple Inc."
+    }
+  ]
+}

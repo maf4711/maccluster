@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from maccluster.domain.enums import LinkState, ReachabilityState
 from maccluster.domain.models import Node, TopologyLink
+from maccluster.mapping.peer_match import match_hostname, match_node
 
 
 def match_peer(
@@ -11,35 +12,26 @@ def match_peer(
     peer_hint: str | None,
     peer_domain_uuid: str | None,
     nodes: tuple[Node, ...] | list[Node],
+    peer_uid: str | None = None,
 ) -> str | None:
-    """Match a TB link to a config node: peer Domain UUID first, name fallback.
+    """Match a TB link to a config node: controller UID, then peer Domain UUID, then name.
 
     system_profiler reports the peer only by model code (e.g. "Mac16,11"),
     which is ambiguous with two identical Macs — the peer port's Domain UUID
-    (nested device block) is the only locally visible unique key.
+    (nested device block) is the only locally visible unique key for a Mac;
+    the controller UID (``tb_controller_uids``) is stable when exposed.
     """
-    if peer_domain_uuid:
-        u = peer_domain_uuid.lower()
-        for n in nodes:
-            if any(d.lower() == u for d in n.tb_domain_uuids):
-                return n.id
-    return match_peer_hint(peer_hint, nodes)
+    m = match_node(
+        nodes=nodes, peer_uid=peer_uid, peer_domain_uuid=peer_domain_uuid, peer_hint=peer_hint
+    )
+    return m.node_id if m else None
 
 
 def match_peer_hint(
     hint: str | None,
     nodes: tuple[Node, ...] | list[Node],
 ) -> str | None:
-    if not hint:
-        return None
-    h = hint.lower()
-    for n in nodes:
-        if n.id.lower() == h:
-            return n.id
-        for host in n.hostnames:
-            if host.lower() == h or host.lower().split(".")[0] == h:
-                return n.id
-    return None
+    return match_hostname(hint, nodes)
 
 
 def topology_complete(

@@ -16,8 +16,16 @@ FIXTURES = Path(__file__).parent / "fixtures"
 @pytest.fixture(autouse=True)
 def _no_real_arep(monkeypatch):
     """Unit tests never run the installed ``arep`` binary; rdma reads as unavailable."""
-    for module in ("maccluster.services.sync_transport", "maccluster.services.doctor_service"):
+    for module in (
+        "maccluster.services.sync_transport",
+        "maccluster.services.doctor_service",
+        "maccluster.services.status_service",
+    ):
         monkeypatch.setattr(f"{module}.arep_status_json", lambda *a, **k: None, raising=False)
+    # `status` also reads the real ~/Library/Logs sync-last.json; never in unit tests.
+    monkeypatch.setattr(
+        "maccluster.services.status_service.read_last_run", lambda *a, **k: None, raising=False
+    )
 
 
 @pytest.fixture(autouse=True)
