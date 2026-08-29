@@ -10,6 +10,7 @@ import pytest
 
 from maccluster.errors import CliError
 from maccluster.services.sync_rdma import (
+    manifest_lines,
     run_rdma_transfer,
     xfer_subprocess_runner,
 )
@@ -98,3 +99,55 @@ def test_default_runner_rejects_relative_arep_path(tmp_path: Path):
         xfer_subprocess_runner(
             ["sub/arep", "xfer"], stdin_text="", on_line=lambda s: None, timeout=5.0
         )
+
+
+# --- manifest: rel safety ------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "rel",
+    [
+        "/etc/passwd",
+        "../x",
+        "a/../b",
+        "a/..",
+        "..",
+        "a\x00b",
+        "a\nb",
+        "a\x1b[31mb",
+        "a\x7fb",
+        "",
+        ".",
+        "a/./b",
+        "a//b",
+        "a/",
+        "a\udcffb",
+    ],
+)
+def test_manifest_rejects_unsafe_rel(rel: str):
+    inv = {rel: FileMeta(mtime_ns=1, size=1)}
+    with pytest.raises(ValueError):
+        list(manifest_lines([rel], inv))
+
+
+def test_manifest_rejects_non_string_rel():
+    inv = {42: FileMeta(mtime_ns=1, size=1)}  # type: ignore[dict-item]
+    with pytest.raises(ValueError):
+        list(manifest_lines([42], inv))  # type: ignore[list-item]
+
+
+def test_manifest_accepts_unicode_spaces_and_dotfiles():
+    inv = {
+        "Desktop/ünï cödé.md": FileMeta(mtime_ns=1, size=1),
+        ".ssh/config": FileMeta(mtime_ns=1, size=1),
+        "a.b/c-d_e": FileMeta(mtime_ns=1, size=1),
+    }
+    assert len(list(manifest_lines(list(inv), inv))) == 3
+
+
+def test_run_unsafe_rel_never_spawns():
+    fake = FakeXfer([json.dumps({"event": "done", "bytes": 1})])
+    inv = {"../escape": FileMeta(mtime_ns=1, size=1)}
+    with pytest.raises(ValueError):
+        _run(fake, rels=["../escape"], inv=inv)
+    assert fake.argv == ()
