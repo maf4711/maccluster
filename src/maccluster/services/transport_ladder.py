@@ -192,14 +192,19 @@ def probe_transports(
 
     tb = False
     try:
-        ping = tb_ping or (
-            lambda ip: ctx.reachability.ping(ip, timeout=TIMEOUT_PING).state == ReachabilityState.UP
+        # Probe the TB rung by a TCP connect to SSH, not ICMP: a peer that
+        # filters ICMP (node-b does) but answers ssh on the bridge IP — where
+        # the ssh preflight and the whole remote inventory already ran — must
+        # not be skipped down to Wi-Fi (sync F6). An explicit tb_ping still wins.
+        probe = tb_ping or (
+            lambda ip: ctx.reachability.tcp_probe(ip, port=22, timeout=TIMEOUT_PING).state
+            == ReachabilityState.UP
         )
-        tb = bool(ping(str(node.ip)))
+        tb = bool(probe(str(node.ip)))
         if not tb:
-            detail["tb_reason"] = f"{node.ip} not reachable on bridge"
+            detail["tb_reason"] = f"{node.ip} not reachable on bridge (tcp/22)"
     except Exception as exc:
-        detail["tb_reason"] = f"ping failed: {exc}"
+        detail["tb_reason"] = f"tb probe failed: {exc}"
 
     wifi: str | None = None
     try:

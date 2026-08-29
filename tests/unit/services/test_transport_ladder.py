@@ -211,6 +211,32 @@ def test_probe_rdma_unavailable_when_arep_status_missing_or_raises(fake_ctx):
     assert p2.tb_reachable is True
 
 
+def test_probe_tb_reachable_via_ssh_port_when_icmp_is_filtered(fake_ctx):
+    # node-b drops ICMP (memory note) but answers SSH on the TB IP. The default
+    # tb probe must use a TCP connect to port 22, not ping, or the tb rung is
+    # skipped even though ssh (and the whole remote inventory) works (sync F6).
+    from maccluster.domain.enums import ReachabilityState
+
+    fake_ctx.reachability.states["10.42.0.2"] = ReachabilityState.DOWN  # ICMP filtered
+    fake_ctx.reachability.tcp_states["10.42.0.2"] = ReachabilityState.UP  # SSH answers
+    p = probe_transports(
+        NODE_B,
+        fake_ctx,
+        arep_status=lambda: AREP_STATUS,
+        wifi_target=lambda n: "u@b.local",
+    )
+    assert p.tb_reachable is True
+
+
+def test_probe_tb_unreachable_when_neither_icmp_nor_ssh_answers(fake_ctx):
+    from maccluster.domain.enums import ReachabilityState
+
+    fake_ctx.reachability.states["10.42.0.2"] = ReachabilityState.DOWN
+    fake_ctx.reachability.tcp_states["10.42.0.2"] = ReachabilityState.DOWN
+    p = probe_transports(NODE_B, fake_ctx, arep_status=lambda: AREP_STATUS, wifi_target=lambda n: None)
+    assert p.tb_reachable is False
+
+
 def test_probe_swallows_ping_and_wifi_errors(fake_ctx):
     def bad_ping(ip: str) -> bool:
         raise RuntimeError("ping exploded")
