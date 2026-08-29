@@ -13,6 +13,12 @@ os.environ.setdefault("MACCLUSTER_SKIP_PLATFORM_GUARD", "1")
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
+@pytest.fixture(autouse=True)
+def _isolated_bench_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """bench/speedtest append to a throughput history; never the real ~/.local/state."""
+    monkeypatch.setenv("MACCLUSTER_BENCH_HISTORY", str(tmp_path / "bench-history.jsonl"))
+
+
 @pytest.fixture
 def fixtures_dir() -> Path:
     return FIXTURES
