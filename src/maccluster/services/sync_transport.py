@@ -12,27 +12,30 @@ re-stat'ed and the plan recomputed, so nothing is transferred twice).
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from maccluster.app_factory import AppContext
-from maccluster.domain.models import DEFAULT_TRANSPORT_PRIORITY, TRANSPORT_NAMES, Node
+from maccluster.domain.models import DEFAULT_TRANSPORT_PRIORITY, TRANSPORT_NAMES
 from maccluster.errors import CliError
 from maccluster.render.progress import NullProgress, ProgressLike, format_bytes
 from maccluster.services.sync_rdma import run_rdma_transfer
 from maccluster.services.sync_replan import replan_remaining
+from maccluster.services.sync_transport_types import (
+    NO_TRANSFER,
+    RungResult,
+    TransferOutcome,
+    TransferPlan,
+    TransferTarget,
+    TransportChoice,
+)
 from maccluster.services.transport_ladder import (
     TransportFailed,
-    TransportProbe,
     arep_status_json,
     choose_transports,
+    clean_text,
     probe_transports,
 )
-
-if TYPE_CHECKING:
-    from maccluster.services.sync_service import FileMeta
 
 __all__ = [
     "NO_TRANSFER",
@@ -50,92 +53,7 @@ __all__ = [
 SshTransfer = Callable[..., tuple[int, str, str, int]]  # sync_service._transfer_push/_pull
 RdmaTransfer = Callable[..., int]  # sync_rdma.run_rdma_transfer
 _REASON_MAX = 160
-
-# --- data ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class TransportChoice:
-    """Rungs to try for one peer, in order; ``detail`` says why some are missing."""
-
-    rungs: tuple[str, ...]
-    detail: str = ""
-    probe: TransportProbe | None = None
-
-
-@dataclass(frozen=True)
-class TransferPlan:
-    """Output of ``plan_transfers`` (+ batch limits) for one peer."""
-
-    to_push: Sequence[str]
-    to_pull: Sequence[str]
-    push_sizes: Mapping[str, int]
-    pull_sizes: Mapping[str, int]
-    local_inv: Mapping[str, FileMeta]
-    remote_inv: Mapping[str, FileMeta]
-    policy: str = "newer"
-
-    @property
-    def push_bytes(self) -> int:
-        return sum(int(self.push_sizes.get(r, 0) or 0) for r in self.to_push)
-
-    @property
-    def pull_bytes(self) -> int:
-        return sum(int(self.pull_sizes.get(r, 0) or 0) for r in self.to_pull)
-
-    @property
-    def total_bytes(self) -> int:
-        return self.push_bytes + self.pull_bytes
-
-
-@dataclass(frozen=True)
-class TransferTarget:
-    """Where one peer's bytes go: TB ssh target (+bind) and the Wi-Fi fallback."""
-
-    node: Node
-    ssh_target: str  # target the inventory ran on (TB, or .local on the wifi pass)
-    bind_ip: str | None  # self TB IP for the tb rung; None on the wifi pass
-    wifi_target: str | None  # user@host.local for the wifi rung
-    local_home: Path
-    remote_home: str
-
-    def ssh_for(self, rung: str) -> tuple[str, str | None]:
-        """(ssh_target, bind_ip) for *rung*: wifi is never bound to the bridge."""
-        if rung == "wifi":
-            return (self.wifi_target or self.ssh_target), None
-        return self.ssh_target, self.bind_ip
-
-
-@dataclass(frozen=True)
-class TransferOutcome:
-    """What the ladder achieved for one peer (same shape ``sync_home`` reported before)."""
-
-    transport: str  # rung that ran last ("" when none was available)
-    push_rc: int
-    pull_rc: int
-    push_stdout: str = ""
-    pull_stdout: str = ""
-    push_stderr: str = ""
-    pull_stderr: str = ""
-    push_bytes_done: int = 0
-    pull_bytes_done: int = 0
-    downgrades: tuple[str, ...] = ()  # exact log lines, in order
-    messages: tuple[str, ...] = ()  # for SyncPeerResult.message
-
-
-NO_TRANSFER = TransferOutcome(transport="", push_rc=0, pull_rc=0)
-
-
-@dataclass
-class _Rung:
-    """Mutable per-rung result; ``reason`` set ⇒ the rung failed."""
-
-    push: tuple[int, str, str, int] = (0, "", "", 0)
-    pull: tuple[int, str, str, int] = (0, "", "", 0)
-    reason: str | None = None
-    moved: bool = False
-    push_done: bool = False
-    pull_done: bool = False
+_Rung = RungResult  # data types live in sync_transport_types (500-line limit)
 
 
 # --- helpers ---------------------------------------------------------------------------
@@ -163,14 +81,15 @@ def normalize_transport(transport: str | None) -> str | None:
 def _first_line(text: str) -> str:
     for line in (text or "").splitlines():
         if line.strip():
-            return line.strip()[:_REASON_MAX]
+            return clean_text(line, _REASON_MAX)
     return ""
 
 
 def _fail_reason(exc: BaseException) -> str:
+    """One printable, capped line for the downgrade log — never raw arep/ssh text."""
     if isinstance(exc, TransportFailed):
-        return exc.reason
-    return f"{type(exc).__name__}: {exc}"[:_REASON_MAX]
+        return clean_text(exc.reason, _REASON_MAX)
+    return clean_text(f"{type(exc).__name__}: {exc}", _REASON_MAX)
 
 
 def _tools(ctx: AppContext) -> tuple[str, str, str]:
@@ -211,11 +130,14 @@ def select_transports(
                 f"--transport {override} cannot be combined with the wifi pass", exit_code=2
             )
         return TransportChoice(rungs=("wifi",), detail="wifi pass")
+    # The inventory behind this plan already ran over target.ssh_target on the
+    # bridge, so tb is proven reachable; ICMP (often firewalled on a peer) must
+    # never veto the rung that just worked.
     probe = probe_transports(
         target.node,
         ctx,
         arep_status=arep_status or arep_status_json,
-        tb_ping=tb_ping,
+        tb_ping=tb_ping or (lambda _ip: True),
         wifi_target=lambda _node: target.wifi_target,
     )
     root_is_home = _rdma_root_is_home(target, home_dir)
@@ -379,9 +301,12 @@ def _run_rdma_rung(
             )
         except Exception as exc:
             r.reason = _fail_reason(exc)
+            # arep ran and died (partial) ⇒ bytes may be on the peer → re-stat first
+            r.moved = r.moved or bool(getattr(exc, "partial", False))
             setattr(r, direction, (1, "", r.reason, 0))
             return r
         base += moved
+        r.moved = r.moved or moved > 0  # a silent arep (no progress events) still moved bytes
         out = f"{direction}: {len(rels)} files ({format_bytes(moved)}) via rdma"
         setattr(r, direction, (0, out, "", moved))
         setattr(r, f"{direction}_done", True)
@@ -442,6 +367,9 @@ def run_transfer_ladder(
     prog: ProgressLike = progress if progress is not None else NullProgress()
     detail = choice.detail if isinstance(choice, TransportChoice) else ""
     rungs = tuple(choice.rungs) if isinstance(choice, TransportChoice) else tuple(choice)
+    unknown = [r for r in rungs if r not in TRANSPORT_NAMES]
+    if unknown:  # an unknown name would silently run as the tb ssh path
+        raise ValueError(f"unknown transport {unknown!r}")
     arep_node = (
         choice.probe.arep_node if isinstance(choice, TransportChoice) and choice.probe else None
     )

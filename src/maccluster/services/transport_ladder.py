@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import getpass
 import json
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -36,6 +37,7 @@ from maccluster.services.sync_wifi import wifi_ssh_target
 __all__ = [
     "AREP_BIN",
     "DEFAULT_TRANSPORT_PRIORITY",
+    "REASON_MAX",
     "TRANSPORT_NAMES",
     "TransportFailed",
     "TransportProbe",
@@ -43,20 +45,42 @@ __all__ = [
     "arep_process_runner",
     "arep_status_json",
     "choose_transports",
+    "clean_text",
     "probe_transports",
 ]
 
 AREP_BIN = "arep"
 AREP_TRUST_OK = "trusted"
+REASON_MAX = 200
+_CONTROL = {c: " " for c in range(0x20)} | {0x7F: None}
+# CSI (ESC [ … final), OSC (ESC ] … BEL / ST), then any other ESC sequence
+# (optional intermediates 0x20–0x2F, one final byte): charset designations etc.
+_ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[ -/]*[0-~]")
+
+
+def clean_text(text: object, limit: int = REASON_MAX) -> str:
+    """One line of printable text, at most *limit* chars — for anything arep or a
+    peer sends that ends up in the terminal or the run log (no escapes, no NUL)."""
+    if text is None:
+        return ""
+    flat = _ANSI_RE.sub("", str(text))
+    flat = " ".join(flat.translate(_CONTROL).split())
+    return flat[:limit]
 
 
 class TransportFailed(CliError):
-    """One rung of the ladder failed; the caller may downgrade to the next."""
+    """One rung of the ladder failed; the caller may downgrade to the next.
 
-    def __init__(self, transport: str, reason: str) -> None:
+    *partial* says the rung may already have moved bytes (arep ran and died);
+    the ladder then re-stats before the next rung instead of resending.
+    """
+
+    def __init__(self, transport: str, reason: str, *, partial: bool = False) -> None:
+        reason = clean_text(reason, REASON_MAX * 2)
         super().__init__(f"transport {transport} failed: {reason}", exit_code=1)
         self.transport = transport
         self.reason = reason
+        self.partial = partial
 
 
 @dataclass(frozen=True)
@@ -85,7 +109,7 @@ class TransportProbe:
         return tuple(n for n in DEFAULT_TRANSPORT_PRIORITY if self.is_available(n))
 
     def reason(self, name: str) -> str:
-        return str(self.detail.get(f"{name}_reason") or "unavailable")
+        return clean_text(self.detail.get(f"{name}_reason") or "unavailable")
 
 
 # --- arep status --------------------------------------------------------------------
@@ -120,13 +144,13 @@ def arep_peer_for_node(status: dict | None, node: Node) -> dict | None:
 
 
 def _rdma_capable(peer: dict) -> tuple[bool, str]:
-    trust = str(peer.get("trust") or "unknown")
-    caps_raw = peer.get("transportCapable")
-    caps = [str(c).lower() for c in caps_raw] if isinstance(caps_raw, list) else []
+    trust = clean_text(peer.get("trust") or "unknown", 40)
+    caps = _caps_list(peer)
     if trust != AREP_TRUST_OK:
         return False, f"arep peer trust={trust} (run arep pair)"
     if "rdma" not in caps:
-        return False, f"arep peer transportCapable={caps} lacks rdma (no link device to peer)"
+        shown = clean_text(caps, 60)
+        return False, f"arep peer transportCapable={shown} lacks rdma (no link device to peer)"
     return True, ""
 
 
@@ -158,9 +182,17 @@ def arep_status_json(
         return None
     try:
         data = json.loads(res.stdout)
-    except ValueError:
+    except (ValueError, RecursionError, TypeError):
         return None
     return data if isinstance(data, dict) else None
+
+
+def _caps_list(peer: dict) -> list[str]:
+    """``transportCapable`` as lower-cased strings; anything but a list is empty."""
+    raw = peer.get("transportCapable")
+    if not isinstance(raw, list):
+        return []
+    return [str(c).lower() for c in raw if isinstance(c, str | int | float | bool)]
 
 
 # --- probing -----------------------------------------------------------------------------
@@ -188,11 +220,12 @@ def probe_transports(
     if peer is None:
         detail.setdefault("rdma_reason", "arep status has no entry for this peer")
     else:
-        detail["arep_peer"] = str(peer.get("displayName") or "")
-        detail["arep_trust"] = str(peer.get("trust") or "")
-        detail["arep_transport_capable"] = list(peer.get("transportCapable") or [])
+        detail["arep_peer"] = clean_text(peer.get("displayName") or "", 80)
+        detail["arep_trust"] = clean_text(peer.get("trust") or "", 40)
+        detail["arep_transport_capable"] = [clean_text(c, 20) for c in _caps_list(peer)]
         # The value arep can resolve for --node: its Bonjour displayName, or the
-        # pinned fingerprint if the peer advertises no name.
+        # pinned fingerprint if the peer advertises no name (sync F7). Kept raw:
+        # sync_rdma validates it as an argv token before it reaches arep.
         arep_node = (
             str(peer.get("displayName") or "").strip()
             or str(peer.get("fingerprint") or "").strip()
