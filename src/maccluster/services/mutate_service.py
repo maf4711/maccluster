@@ -48,12 +48,14 @@ def ensure_local(ctx: AppContext, *, dry_run: bool = False) -> MutateResult:
             observed=observed,
         )
 
+        tb_links = sum(1 for p in tb.ports if p.link_state == LinkState.CONNECTED) if tb else 0
         result = MutateResult(
             actions=list(actions),
             interface=interface,
             ip=str(self_node.ip),
             already_configured=is_noop(actions),
-            tb_link_present=bool(tb and any(p.link_state == LinkState.CONNECTED for p in tb.ports)),
+            tb_link_present=tb_links > 0,
+            tb_links=tb_links,
             message=summarize(actions),
         )
 

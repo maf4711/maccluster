@@ -11,6 +11,9 @@
   `maccluster heal` on each peer over the TB bridge; missing remote CLI or
   required sudo is reported per-hop instead of failing the whole run
 - **`bench --mesh`**: sequential directed full-mesh iperf3 across all nodes
+- **`up` shows the TB link count**: `interface=bridge0 ip=… tb_links=2` — the
+  bridge is one interface, but you can now see how many cables actually carry
+  a live Mac↔Mac link (`MutateResult.tb_links`, also in `--json`)
 - **Thunderbolt Bridge must not kill Wi-Fi**: a `Router` left on the TB Bridge
   service made macOS prefer it as the default gateway and dropped internet;
   `up` / `heal` now strip that Router and reorder services Wi-Fi-first,

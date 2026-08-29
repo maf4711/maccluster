@@ -28,5 +28,5 @@ def run(ctx: AppContext, args) -> int:
         print(dumps("up", to_jsonable(result)))
     else:
         print(result.message)
-        print(f"interface={result.interface} ip={result.ip}")
+        print(f"interface={result.interface} ip={result.ip} tb_links={result.tb_links}")
     return OK
