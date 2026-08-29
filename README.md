@@ -37,7 +37,8 @@ make verify
 
 MacCluster runs entirely on the local Mac. It does not call remote LLM or SaaS
 APIs. Host tools used: `system_profiler`, `ioreg`, `ifconfig`, `networksetup`,
-`ping`, `launchctl` (and optional `iperf3` / `ssh` / `scp` / `ditto` for sync home).
+`ping`, `launchctl` (and optional `iperf3` / `ssh` / `scp` / `ditto` for sync home,
+optional `arep` — autoreplikator — for the RDMA sync rung).
 
 ## Configuration
 
@@ -60,6 +61,10 @@ maccluster config validate
 Schema field `schema_version = 1` is required. Config mode is `0600`. Symlink
 targets are refused for write/lock paths.
 
+Optional top-level key `transport_priority = ["rdma", "tb", "wifi"]` (the
+default) sets the order of the sync transport ladder — see
+[Transport ladder](#transport-ladder-rdma--tb--wifi).
+
 ## Commands
 
 | Command | Mutation | Notes |
@@ -75,7 +80,7 @@ targets are refused for write/lock paths.
 | `status` | no | Nodes + **mesh** (alive≠meshed) + TB + RDMA + heal heartbeat + TX/RX rates; `--exo` correlates local exo `:52415` |
 | `monitor` | no | Live refresh (`--interval`) with TX/RX Mb/s, pps, errors; Ctrl+C → exit 0 |
 | `topo` | no | Cable / topology map (no rewiring advice) |
-| `doctor` | no | Diagnostics (config, self, TB, cable, bridge, peers, **mesh**, RDMA, heal heartbeat); `--exo` optional. **`--host`**: RAM/load/disk/thermal/NTP. **`--host --fleet`**: same snapshot per peer over TB SSH, **including per-peer RDMA status** (`rdma:<node-id>`) |
+| `doctor` | no | Diagnostics (config, self, TB, cable, bridge, peers, **mesh**, RDMA incl. `rdma_no_device_to_peer` via `arep status`, heal heartbeat); `--exo` optional. **`--host`**: RAM/load/disk/thermal/NTP. **`--host --fleet`**: same snapshot per peer over TB SSH, **including per-peer RDMA status** (`rdma:<node-id>`) |
 | `bench` | no | Optional `iperf3` to a peer IP (bound to TB Self-IP) + **path quality** / retransmits. **`bench --mesh`**: sequential directed full-mesh on the TB bridge (`-B` both ends when SSH works). `--peer` filters; `--force` ignores the busy guard |
 | `speedtest` | no | TB **cable grade** (40G ideal) + iperf3 over bridge; also runs at start of `sync home` / `remote-install`. Honors the busy guard (exit 3) unless `--force` |
 | `service install\|uninstall\|status` | plist | User LaunchAgent → `heal --loop` |
@@ -83,8 +88,8 @@ targets are refused for write/lock paths.
 | `delta` | inventory → plan | **Precise deltas** across inventory peers (or `--peer` / `--limit N`): file-level counts+bytes, then optional `--apply` for difference-only sync. Not bulk. |
 | `pull` | files via SSH | Shortcut: two-way **Home + ~/Developer** (presets documents/desktop/downloads/developer/ssh/config). Same engine as `sync home`. |
 | `push` | files via SSH | Shortcut: **local → peer** Home + ~/Developer (same presets as `pull`). Use `--both` for two-way. |
-| `sync home` | files via SSH | Two-way **Home** via **Apple ditto** + CCC-inspired options (compare, presets, SafetyNet, verify, policies). See [`docs/SYNC-HOME.md`](docs/SYNC-HOME.md) |
-| `sync dev` | files via SSH | **MCPRT** (merge + cpr + TestFlight) on recent git repos, then two-way **`~/Developer`** via Apple ditto over TB plus those repos over Wi-Fi (`.local`). Alias: `sync developer` |
+| `sync home` | files via arep/SSH | Two-way **Home** over the transport ladder **`rdma` → `tb` → `wifi`** (arep RDMA, then Apple ditto over SSH) + CCC-inspired options (compare, presets, SafetyNet, verify, policies). `--transport` forces one rung. See [`docs/SYNC-HOME.md`](docs/SYNC-HOME.md) |
+| `sync dev` | files via arep/SSH | **MCPRT** (merge + cpr + TestFlight) on recent git repos, then two-way **`~/Developer`** over the same ladder plus those repos over Wi-Fi (`.local`). Alias: `sync developer` |
 | `remote-install` | peer install | Install wheel+config on peer over **TB bridge only** (`10.42.0.x`, BindAddress Self-IP). See [`docs/REMOTE-INSTALL.md`](docs/REMOTE-INSTALL.md) |
 | `ssh-config` | OpenSSH | Write `~/.ssh/config.d/maccluster` so `10.42.0.*` uses bridge BindAddress |
 | `keychain show\|push\|pull\|delete\|push-peer` | Keychain | Local store + TB `push-peer`. See [`docs/KEYCHAIN.md`](docs/KEYCHAIN.md) |
@@ -140,6 +145,35 @@ stubs** so the transfer cannot hang. True cloud-only files need online iCloud.
 
 Requires working SSH (`ssh-copy-id user@10.42.0.x`). Details: [`docs/SYNC-HOME.md`](docs/SYNC-HOME.md),
 SSH troubles: [`docs/PEER-SSH.md`](docs/PEER-SSH.md).
+
+### Transport ladder (`rdma` → `tb` → `wifi`)
+
+Planning is the same for every sync; the transfer stage tries the transports per
+peer in `transport_priority` order and steps down on failure:
+
+| Prio | Rung | Data path | Available when |
+|---|---|---|---|
+| 1 | `rdma` | `arep xfer push\|pull` (autoreplikator, RDMA on the TB link device, manifest on stdin) | `arep status --json`: peer `trusted` + `rdma` in `transportCapable` |
+| 2 | `tb` | ssh/scp/ditto to `10.42.0.x`, bound to the TB Self-IP | peer IP answers on `bridge0` |
+| 3 | `wifi` | ssh/scp/ditto to `user@host.local`, no bind | `*.local` hostname in `cluster.toml` |
+
+A failing rung logs exactly `transport downgrade <from>→<to>: <reason>`
+(e.g. `transport downgrade rdma→tb: arep exit 3: link lost`), both sides are
+re-stat'ed and the next rung carries only what is still missing. Peer rows show
+`transport=<rung>`; `--json` adds `peers[].transport`, `peers[].downgrades` and
+`transport_priority`. `--dry-run` never spawns arep.
+
+```bash
+maccluster sync home --transport rdma --peer node-b   # RDMA or fail (no downgrade)
+maccluster sync home --transport tb                    # classic ssh/ditto over the bridge
+maccluster sync dev  --transport wifi                  # whole tree over .local, no top-N pass
+maccluster doctor                                      # rdma_no_device_to_peer WARN if
+                                                       # RDMA is on but arep sees no peer
+```
+
+`arep` is optional; without it the ladder starts at `tb`. MacCluster never
+switches `rdma_ctl` (Recovery-OS only). Contract and details:
+[`docs/SYNC-HOME.md`](docs/SYNC-HOME.md#transport-ladder-rdma--tb--wifi).
 
 ### Live traffic (status / monitor)
 
