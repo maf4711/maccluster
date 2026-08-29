@@ -32,6 +32,23 @@ _EXPORTS: dict[str, tuple[str, ...]] = {
         "parse_inventory_text",
         "_remote_inventory",
     ),
+    "maccluster.services.sync_plan": (
+        "plan_transfers",
+        "apply_batch_limits",
+        "classify_compare",
+        "DeltaBucket",
+        "PreciseDelta",
+        "_bucket_from",
+        "precise_delta",
+        "format_precise_delta",
+        "SYNC_CHUNK_BYTES",
+        "SYNC_CHUNK_FILES",
+        "SYNC_LARGE_FILE_BYTES",
+        "_chunk_rels",
+        "_bytes_for_rels",
+        "_split_large_files",
+        "_sample_list",
+    ),
 }
 
 
