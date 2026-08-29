@@ -12,6 +12,15 @@ from maccluster.ports.process import ProcessRunnerPort
 
 _SPEED_RE = re.compile(r"([\d.]+)\s*Gb/s", re.I)
 
+# Bus-level Device Name is this Mac itself, never the peer.
+_GENERIC_MAC_NAMES = (
+    "mac mini",
+    "macbook pro",
+    "macbook air",
+    "mac pro",
+    "mac studio",
+)
+
 
 def parse_system_profiler_tb(text: str) -> ThunderboltSnapshot:
     """Parse SPThunderboltDataType text into a ThunderboltSnapshot."""
@@ -56,21 +65,9 @@ def parse_system_profiler_tb(text: str) -> ThunderboltSnapshot:
                 speed = None
 
         peer = current.get("device_name")
-        # Local Mac mini device name is not a peer
-        if peer and peer.lower() in (
-            "mac mini",
-            "macbook pro",
-            "macbook air",
-            "mac pro",
-            "mac studio",
-        ):
-            # Only treat as peer if Status indicates connected device that is not us
-            if link_state != LinkState.CONNECTED:
-                peer = None
-            else:
-                # Connected but Device Name is local host bus root — keep as None for unconnected
-                if "no device" in status:
-                    peer = None
+        # Bus-level Device Name is the local host, never the peer.
+        if peer and peer.lower() in _GENERIC_MAC_NAMES:
+            peer = None
 
         peer_mode = current.get("peer_mode") or current.get("mode")
         # Prefer concrete model (Mac16,11) over generic "Mac mini" bus label
@@ -90,6 +87,9 @@ def parse_system_profiler_tb(text: str) -> ThunderboltSnapshot:
                 bus_uid=current.get("uid"),
                 status_raw=current.get("status"),
                 peer_mode=peer_mode if link_state == LinkState.CONNECTED else None,
+                peer_domain_uuid=(
+                    current.get("peer_domain_uuid") if link_state == LinkState.CONNECTED else None
+                ),
             )
         )
         current = {}
@@ -98,7 +98,12 @@ def parse_system_profiler_tb(text: str) -> ThunderboltSnapshot:
         line = raw_line.strip()
         if not line:
             continue
-        if line.startswith("Device Name:"):
+        if line.startswith("Thunderbolt/USB4 Bus"):
+            # New bus block ends any open port (and its nested device block).
+            if current.get("receptacle") is not None or current.get("status") is not None:
+                flush()
+            current = {}
+        elif line.startswith("Device Name:"):
             val = line.split(":", 1)[1].strip()
             # Nested peer model under an already-open port (e.g. Mac16,11)
             if current.get("status") and current.get("receptacle"):
@@ -121,7 +126,13 @@ def parse_system_profiler_tb(text: str) -> ThunderboltSnapshot:
         elif line.startswith("UID:"):
             current["uid"] = line.split(":", 1)[1].strip()
         elif line.startswith("Domain UUID:"):
-            current["domain_uuid"] = line.split(":", 1)[1].strip()
+            val = line.split(":", 1)[1].strip()
+            # After the port's Status line we're in the nested attached-device
+            # block — its Domain UUID identifies the PEER port, not this bus.
+            if current.get("status"):
+                current["peer_domain_uuid"] = val
+            else:
+                current["domain_uuid"] = val
         elif line.startswith("Status:"):
             current["status"] = line.split(":", 1)[1].strip()
         elif line.startswith("Speed:"):
@@ -134,10 +145,10 @@ def parse_system_profiler_tb(text: str) -> ThunderboltSnapshot:
             # Nested peer device mode (Thunderbolt 3/4/5, USB4, …)
             current["peer_mode"] = line.split(":", 1)[1].strip()
         elif line.startswith("Vendor Name:"):
-            # new bus block — flush previous port if complete
-            if current.get("receptacle") is not None or current.get("status") is not None:
-                flush()
-            current = {}
+            # Inside an open port this introduces the nested attached-device
+            # block (the peer) — keep collecting. Otherwise it opens a bus.
+            if current.get("receptacle") is None and current.get("status") is None:
+                current = {}
         elif re.match(r"^Port:\s*$", line) or line == "Port:":
             pass
 

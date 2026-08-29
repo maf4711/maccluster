@@ -27,6 +27,7 @@ class Node:
     hw_uuid: str
     ssh_target: str | None = None
     role: NodeRole = NodeRole.UNKNOWN
+    tb_domain_uuids: tuple[str, ...] = ()
 
     def with_role(self, role: NodeRole) -> Node:
         return Node(
@@ -36,6 +37,7 @@ class Node:
             hw_uuid=self.hw_uuid,
             ssh_target=self.ssh_target,
             role=role,
+            tb_domain_uuids=self.tb_domain_uuids,
         )
 
 
@@ -65,6 +67,7 @@ class ThunderboltPort:
     bus_uid: str | None = None
     status_raw: str | None = None
     peer_mode: str | None = None  # e.g. "Thunderbolt 3", "USB4" from system_profiler
+    peer_domain_uuid: str | None = None  # Domain UUID of the peer port (nested device block)
 
 
 @dataclass(frozen=True)
