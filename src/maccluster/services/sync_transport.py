@@ -353,9 +353,12 @@ def _run_rdma_rung(
             )
         except Exception as exc:
             r.reason = _fail_reason(exc)
+            # arep ran and died (partial) ⇒ bytes may be on the peer → re-stat first
+            r.moved = r.moved or bool(getattr(exc, "partial", False))
             setattr(r, direction, (1, "", r.reason, 0))
             return r
         base += moved
+        r.moved = r.moved or moved > 0  # a silent arep (no progress events) still moved bytes
         out = f"{direction}: {len(rels)} files ({format_bytes(moved)}) via rdma"
         setattr(r, direction, (0, out, "", moved))
         setattr(r, f"{direction}_done", True)
