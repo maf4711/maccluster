@@ -117,8 +117,7 @@ def arep_peer_for_node(status: dict | None, node: Node) -> dict | None:
 
 def _rdma_capable(peer: dict) -> tuple[bool, str]:
     trust = str(peer.get("trust") or "unknown")
-    caps_raw = peer.get("transportCapable")
-    caps = [str(c).lower() for c in caps_raw] if isinstance(caps_raw, list) else []
+    caps = _caps_list(peer)
     if trust != AREP_TRUST_OK:
         return False, f"arep peer trust={trust} (run arep pair)"
     if "rdma" not in caps:
@@ -154,9 +153,17 @@ def arep_status_json(
         return None
     try:
         data = json.loads(res.stdout)
-    except ValueError:
+    except (ValueError, RecursionError, TypeError):
         return None
     return data if isinstance(data, dict) else None
+
+
+def _caps_list(peer: dict) -> list[str]:
+    """``transportCapable`` as lower-cased strings; anything but a list is empty."""
+    raw = peer.get("transportCapable")
+    if not isinstance(raw, list):
+        return []
+    return [str(c).lower() for c in raw if isinstance(c, str | int | float | bool)]
 
 
 # --- probing -----------------------------------------------------------------------------
@@ -185,7 +192,7 @@ def probe_transports(
     else:
         detail["arep_peer"] = str(peer.get("displayName") or "")
         detail["arep_trust"] = str(peer.get("trust") or "")
-        detail["arep_transport_capable"] = list(peer.get("transportCapable") or [])
+        detail["arep_transport_capable"] = _caps_list(peer)
         rdma, why = _rdma_capable(peer)
         if why:
             detail["rdma_reason"] = why
