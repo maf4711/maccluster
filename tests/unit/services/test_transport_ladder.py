@@ -278,7 +278,7 @@ def test_arep_status_json_none_on_any_failure(result):
 
 
 def test_arep_status_json_default_runner_allows_arep_basename():
-    # The project allowlist does not know `arep`; the ladder's own runner must.
+    # arep is on the shared allowlist since 5fcbbde; the ladder runner is the same set.
     from maccluster.services.transport_ladder import arep_process_runner
 
     runner = arep_process_runner()

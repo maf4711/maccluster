@@ -108,3 +108,31 @@ def test_transport_failed_partial_flag_and_clean_reason():
     assert "\x1b" not in dirty.reason and "bad" in dirty.reason
     assert len(dirty.reason) <= 400
     assert "\x1b" not in str(dirty)
+
+
+# --- allowlist scope: arep only, nothing wider ------------------------------------------------
+
+
+def test_shared_runner_allowlist_gains_exactly_arep():
+    from maccluster.adapters.process import ProcessRunner
+    from maccluster.constants import ALLOWLIST_BASENAMES
+    from maccluster.errors import CliError
+    from maccluster.services.transport_ladder import arep_process_runner
+
+    assert "arep" in ALLOWLIST_BASENAMES
+    assert arep_process_runner()._allowlist == ALLOWLIST_BASENAMES
+    for name in ("arep2", "arep ", "Arep", "sh", "python3", "curl", "arep/../sh", ""):
+        with pytest.raises(CliError) as ei:
+            ProcessRunner().resolve(name)
+        assert "allowlisted" in ei.value.message, name
+
+
+def test_shared_runner_refuses_non_arep_paths_via_prepare_argv():
+    from maccluster.adapters.process import ProcessRunner
+    from maccluster.errors import CliError
+
+    runner = ProcessRunner()
+    for argv in (["/tmp/x/sh", "-c", "true"], ["/tmp/x/python3"], ["/tmp/x/arep2"], []):
+        with pytest.raises(CliError):
+            runner._prepare_argv(argv)
+    assert runner._prepare_argv(["/opt/x/arep", "status"]) == ["/opt/x/arep", "status"]
