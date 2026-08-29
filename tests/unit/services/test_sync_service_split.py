@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+from pathlib import Path
 
 import pytest
 
@@ -79,3 +80,18 @@ def test_extracted_name_is_reexported_identically(module: str, name: str) -> Non
     mod = importlib.import_module(module)
     obj = getattr(mod, name)
     assert getattr(sync_service, name) is obj, f"{name} must be re-exported from sync_service"
+
+
+def _line_count(module: str) -> int:
+    path = Path(importlib.import_module(module).__file__)
+    return len(path.read_text(encoding="utf-8").splitlines())
+
+
+def test_sync_service_stays_under_1000_lines() -> None:
+    # CLAUDE.md: sync_service.py must not grow again; new logic goes into modules.
+    assert _line_count("maccluster.services.sync_service") < 1000
+
+
+@pytest.mark.parametrize("module", sorted(_EXPORTS))
+def test_extracted_module_stays_under_500_lines(module: str) -> None:
+    assert _line_count(module) < 500
