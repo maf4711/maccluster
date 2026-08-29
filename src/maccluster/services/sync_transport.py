@@ -1,17 +1,13 @@
 """Transfer stage of the sync ladder: try ``rdma`` → ``tb`` → ``wifi`` per peer.
 
-``sync_service.sync_home`` still does inventory and planning. This module owns
-what happens to one peer's plan afterwards:
-
-- ``select_transports`` asks the ladder (``transport_ladder``) which rungs are
-  usable for the peer, honouring ``--transport``;
-- ``run_transfer_ladder`` walks those rungs in order. ``rdma`` hands the plan
-  to ``arep xfer`` (``sync_rdma``); ``tb`` and ``wifi`` are the existing
-  ssh/scp/ditto push + pull (``tb`` bound to the bridge IP, ``wifi`` to the
-  ``*.local`` target, never bound). A rung that raises — or returns rc ≠ 0 —
-  logs exactly ``transport downgrade <from>→<to>: <reason>`` and the next rung
-  continues with the *remaining* files: after a partial run both sides are
-  re-stat'ed and the plan recomputed, so nothing is transferred twice.
+``sync_service.sync_home`` still does inventory and planning. ``select_transports``
+asks ``transport_ladder`` which rungs are usable (honouring ``--transport``);
+``run_transfer_ladder`` walks them in order — ``rdma`` hands the plan to
+``arep xfer`` (``sync_rdma``), ``tb``/``wifi`` are the existing ssh/scp/ditto
+push+pull (``tb`` bound to the bridge IP, ``wifi`` to ``*.local``, never bound).
+A rung that raises or returns rc ≠ 0 logs ``transport downgrade <from>→<to>:
+<reason>`` and the next rung continues with the *remaining* files (both sides are
+re-stat'ed and the plan recomputed, so nothing is transferred twice).
 """
 
 from __future__ import annotations
@@ -185,17 +181,11 @@ def _tools(ctx: AppContext) -> tuple[str, str, str]:
 
 
 def _rdma_root_is_home(target: TransferTarget, home_dir: Path | None) -> bool:
-    """rdma is safe only when the sync's local root is the machine's home:
-    ``arep xfer`` resolves every rel against ``$HOME`` on both ends, so a
-    ``sync dev`` (root ``~/Developer``) or ``--home <other>`` would make arep
-    read and write the wrong tree — and overwrite a same-named file under
-    ``$HOME`` that the sync never planned to touch (sync F8). The remote root is
-    the peer's ``$HOME`` too; refusing unless the local root is ``$HOME`` keeps
-    both ends aligned until ``arep xfer`` grows a validated ``--root``.
-    """
+    """rdma is safe only when the local sync root is the machine's ``$HOME``:
+    ``arep xfer`` resolves rels against ``$HOME`` on both ends, so a ``sync dev``
+    or ``--home <other>`` would read/write the wrong tree (sync F8)."""
     try:
-        home = (home_dir or Path.home()).resolve()
-        return Path(target.local_home).resolve() == home
+        return Path(target.local_home).resolve() == (home_dir or Path.home()).resolve()
     except OSError:
         return False
 
@@ -212,10 +202,8 @@ def select_transports(
     home_dir: Path | None = None,
 ) -> TransportChoice:
     """Ladder for one peer. The Wi-Fi pass (``via="wifi"``) is always just ``wifi``.
-
-    An *override* that is unavailable yields no rungs; ``detail`` carries the
-    reason so the peer row can show it. Never raises for probe failures.
-    """
+    An unavailable *override* yields no rungs (``detail`` says why); never raises
+    for probe failures."""
     override = normalize_transport(override)
     if via == "wifi":
         if override not in (None, "wifi"):
@@ -239,19 +227,17 @@ def select_transports(
         return TransportChoice(rungs=(), detail=exc.reason, probe=probe)
     except ValueError as exc:
         raise CliError(str(exc), exit_code=2) from exc
-    # rdma may have been offered by arep but is unusable because the tree root
-    # is not $HOME; drop it and say so, distinct from arep simply not offering it.
+    # rdma offered by arep but unusable because the tree root is not $HOME.
     stripped_for_root = not root_is_home and "rdma" in rungs
     if stripped_for_root:
         rungs = tuple(r for r in rungs if r != "rdma")
-    skipped: list[str] = []
-    for n in priority:
-        if n in rungs:
-            continue
-        if n == "rdma" and stripped_for_root:
-            skipped.append("rdma: tree root is not $HOME")
-        else:
-            skipped.append(f"{n}: {probe.reason(n)}")
+    skipped = [
+        "rdma: tree root is not $HOME"
+        if (n == "rdma" and stripped_for_root)
+        else f"{n}: {probe.reason(n)}"
+        for n in priority
+        if n not in rungs
+    ]
     return TransportChoice(rungs=rungs, detail="; ".join(skipped), probe=probe)
 
 
@@ -276,7 +262,7 @@ def _run_ssh_rung(
     stop_on_fail: bool,
 ) -> _Rung:
     """Existing ssh/scp/ditto path; ``tb`` binds the bridge IP, ``wifi`` never does."""
-    r = _Rung()
+    r, stage = _Rung(), "push"
     ssh_target, bind_ip = target.ssh_for(rung)
     abs_ditto, abs_ssh, abs_scp = _tools(ctx)
     common = dict(
@@ -294,10 +280,9 @@ def _run_ssh_rung(
         bind_ip=bind_ip,
     )
     prog.update(transport=rung)
-    stage = "push"  # which direction is in flight, so an exception is attributed right
     try:
         if not pull_only:
-            stage = "push"
+            stage = "push"  # which direction is in flight → correct exception attribution
             r.push = push(
                 ctx,
                 rels=list(plan.to_push),
@@ -334,9 +319,8 @@ def _run_ssh_rung(
     except Exception as exc:  # a broken rung must never abort the whole peer
         r.reason = _fail_reason(exc)
         r.moved = True  # unknown how far it got → re-stat before the next rung
-        # Attribute the failure to the direction that was actually in flight,
-        # not to push by default: under --pull-only the push step never ran, so
-        # a pull exception must land on pull, leaving push_rc at 0.
+        # Attribute to the direction in flight, not push by default: under
+        # --pull-only the push step never ran, so a pull error must land on pull.
         if stage == "pull":
             r.pull = (1, "", r.reason, r.pull[3])
         else:
@@ -356,11 +340,8 @@ def _run_rdma_rung(
     arep_node: str | None = None,
 ) -> _Rung:
     """Hand the plan to ``arep xfer push`` then ``pull``; progress feeds the bar.
-
-    ``arep_node`` is the name arep can resolve (its Bonjour displayName or the
-    pinned fingerprint); the cluster.toml id is not resolvable by arep, so it
-    is only a last-resort fallback (sync F7).
-    """
+    ``arep_node`` is the arep-resolvable name (displayName / fingerprint); the
+    cluster.toml id is only a last-resort fallback (sync F7)."""
     r = _Rung()
     node_arg = arep_node or target.node.id
     base = 0
@@ -461,8 +442,9 @@ def run_transfer_ladder(
     prog: ProgressLike = progress if progress is not None else NullProgress()
     detail = choice.detail if isinstance(choice, TransportChoice) else ""
     rungs = tuple(choice.rungs) if isinstance(choice, TransportChoice) else tuple(choice)
-    probe = choice.probe if isinstance(choice, TransportChoice) else None
-    arep_node = probe.arep_node if probe is not None else None
+    arep_node = (
+        choice.probe.arep_node if isinstance(choice, TransportChoice) and choice.probe else None
+    )
     if not rungs:
         msg = "no transport available" + (f": {detail}" if detail else "")
         prog.note(f"  {msg}")
