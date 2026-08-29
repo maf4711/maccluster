@@ -66,6 +66,10 @@ class TransportProbe:
     rdma_available: bool
     tb_reachable: bool
     wifi_target: str | None
+    # arep resolves ``--node`` against its peers' Bonjour displayName /
+    # fingerprint, never the cluster.toml id, so the rdma rung must use this
+    # (the matched peer's arep name) rather than ``node.id`` (sync F7).
+    arep_node: str | None = None
     detail: dict[str, Any] = field(default_factory=dict)
 
     def is_available(self, name: str) -> bool:
@@ -174,6 +178,7 @@ def probe_transports(
     detail: dict[str, Any] = {"tb_ip": str(node.ip)}
 
     rdma = False
+    arep_node: str | None = None
     try:
         status = (arep_status or arep_status_json)()
     except Exception as exc:
@@ -186,6 +191,9 @@ def probe_transports(
         detail["arep_peer"] = str(peer.get("displayName") or "")
         detail["arep_trust"] = str(peer.get("trust") or "")
         detail["arep_transport_capable"] = list(peer.get("transportCapable") or [])
+        # The value arep can resolve for --node: its Bonjour displayName, or the
+        # pinned fingerprint if the peer advertises no name.
+        arep_node = str(peer.get("displayName") or "").strip() or str(peer.get("fingerprint") or "").strip() or None
         rdma, why = _rdma_capable(peer)
         if why:
             detail["rdma_reason"] = why
@@ -215,7 +223,9 @@ def probe_transports(
     except Exception as exc:
         detail["wifi_reason"] = f"wifi target failed: {exc}"
 
-    return TransportProbe(rdma_available=rdma, tb_reachable=tb, wifi_target=wifi, detail=detail)
+    return TransportProbe(
+        rdma_available=rdma, tb_reachable=tb, wifi_target=wifi, arep_node=arep_node, detail=detail
+    )
 
 
 def choose_transports(

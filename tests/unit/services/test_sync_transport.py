@@ -174,6 +174,45 @@ def test_target_ssh_for_rung_uses_wifi_without_bind(tmp_path: Path):
     assert tgt.ssh_for("wifi") == ("a321@mac-mini-b.local", None)
 
 
+# --- arep --node must be resolvable by arep (sync F7) -----------------------------
+
+
+def test_rdma_rung_passes_an_arep_resolvable_node_not_the_cluster_id(fake_ctx, tmp_path: Path):
+    from maccluster.services.transport_ladder import TransportProbe
+
+    # arep matches --node against its peers' Bonjour displayName / fingerprint,
+    # never the cluster.toml id ("node-b"). The probe carries the matched peer's
+    # arep name; the rdma rung must pass THAT, or every rdma attempt times out
+    # and downgrades.
+    rdma = FakeRdma()
+    probe = TransportProbe(
+        rdma_available=True, tb_reachable=True, wifi_target=None, arep_node="mac-mini-b"
+    )
+    out = _run(
+        fake_ctx,
+        tmp_path,
+        [],
+        choice=TransportChoice(rungs=("rdma",), probe=probe),
+        rdma_xfer=rdma,
+    )
+    assert out.transport == "rdma"
+    assert rdma.calls, "the rdma rung must have run"
+    assert rdma.calls[0]["node_id"] == "mac-mini-b", "must be arep-resolvable, not 'node-b'"
+
+
+def test_probe_transports_records_the_arep_resolvable_node(fake_ctx):
+    from maccluster.services.transport_ladder import probe_transports
+
+    p = probe_transports(
+        NODE_B,
+        fake_ctx,
+        arep_status=lambda: AREP_STATUS,
+        tb_ping=lambda ip: True,
+        wifi_target=lambda n: None,
+    )
+    assert p.arep_node == "mac-mini-b"  # the peer's displayName in arep status
+
+
 # --- direction attribution on exceptions (sync F13) -------------------------------
 
 

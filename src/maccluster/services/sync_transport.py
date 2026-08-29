@@ -321,9 +321,16 @@ def _run_rdma_rung(
     rdma: RdmaTransfer,
     push_only: bool,
     pull_only: bool,
+    arep_node: str | None = None,
 ) -> _Rung:
-    """Hand the plan to ``arep xfer push`` then ``pull``; progress feeds the bar."""
+    """Hand the plan to ``arep xfer push`` then ``pull``; progress feeds the bar.
+
+    ``arep_node`` is the name arep can resolve (its Bonjour displayName or the
+    pinned fingerprint); the cluster.toml id is not resolvable by arep, so it
+    is only a last-resort fallback (sync F7).
+    """
     r = _Rung()
+    node_arg = arep_node or target.node.id
     base = 0
     steps = (
         ("push", () if pull_only else plan.to_push, plan.local_inv),
@@ -349,7 +356,7 @@ def _run_rdma_rung(
         try:
             moved = int(
                 rdma(
-                    node_id=target.node.id,
+                    node_id=node_arg,
                     direction=direction,
                     rels=list(rels),
                     inv=inv,
@@ -422,6 +429,8 @@ def run_transfer_ladder(
     prog: ProgressLike = progress if progress is not None else NullProgress()
     detail = choice.detail if isinstance(choice, TransportChoice) else ""
     rungs = tuple(choice.rungs) if isinstance(choice, TransportChoice) else tuple(choice)
+    probe = choice.probe if isinstance(choice, TransportChoice) else None
+    arep_node = probe.arep_node if probe is not None else None
     if not rungs:
         msg = "no transport available" + (f": {detail}" if detail else "")
         prog.note(f"  {msg}")
@@ -446,6 +455,7 @@ def run_transfer_ladder(
                 rdma=rdma,
                 push_only=push_only,
                 pull_only=pull_only,
+                arep_node=arep_node,
             )
         else:
             r = _run_ssh_rung(
