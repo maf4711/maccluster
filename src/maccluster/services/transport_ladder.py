@@ -36,6 +36,7 @@ from maccluster.services.sync_wifi import wifi_ssh_target
 __all__ = [
     "AREP_BIN",
     "DEFAULT_TRANSPORT_PRIORITY",
+    "REASON_MAX",
     "TRANSPORT_NAMES",
     "TransportFailed",
     "TransportProbe",
@@ -43,20 +44,38 @@ __all__ = [
     "arep_process_runner",
     "arep_status_json",
     "choose_transports",
+    "clean_text",
     "probe_transports",
 ]
 
 AREP_BIN = "arep"
 AREP_TRUST_OK = "trusted"
+REASON_MAX = 200
+_CONTROL = {c: " " for c in range(0x20)} | {0x7F: None}
+
+
+def clean_text(text: object, limit: int = REASON_MAX) -> str:
+    """One line of printable text, at most *limit* chars — for anything arep or a
+    peer sends that ends up in the terminal or the run log (no escapes, no NUL)."""
+    if text is None:
+        return ""
+    flat = " ".join(str(text).translate(_CONTROL).split())
+    return flat[:limit]
 
 
 class TransportFailed(CliError):
-    """One rung of the ladder failed; the caller may downgrade to the next."""
+    """One rung of the ladder failed; the caller may downgrade to the next.
 
-    def __init__(self, transport: str, reason: str) -> None:
+    *partial* says the rung may already have moved bytes (arep ran and died);
+    the ladder then re-stats before the next rung instead of resending.
+    """
+
+    def __init__(self, transport: str, reason: str, *, partial: bool = False) -> None:
+        reason = clean_text(reason, REASON_MAX * 2)
         super().__init__(f"transport {transport} failed: {reason}", exit_code=1)
         self.transport = transport
         self.reason = reason
+        self.partial = partial
 
 
 @dataclass(frozen=True)
@@ -81,7 +100,7 @@ class TransportProbe:
         return tuple(n for n in DEFAULT_TRANSPORT_PRIORITY if self.is_available(n))
 
     def reason(self, name: str) -> str:
-        return str(self.detail.get(f"{name}_reason") or "unavailable")
+        return clean_text(self.detail.get(f"{name}_reason") or "unavailable")
 
 
 # --- arep status --------------------------------------------------------------------
@@ -116,12 +135,13 @@ def arep_peer_for_node(status: dict | None, node: Node) -> dict | None:
 
 
 def _rdma_capable(peer: dict) -> tuple[bool, str]:
-    trust = str(peer.get("trust") or "unknown")
+    trust = clean_text(peer.get("trust") or "unknown", 40)
     caps = _caps_list(peer)
     if trust != AREP_TRUST_OK:
         return False, f"arep peer trust={trust} (run arep pair)"
     if "rdma" not in caps:
-        return False, f"arep peer transportCapable={caps} lacks rdma (no link device to peer)"
+        shown = clean_text(caps, 60)
+        return False, f"arep peer transportCapable={shown} lacks rdma (no link device to peer)"
     return True, ""
 
 
@@ -190,9 +210,9 @@ def probe_transports(
     if peer is None:
         detail.setdefault("rdma_reason", "arep status has no entry for this peer")
     else:
-        detail["arep_peer"] = str(peer.get("displayName") or "")
-        detail["arep_trust"] = str(peer.get("trust") or "")
-        detail["arep_transport_capable"] = _caps_list(peer)
+        detail["arep_peer"] = clean_text(peer.get("displayName") or "", 80)
+        detail["arep_trust"] = clean_text(peer.get("trust") or "", 40)
+        detail["arep_transport_capable"] = [clean_text(c, 20) for c in _caps_list(peer)]
         rdma, why = _rdma_capable(peer)
         if why:
             detail["rdma_reason"] = why

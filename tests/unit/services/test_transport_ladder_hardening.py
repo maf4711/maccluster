@@ -10,7 +10,9 @@ import pytest
 from maccluster.domain.models import Node
 from maccluster.ports.process import ProcessResult
 from maccluster.services.transport_ladder import (
+    TransportFailed,
     arep_status_json,
+    clean_text,
     probe_transports,
 )
 
@@ -61,3 +63,48 @@ def test_arep_status_json_none_on_pathological_stdout():
     assert out is None or isinstance(out, dict)
     out2 = arep_status_json(runner=_FakeRunner(ProcessResult(("arep",), 0, "\x00\x01", "")))
     assert out2 is None
+
+
+def test_probe_reasons_are_sanitized(fake_ctx):
+    status = {
+        "peers": [
+            {
+                "displayName": "mac-mini-b",
+                "trust": "\x1b[31munpaired\x1b[0m" + "z" * 1000,
+                "transportCapable": ["tcp"],
+            }
+        ]
+    }
+    probe = probe_transports(
+        NODE_B,
+        fake_ctx,
+        arep_status=lambda: status,
+        tb_ping=lambda ip: True,
+        wifi_target=lambda n: None,
+    )
+    reason = probe.reason("rdma")
+    assert "\x1b" not in reason
+    assert "unpaired" in reason
+    assert len(reason) <= 200
+    assert "\x1b" not in probe.detail["arep_trust"]
+
+
+# --- clean_text / TransportFailed ----------------------------------------------------------
+
+
+def test_clean_text_strips_control_chars_and_caps():
+    assert clean_text("a\x1b[31mb\x00c\nd\te", 100) == "a [31mb c d e"
+    assert clean_text("x" * 500, 40) == "x" * 40
+    assert clean_text(None, 10) == ""
+    assert clean_text("ünï", 10) == "ünï"
+    assert clean_text(["rdma", "tcp"], 40) == "['rdma', 'tcp']"
+
+
+def test_transport_failed_partial_flag_and_clean_reason():
+    exc = TransportFailed("rdma", "x")
+    assert exc.partial is False
+    assert TransportFailed("rdma", "x", partial=True).partial is True
+    dirty = TransportFailed("rdma", "\x1b[31mbad\x1b[0m " + "y" * 5000)
+    assert "\x1b" not in dirty.reason and "bad" in dirty.reason
+    assert len(dirty.reason) <= 400
+    assert "\x1b" not in str(dirty)
