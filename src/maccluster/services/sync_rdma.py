@@ -34,11 +34,31 @@ if TYPE_CHECKING:
 
 __all__ = [
     "XferRunner",
+    "is_denied_rel",
     "manifest_lines",
     "manifest_text",
     "run_rdma_transfer",
     "xfer_subprocess_runner",
 ]
+
+
+def is_denied_rel(rel: str) -> bool:
+    """True when arep's directed mode would refuse *rel* (its secrets/state
+    deny-list): a basename of ``.env`` / ``.env.*`` / ``*.key`` /
+    ``credentials.json``, or anything under ``.autoreplikator/``. arep aborts
+    the whole session on the first such rel, so maccluster drops them from the
+    manifest before handing it over — a single ``.env`` in a dev tree must not
+    kill the rdma rung, and the secret must never be sent at all. Matched
+    case-insensitively, like arep's APFS-aware classifier.
+    """
+    norm = rel.replace("\\", "/").strip("/").lower()
+    if not norm:
+        return False
+    parts = norm.split("/")
+    if parts[0] == ".autoreplikator":
+        return True
+    base = parts[-1]
+    return base == ".env" or base.startswith(".env.") or base.endswith(".key") or base == "credentials.json"
 
 Direction = Literal["push", "pull"]
 ProgressCb = Callable[[int, int], None]  # (bytes_done, bytes_total)
@@ -233,7 +253,10 @@ def run_rdma_transfer(
     """
     if direction not in ("push", "pull"):
         raise ValueError(f"direction must be push|pull, got {direction!r}")
-    rels = list(rels)
+    # Drop rels arep's deny-list would reject: sending even one would abort the
+    # whole directed session (invalid-path), and these are secrets that must not
+    # be transferred anyway (sync F10). Silently skipped, not an error.
+    rels = [r for r in rels if not is_denied_rel(r)]
     if not rels:
         return 0
     manifest = manifest_text(rels, inv)  # KeyError here, before anything is spawned

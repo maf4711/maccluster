@@ -127,6 +127,50 @@ def test_run_rejects_bad_direction():
         )
 
 
+def test_denied_secret_rels_are_filtered_before_arep_and_not_transferred():
+    # arep's directed mode aborts the whole session on a denied rel (.env,
+    # *.key, credentials.json, .autoreplikator/…). maccluster must drop those
+    # from the manifest itself so one secret cannot kill the rdma rung — and so
+    # the secret is never handed to arep at all (sync F10).
+    inv = {
+        "app/.env": FileMeta(mtime_ns=1, size=5),
+        "app/server.key": FileMeta(mtime_ns=2, size=6),
+        "app/credentials.json": FileMeta(mtime_ns=3, size=7),
+        ".autoreplikator/trust.json": FileMeta(mtime_ns=4, size=8),
+        "app/main.py": FileMeta(mtime_ns=5, size=9),
+    }
+    fake = FakeXfer([_ev(event="done", bytes=9)])
+    out = run_rdma_transfer(
+        node_id="node-b",
+        direction="push",
+        rels=list(inv),
+        inv=inv,
+        arep_bin="arep",
+        on_progress=lambda d, t: None,
+        runner=fake,
+    )
+    # Only the ordinary file reached arep's manifest.
+    sent_rels = [json.loads(line)["rel"] for line in fake.stdin.splitlines() if line.strip()]
+    assert sent_rels == ["app/main.py"]
+    assert out == 9
+
+
+def test_all_rels_denied_is_a_noop_without_spawning():
+    inv = {"a/.env": FileMeta(mtime_ns=1, size=5), "b/x.key": FileMeta(mtime_ns=2, size=6)}
+    fake = FakeXfer([_ev(event="done", bytes=999)])
+    out = run_rdma_transfer(
+        node_id="node-b",
+        direction="push",
+        rels=list(inv),
+        inv=inv,
+        arep_bin="arep",
+        on_progress=lambda d, t: None,
+        runner=fake,
+    )
+    assert out == 0
+    assert fake.argv == ()  # nothing to send → arep never spawned
+
+
 def test_run_empty_rels_does_not_spawn():
     fake = FakeXfer([_ev(event="done", bytes=999)])
     out = run_rdma_transfer(
