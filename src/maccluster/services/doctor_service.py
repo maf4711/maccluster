@@ -13,6 +13,7 @@ from maccluster.health.mesh import build_mesh_health
 from maccluster.services.config_service import load_and_bind_self, load_config
 from maccluster.services.heal_heartbeat import read_heartbeat
 from maccluster.services.tb_service import probe_tb
+from maccluster.services.transport_ladder import arep_status_json
 
 
 def run_doctor(
@@ -105,6 +106,13 @@ def run_doctor(
     except Exception:
         rdma = None
     findings.append(checks.check_rdma(rdma))
+    arep_peers: list[dict] = []
+    if rdma is not None and rdma.enabled is True:
+        # Only worth asking arep when the OS has RDMA on; never raises.
+        status = arep_status_json(runner=ctx.runner)
+        raw = status.get("peers") if isinstance(status, dict) else None
+        arep_peers = [p for p in raw if isinstance(p, dict)] if isinstance(raw, list) else []
+    findings.append(checks.check_rdma_device_to_peer(rdma, arep_peers))
 
     service_installed = False
     try:
