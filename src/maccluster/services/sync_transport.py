@@ -32,6 +32,7 @@ from maccluster.services.transport_ladder import (
     TransportProbe,
     arep_status_json,
     choose_transports,
+    clean_text,
     probe_transports,
 )
 
@@ -167,14 +168,15 @@ def normalize_transport(transport: str | None) -> str | None:
 def _first_line(text: str) -> str:
     for line in (text or "").splitlines():
         if line.strip():
-            return line.strip()[:_REASON_MAX]
+            return clean_text(line, _REASON_MAX)
     return ""
 
 
 def _fail_reason(exc: BaseException) -> str:
+    """One printable, capped line for the downgrade log — never raw arep/ssh text."""
     if isinstance(exc, TransportFailed):
-        return exc.reason
-    return f"{type(exc).__name__}: {exc}"[:_REASON_MAX]
+        return clean_text(exc.reason, _REASON_MAX)
+    return clean_text(f"{type(exc).__name__}: {exc}", _REASON_MAX)
 
 
 def _tools(ctx: AppContext) -> tuple[str, str, str]:
@@ -422,6 +424,9 @@ def run_transfer_ladder(
     prog: ProgressLike = progress if progress is not None else NullProgress()
     detail = choice.detail if isinstance(choice, TransportChoice) else ""
     rungs = tuple(choice.rungs) if isinstance(choice, TransportChoice) else tuple(choice)
+    unknown = [r for r in rungs if r not in TRANSPORT_NAMES]
+    if unknown:  # an unknown name would silently run as the tb ssh path
+        raise ValueError(f"unknown transport {unknown!r}")
     if not rungs:
         msg = "no transport available" + (f": {detail}" if detail else "")
         prog.note(f"  {msg}")

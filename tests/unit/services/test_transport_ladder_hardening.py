@@ -93,7 +93,8 @@ def test_probe_reasons_are_sanitized(fake_ctx):
 
 
 def test_clean_text_strips_control_chars_and_caps():
-    assert clean_text("a\x1b[31mb\x00c\nd\te", 100) == "a [31mb c d e"
+    assert clean_text("a\x1b[31mb\x00c\nd\te", 100) == "ab c d e"
+    assert clean_text("\x1b]0;title\x07x\x1b(By", 20) == "xy"
     assert clean_text("x" * 500, 40) == "x" * 40
     assert clean_text(None, 10) == ""
     assert clean_text("ünï", 10) == "ünï"

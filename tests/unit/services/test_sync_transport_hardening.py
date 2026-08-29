@@ -7,6 +7,8 @@ from collections.abc import Sequence
 from ipaddress import IPv4Address
 from pathlib import Path
 
+import pytest
+
 from maccluster.domain.enums import ReachabilityState
 from maccluster.domain.models import Node
 from maccluster.ports.process import ProcessResult
@@ -190,3 +192,51 @@ def test_select_transports_keeps_tb_when_icmp_ping_fails(fake_ctx, tmp_path: Pat
         arep_status=lambda: None,
     )
     assert forced.rungs == ("tb",)
+
+
+# --- reason hygiene / rung validation ------------------------------------------------------
+
+
+def test_downgrade_reason_is_capped_and_sanitized(fake_ctx, tmp_path: Path):
+    home, inv = _home_with(tmp_path, {"a.txt": b"aaaaa"})
+    plan = TransferPlan(("a.txt",), (), {"a.txt": 5}, {}, inv, {})
+    prog = NoteProgress()
+
+    def rdma(**kw) -> int:
+        raise TransportFailed("rdma", "\x1b[31mbad\x1b[0m " + "y" * 5000)
+
+    out = run_transfer_ladder(
+        fake_ctx,
+        choice=TransportChoice(rungs=("rdma", "tb")),
+        plan=plan,
+        target=_target(home),
+        dry_run=False,
+        timeout=60.0,
+        work=tmp_path / "work",
+        progress=prog,
+        ssh_push=FakeSsh(),
+        ssh_pull=FakeSsh(),
+        rdma_xfer=rdma,
+    )
+    line = out.downgrades[0]
+    assert line.startswith("transport downgrade rdma→tb: bad")
+    assert "\x1b" not in line
+    assert len(line) < 260
+    assert line in prog.notes
+
+
+def test_run_transfer_ladder_rejects_unknown_rung(fake_ctx, tmp_path: Path):
+    home, inv = _home_with(tmp_path, {"a.txt": b"aaaaa"})
+    plan = TransferPlan(("a.txt",), (), {"a.txt": 5}, {}, inv, {})
+    with pytest.raises(ValueError):
+        run_transfer_ladder(
+            fake_ctx,
+            choice=("usb",),
+            plan=plan,
+            target=_target(home),
+            dry_run=True,
+            timeout=60.0,
+            work=tmp_path / "work",
+            ssh_push=FakeSsh(),
+            ssh_pull=FakeSsh(),
+        )

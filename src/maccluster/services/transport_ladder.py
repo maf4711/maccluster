@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import getpass
 import json
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -52,6 +53,9 @@ AREP_BIN = "arep"
 AREP_TRUST_OK = "trusted"
 REASON_MAX = 200
 _CONTROL = {c: " " for c in range(0x20)} | {0x7F: None}
+# CSI (ESC [ … final), OSC (ESC ] … BEL / ST), then any other ESC sequence
+# (optional intermediates 0x20–0x2F, one final byte): charset designations etc.
+_ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[ -/]*[0-~]")
 
 
 def clean_text(text: object, limit: int = REASON_MAX) -> str:
@@ -59,7 +63,8 @@ def clean_text(text: object, limit: int = REASON_MAX) -> str:
     peer sends that ends up in the terminal or the run log (no escapes, no NUL)."""
     if text is None:
         return ""
-    flat = " ".join(str(text).translate(_CONTROL).split())
+    flat = _ANSI_RE.sub("", str(text))
+    flat = " ".join(flat.translate(_CONTROL).split())
     return flat[:limit]
 
 
