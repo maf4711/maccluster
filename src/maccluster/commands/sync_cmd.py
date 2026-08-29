@@ -56,12 +56,17 @@ def _render_plain(result) -> str:
         lines.append(f"apfs_snapshot={result.apfs_snapshot}")
     for p in result.peers:
         status = "OK" if p.ok else "FAIL"
+        transport = getattr(p, "transport", "")
+        tp = f" transport={transport}" if transport else ""
         lines.append(
             f"  [{status}] {p.peer_id} ({p.peer_ip}) via {p.ssh_target} "
-            f"[{getattr(p, 'via', 'tb')}]  "
+            f"[{getattr(p, 'via', 'tb')}]{tp}  "
             f"push={p.push_files}/{p.push_bytes}B pull={p.pull_files}/{p.pull_bytes}B  "
             f"rc={p.push_rc}/{p.pull_rc}  {p.message}"
         )
+        for row in getattr(p, "downgrades", ()):
+            if row not in p.message:
+                lines.append(f"    {row}")
         if result.compare_only or result.dry_run:
             lines.append(
                 f"    stats: only_local={p.only_local} only_remote={p.only_remote} "
@@ -146,8 +151,11 @@ def run(ctx: AppContext, args) -> int:
     wifi_only = bool(getattr(args, "wifi_only", False))
     if wifi_top < 0:
         raise CliError("--wifi-top must be >= 0", exit_code=2)
+    # --transport forces one rung for the whole tree: a single pass, no Wi-Fi top-N.
+    transport = getattr(args, "transport", None)
 
     kwargs = dict(
+        transport=transport,
         dry_run=bool(getattr(args, "dry_run", False)),
         compare_only=bool(getattr(args, "compare", False)),
         peer=getattr(args, "peer", None),
@@ -184,7 +192,7 @@ def run(ctx: AppContext, args) -> int:
     )
 
     run_tb = not wifi_only
-    run_wifi = action == "dev" and not no_wifi and wifi_top > 0
+    run_wifi = action == "dev" and not no_wifi and wifi_top > 0 and transport is None
     wifi_repos: tuple[str, ...] = ()
     if run_wifi:
         wifi_repos = list_recent_repos(tree, limit=wifi_top)

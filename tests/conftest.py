@@ -13,6 +13,13 @@ os.environ.setdefault("MACCLUSTER_SKIP_PLATFORM_GUARD", "1")
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
+@pytest.fixture(autouse=True)
+def _no_real_arep(monkeypatch):
+    """Unit tests never run the installed ``arep`` binary; rdma reads as unavailable."""
+    for module in ("maccluster.services.sync_transport", "maccluster.services.doctor_service"):
+        monkeypatch.setattr(f"{module}.arep_status_json", lambda *a, **k: None, raising=False)
+
+
 @pytest.fixture
 def fixtures_dir() -> Path:
     return FIXTURES

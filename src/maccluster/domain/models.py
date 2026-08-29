@@ -305,6 +305,8 @@ class SyncPeerResult:
     free_bytes_remote: int | None = None
     truncated: bool = False  # batch limit hit
     via: str = "tb"  # tb | wifi
+    transport: str = ""  # rung that moved the bytes: rdma | tb | wifi ("" = none ran)
+    downgrades: tuple[str, ...] = ()  # "transport downgrade a→b: reason" lines
 
 
 @dataclass(frozen=True)
@@ -329,6 +331,7 @@ class SyncHomeResult:
     target: str = "home"  # home | dev
     wifi_repos: tuple[str, ...] = ()  # recent git repos on the Wi-Fi pass
     mcprt: McprtResult | None = None
+    transport_priority: tuple[str, ...] = ()  # ladder order this run used
 
     @property
     def ok(self) -> bool:

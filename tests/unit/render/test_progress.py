@@ -87,3 +87,19 @@ def test_progress_draws_percent():
     assert "Documents/a.txt" in text or "a.txt" in text
     p.finish("done")
     assert "done" in buf.getvalue()
+
+
+def test_progress_renders_transport_tag():
+    from maccluster.render.progress import NullProgress
+
+    buf = io.StringIO()
+    p = SyncProgress(enabled=True, stream=buf, force=True, min_interval_s=0)
+    p.phase("transfer", direction="push", detail="node-b", transport="rdma")
+    p.update(bytes_done=10, bytes_total=100, force=True)
+    text = buf.getvalue()
+    assert "transport=rdma" in text
+    # tb pass after a downgrade replaces the tag
+    p.update(transport="tb", force=True)
+    assert "transport=tb" in buf.getvalue()
+    NullProgress().phase("transfer", direction="pull", transport="rdma")
+    NullProgress().update(transport="rdma")
