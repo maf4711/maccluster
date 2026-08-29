@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -253,3 +255,79 @@ def test_run_non_positive_timeout_falls_back_to_default(timeout: float):
     fake = FakeXfer([json.dumps({"event": "done", "bytes": 10})])
     _run(fake, timeout=timeout)
     assert fake.timeout == TIMEOUT_SYNC
+
+
+# --- default runner: process hygiene ---------------------------------------------------------
+
+
+def _script(tmp_path: Path, body: str) -> str:
+    script = tmp_path / "arep"
+    script.write_text("#!/bin/sh\n" + body)
+    script.chmod(0o755)
+    return str(script)
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def _wait_gone(pid: int, seconds: float = 5.0) -> bool:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if not _alive(pid):
+            return True
+        time.sleep(0.05)
+    return not _alive(pid)
+
+
+def test_default_runner_caps_overlong_lines(tmp_path: Path):
+    script = _script(
+        tmp_path,
+        "head -c 3000000 /dev/zero | tr '\\0' 'x'\n"
+        "echo\n"
+        'echo "{\\"event\\":\\"done\\",\\"bytes\\":7}"\n',
+    )
+    lines: list[str] = []
+    rc, _ = xfer_subprocess_runner([script], stdin_text="", on_line=lines.append, timeout=30.0)
+    assert rc == 0
+    assert max(len(line) for line in lines) < 1_000_000
+    assert json.loads(lines[-1])["bytes"] == 7
+
+
+def test_default_runner_kills_child_when_on_line_raises(tmp_path: Path):
+    pid_file = tmp_path / "pid"
+    script = _script(tmp_path, f"echo $$ > {pid_file}\necho hello\nsleep 20\n")
+
+    def explode(_line: str) -> None:
+        raise RuntimeError("consumer broke")
+
+    t0 = time.monotonic()
+    with pytest.raises(RuntimeError):
+        xfer_subprocess_runner([script], stdin_text="", on_line=explode, timeout=30.0)
+    assert time.monotonic() - t0 < 10.0
+    pid = int(pid_file.read_text().strip())
+    assert _wait_gone(pid)
+
+
+def test_default_runner_timeout_kills_grandchildren(tmp_path: Path):
+    pid_file = tmp_path / "pid"
+    script = _script(tmp_path, f"sh -c 'echo $$ > {pid_file}; sleep 8' &\nwait\n")
+    t0 = time.monotonic()
+    rc, _ = xfer_subprocess_runner([script], stdin_text="", on_line=lambda s: None, timeout=0.5)
+    assert rc == 124
+    assert time.monotonic() - t0 < 4.0
+    assert _wait_gone(int(pid_file.read_text().strip()))
+
+
+def test_default_runner_encodes_manifest_before_spawn(tmp_path: Path):
+    pid_file = tmp_path / "pid"
+    script = _script(tmp_path, f"echo $$ > {pid_file}\ncat > /dev/null\nexit 0\n")
+    with pytest.raises((CliError, ValueError)):
+        xfer_subprocess_runner(
+            [script], stdin_text="bad \udcff surrogate\n", on_line=lambda s: None, timeout=5.0
+        )
+    assert not pid_file.exists()
