@@ -184,6 +184,22 @@ def _tools(ctx: AppContext) -> tuple[str, str, str]:
 # --- selection -------------------------------------------------------------------------
 
 
+def _rdma_root_is_home(target: TransferTarget, home_dir: Path | None) -> bool:
+    """rdma is safe only when the sync's local root is the machine's home:
+    ``arep xfer`` resolves every rel against ``$HOME`` on both ends, so a
+    ``sync dev`` (root ``~/Developer``) or ``--home <other>`` would make arep
+    read and write the wrong tree — and overwrite a same-named file under
+    ``$HOME`` that the sync never planned to touch (sync F8). The remote root is
+    the peer's ``$HOME`` too; refusing unless the local root is ``$HOME`` keeps
+    both ends aligned until ``arep xfer`` grows a validated ``--root``.
+    """
+    try:
+        home = (home_dir or Path.home()).resolve()
+        return Path(target.local_home).resolve() == home
+    except OSError:
+        return False
+
+
 def select_transports(
     target: TransferTarget,
     ctx: AppContext,
@@ -193,6 +209,7 @@ def select_transports(
     override: str | None = None,
     arep_status: Callable[[], dict | None] | None = None,
     tb_ping: Callable[[str], bool] | None = None,
+    home_dir: Path | None = None,
 ) -> TransportChoice:
     """Ladder for one peer. The Wi-Fi pass (``via="wifi"``) is always just ``wifi``.
 
@@ -213,13 +230,28 @@ def select_transports(
         tb_ping=tb_ping,
         wifi_target=lambda _node: target.wifi_target,
     )
+    root_is_home = _rdma_root_is_home(target, home_dir)
+    if not root_is_home and override == "rdma":
+        return TransportChoice(rungs=(), detail="rdma: tree root is not $HOME", probe=probe)
     try:
         rungs = tuple(choose_transports(probe, tuple(priority), override))
     except TransportFailed as exc:
         return TransportChoice(rungs=(), detail=exc.reason, probe=probe)
     except ValueError as exc:
         raise CliError(str(exc), exit_code=2) from exc
-    skipped = [f"{n}: {probe.reason(n)}" for n in priority if n not in rungs]
+    # rdma may have been offered by arep but is unusable because the tree root
+    # is not $HOME; drop it and say so, distinct from arep simply not offering it.
+    stripped_for_root = not root_is_home and "rdma" in rungs
+    if stripped_for_root:
+        rungs = tuple(r for r in rungs if r != "rdma")
+    skipped: list[str] = []
+    for n in priority:
+        if n in rungs:
+            continue
+        if n == "rdma" and stripped_for_root:
+            skipped.append("rdma: tree root is not $HOME")
+        else:
+            skipped.append(f"{n}: {probe.reason(n)}")
     return TransportChoice(rungs=rungs, detail="; ".join(skipped), probe=probe)
 
 

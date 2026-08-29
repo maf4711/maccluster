@@ -193,7 +193,11 @@ def probe_transports(
         detail["arep_transport_capable"] = list(peer.get("transportCapable") or [])
         # The value arep can resolve for --node: its Bonjour displayName, or the
         # pinned fingerprint if the peer advertises no name.
-        arep_node = str(peer.get("displayName") or "").strip() or str(peer.get("fingerprint") or "").strip() or None
+        arep_node = (
+            str(peer.get("displayName") or "").strip()
+            or str(peer.get("fingerprint") or "").strip()
+            or None
+        )
         rdma, why = _rdma_capable(peer)
         if why:
             detail["rdma_reason"] = why
@@ -205,8 +209,10 @@ def probe_transports(
         # the ssh preflight and the whole remote inventory already ran — must
         # not be skipped down to Wi-Fi (sync F6). An explicit tb_ping still wins.
         probe = tb_ping or (
-            lambda ip: ctx.reachability.tcp_probe(ip, port=22, timeout=TIMEOUT_PING).state
-            == ReachabilityState.UP
+            lambda ip: (
+                ctx.reachability.tcp_probe(ip, port=22, timeout=TIMEOUT_PING).state
+                == ReachabilityState.UP
+            )
         )
         tb = bool(probe(str(node.ip)))
         if not tb:

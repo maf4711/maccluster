@@ -499,12 +499,14 @@ def test_clean_rdma_failure_without_progress_skips_restat(fake_ctx, tmp_path: Pa
 
 
 def test_select_transports_orders_and_filters(fake_ctx, tmp_path: Path):
+    home = tmp_path / "home"  # _target's local_home; rdma allowed only at $HOME
     choice = select_transports(
         _target(tmp_path),
         fake_ctx,
         via="tb",
         priority=("rdma", "tb", "wifi"),
         arep_status=lambda: AREP_STATUS,
+        home_dir=home,
     )
     assert choice.rungs == ("rdma", "tb", "wifi")
     assert choice.probe is not None and choice.probe.rdma_available
@@ -514,9 +516,39 @@ def test_select_transports_orders_and_filters(fake_ctx, tmp_path: Path):
         via="tb",
         priority=("rdma", "tb", "wifi"),
         arep_status=lambda: None,
+        home_dir=home,
     )
     assert no_arep.rungs == ("tb",)
     assert "rdma" in no_arep.detail and "wifi" in no_arep.detail
+
+
+def test_select_transports_refuses_rdma_when_root_is_not_home(fake_ctx, tmp_path: Path):
+    # arep xfer resolves rels against $HOME; a dev / --home sync whose root is
+    # not $HOME must not use the rdma rung (sync F8). Here home_dir differs from
+    # the target's local_home, so rdma is dropped even though arep offers it.
+    choice = select_transports(
+        _target(tmp_path),
+        fake_ctx,
+        via="tb",
+        priority=("rdma", "tb", "wifi"),
+        arep_status=lambda: AREP_STATUS,
+        home_dir=tmp_path / "somewhere-else",
+    )
+    assert "rdma" not in choice.rungs
+    assert choice.rungs == ("tb", "wifi")
+    assert "tree root is not $HOME" in choice.detail
+    # Forcing --transport rdma on such a tree yields no rungs, with the reason.
+    forced = select_transports(
+        _target(tmp_path),
+        fake_ctx,
+        via="tb",
+        priority=("rdma", "tb", "wifi"),
+        override="rdma",
+        arep_status=lambda: AREP_STATUS,
+        home_dir=tmp_path / "somewhere-else",
+    )
+    assert forced.rungs == ()
+    assert "tree root is not $HOME" in forced.detail
 
 
 def test_select_transports_honours_override(fake_ctx, tmp_path: Path):
@@ -527,6 +559,7 @@ def test_select_transports_honours_override(fake_ctx, tmp_path: Path):
         priority=("rdma", "tb", "wifi"),
         override="tb",
         arep_status=lambda: AREP_STATUS,
+        home_dir=tmp_path / "home",
     )
     assert forced.rungs == ("tb",)
     unavailable = select_transports(
@@ -536,6 +569,7 @@ def test_select_transports_honours_override(fake_ctx, tmp_path: Path):
         priority=("rdma", "tb", "wifi"),
         override="rdma",
         arep_status=lambda: None,
+        home_dir=tmp_path / "home",
     )
     assert unavailable.rungs == ()
     assert "unavailable" in unavailable.detail
@@ -605,6 +639,7 @@ def test_sync_home_records_rdma_transport_per_peer(fake_ctx, tmp_path: Path, mon
         peer="node-b",
         home=tree,
         remote_home=str(tree),
+        home_dir=tree,
         user="a321",
         timeout=60,
         no_speedtest=True,
@@ -635,6 +670,7 @@ def test_sync_home_transport_override_skips_rdma(fake_ctx, tmp_path: Path, monke
         peer="node-b",
         home=tree,
         remote_home=str(tree),
+        home_dir=tree,
         user="a321",
         timeout=60,
         dry_run=True,
@@ -663,6 +699,7 @@ def test_sync_home_transport_wifi_uses_local_hostname(fake_ctx, tmp_path: Path, 
         peer="node-b",
         home=tree,
         remote_home=str(tree),
+        home_dir=tree,
         user="a321",
         timeout=60,
         dry_run=True,
@@ -694,6 +731,7 @@ def test_sync_home_downgrade_lands_in_peer_result(fake_ctx, tmp_path: Path, monk
         peer="node-b",
         home=tree,
         remote_home=str(tree),
+        home_dir=tree,
         user="a321",
         timeout=60,
         no_speedtest=True,

@@ -58,7 +58,13 @@ def is_denied_rel(rel: str) -> bool:
     if parts[0] == ".autoreplikator":
         return True
     base = parts[-1]
-    return base == ".env" or base.startswith(".env.") or base.endswith(".key") or base == "credentials.json"
+    return (
+        base == ".env"
+        or base.startswith(".env.")
+        or base.endswith(".key")
+        or base == "credentials.json"
+    )
+
 
 Direction = Literal["push", "pull"]
 ProgressCb = Callable[[int, int], None]  # (bytes_done, bytes_total)

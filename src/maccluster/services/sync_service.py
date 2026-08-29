@@ -1926,6 +1926,9 @@ def sync_home(
     user: str | None = None,
     home: str | Path | None = None,
     remote_home: str | Path | None = None,
+    # The machine's real home, for the rdma-root check only (sync F8). Defaults
+    # to Path.home(); injectable so a test can point it at a tmp tree.
+    home_dir: str | Path | None = None,
     extra_excludes: tuple[str, ...] = (),
     exclude_from: str | Path | None = None,
     presets: tuple[str, ...] = (),
@@ -2445,7 +2448,12 @@ def sync_home(
                     node, ssh_target, bind_ip, wifi_tgt, local_home, remote_home_path
                 )
                 choice = sync_transport.select_transports(
-                    tgt, ctx, via=via_n, priority=cfg.transport_priority, override=transport
+                    tgt,
+                    ctx,
+                    via=via_n,
+                    priority=cfg.transport_priority,
+                    override=transport,
+                    home_dir=Path(home_dir) if home_dir else None,
                 )
                 outcome = sync_transport.run_transfer_ladder(
                     ctx,

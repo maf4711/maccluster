@@ -233,7 +233,9 @@ def test_probe_tb_unreachable_when_neither_icmp_nor_ssh_answers(fake_ctx):
 
     fake_ctx.reachability.states["10.42.0.2"] = ReachabilityState.DOWN
     fake_ctx.reachability.tcp_states["10.42.0.2"] = ReachabilityState.DOWN
-    p = probe_transports(NODE_B, fake_ctx, arep_status=lambda: AREP_STATUS, wifi_target=lambda n: None)
+    p = probe_transports(
+        NODE_B, fake_ctx, arep_status=lambda: AREP_STATUS, wifi_target=lambda n: None
+    )
     assert p.tb_reachable is False
 
 
