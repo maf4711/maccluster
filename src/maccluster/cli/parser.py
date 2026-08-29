@@ -6,6 +6,20 @@ import argparse
 
 from maccluster import __version__
 from maccluster.constants import DEFAULT_MONITOR_INTERVAL_S, SYNC_DEV_WIFI_TOP
+from maccluster.domain.models import DEFAULT_TRANSPORT_PRIORITY
+
+
+def _add_transport_flag(target: argparse.ArgumentParser | argparse._ActionsContainer) -> None:
+    """`--transport rdma|tb|wifi`: force one rung of the sync transport ladder."""
+    target.add_argument(
+        "--transport",
+        choices=DEFAULT_TRANSPORT_PRIORITY,
+        default=None,
+        help=(
+            "Force one transport rung (default: cluster.toml transport_priority, "
+            f"{' → '.join(DEFAULT_TRANSPORT_PRIORITY)} with downgrade on failure)"
+        ),
+    )
 
 
 def _add_sync_tree_flags(
@@ -679,6 +693,7 @@ def build_parser() -> argparse.ArgumentParser:
             "Library/CloudStorage hangs."
         ),
     )
+    _add_transport_flag(p_home)
     p_dev = sync_sub.add_parser(
         "dev",
         aliases=["developer"],
@@ -705,6 +720,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip Thunderbolt; only sync recent git repos over Wi-Fi (.local)",
     )
+    _add_transport_flag(wifi_g)
     p_dev.add_argument(
         "--wifi-top",
         type=int,
