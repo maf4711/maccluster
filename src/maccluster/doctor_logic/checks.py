@@ -194,6 +194,45 @@ def check_rdma(rdma) -> DoctorFinding:
     return DoctorFinding("rdma", CheckSeverity.INFO, "RDMA status unknown", rdma.detail)
 
 
+def check_rdma_device_to_peer(rdma, arep_peers: list[dict]) -> DoctorFinding:
+    """WARN when the OS has RDMA on but arep sees no rdma-capable peer.
+
+    *arep_peers* is the ``peers`` list of ``arep status --json``; a peer
+    advertises a usable link device via ``transportCapable`` containing
+    ``"rdma"``. Nothing here enables RDMA — that is Recovery-OS only.
+    """
+    from maccluster.domain.models import RdmaStatus
+
+    if not isinstance(rdma, RdmaStatus) or rdma.enabled is not True:
+        return DoctorFinding(
+            "rdma_device_to_peer",
+            CheckSeverity.INFO,
+            "rdma peer path not assessed",
+            "rdma_ctl not enabled or unknown",
+        )
+    capable: list[str] = []
+    for peer in arep_peers or ():
+        if not isinstance(peer, dict):
+            continue
+        caps = peer.get("transportCapable")
+        names = [str(c).lower() for c in caps] if isinstance(caps, list) else []
+        if "rdma" in names:
+            capable.append(str(peer.get("displayName") or peer.get("fingerprint") or "?"))
+    if not capable:
+        return DoctorFinding(
+            "rdma_no_device_to_peer",
+            CheckSeverity.WARN,
+            "RDMA enabled but arep reports no rdma-capable peer",
+            f"arep peers={len(arep_peers or ())}; check TB link + pairing (arep status --json)",
+        )
+    return DoctorFinding(
+        "rdma_device_to_peer",
+        CheckSeverity.INFO,
+        f"rdma path to {len(capable)} peer(s): {', '.join(capable)}",
+        "",
+    )
+
+
 def check_heal_heartbeat(hb, *, service_installed: bool = False) -> DoctorFinding:
     from maccluster.domain.models import HealHeartbeat
 
