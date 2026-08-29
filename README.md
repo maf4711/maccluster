@@ -75,7 +75,7 @@ targets are refused for write/lock paths.
 | `status` | no | Nodes + **mesh** (alive≠meshed) + TB + RDMA + heal heartbeat + TX/RX rates; `--exo` correlates local exo `:52415` |
 | `monitor` | no | Live refresh (`--interval`) with TX/RX Mb/s, pps, errors; Ctrl+C → exit 0 |
 | `topo` | no | Cable / topology map (no rewiring advice) |
-| `doctor` | no | Diagnostics (config, self, TB, cable, bridge, peers, **mesh**, RDMA, heal heartbeat); `--exo` optional. **`--host`**: RAM/load/disk/thermal/NTP. **`--host --fleet`**: same snapshot per peer over TB SSH |
+| `doctor` | no | Diagnostics (config, self, TB, cable, bridge, peers, **mesh**, RDMA, heal heartbeat); `--exo` optional. **`--host`**: RAM/load/disk/thermal/NTP. **`--host --fleet`**: same snapshot per peer over TB SSH, **including per-peer RDMA status** (`rdma:<node-id>`) |
 | `bench` | no | Optional `iperf3` to a peer IP (bound to TB Self-IP) + **path quality** / retransmits. **`bench --mesh`**: sequential directed full-mesh on the TB bridge (`-B` both ends when SSH works). `--peer` filters; `--force` ignores the busy guard |
 | `speedtest` | no | TB **cable grade** (40G ideal) + iperf3 over bridge; also runs at start of `sync home` / `remote-install`. Honors the busy guard (exit 3) unless `--force` |
 | `service install\|uninstall\|status` | plist | User LaunchAgent → `heal --loop` |

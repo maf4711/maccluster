@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from maccluster.constants import TIMEOUT_GENERIC
+from maccluster.doctor_logic.host_parse import parse_rdma_enabled
 from maccluster.domain.models import RdmaStatus
 from maccluster.errors import CliError
 from maccluster.ports.process import ProcessRunnerPort
@@ -29,7 +30,7 @@ def probe_rdma(runner: ProcessRunnerPort) -> RdmaStatus:
             detail=f"rdma_ctl status failed: {exc}",
         )
     text = (result.stdout or result.stderr or "").strip()
-    enabled = _parse_enabled(text, result.returncode)
+    enabled = parse_rdma_enabled(text, result.returncode)
     if enabled is True:
         detail = "RDMA enabled (OS); Recovery-only to change"
     elif enabled is False:
@@ -42,23 +43,3 @@ def probe_rdma(runner: ProcessRunnerPort) -> RdmaStatus:
         raw=text[:500],
         detail=detail,
     )
-
-
-def _parse_enabled(text: str, returncode: int) -> bool | None:
-    low = text.lower()
-    if "enabled" in low and "disabled" not in low:
-        return True
-    if "disabled" in low:
-        return False
-    # Some builds print bare "enabled" / "disabled" or status codes
-    for line in low.splitlines():
-        s = line.strip()
-        if s == "enabled" or s.endswith(": enabled"):
-            return True
-        if s == "disabled" or s.endswith(": disabled"):
-            return False
-    if returncode == 0 and "enable" in low:
-        return True
-    if returncode != 0 and not text:
-        return None
-    return None

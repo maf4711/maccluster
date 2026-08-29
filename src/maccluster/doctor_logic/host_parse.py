@@ -82,6 +82,24 @@ def parse_pmset_cpu_limit(text: str) -> int | None:
     return int(m.group(1))
 
 
+def parse_rdma_enabled(text: str, returncode: int | None = None) -> bool | None:
+    """Parse `rdma_ctl status` output. None = ambiguous/unknown."""
+    low = text.lower()
+    if "enabled" in low and "disabled" not in low:
+        return True
+    if "disabled" in low:
+        return False
+    for line in low.splitlines():
+        s = line.strip()
+        if s == "enabled" or s.endswith(": enabled"):
+            return True
+        if s == "disabled" or s.endswith(": disabled"):
+            return False
+    if returncode == 0 and "enable" in low:
+        return True
+    return None
+
+
 def parse_sntp_offset_s(text: str) -> float | None:
     if not text.strip():
         return None
@@ -106,9 +124,21 @@ def snapshot_from_raw(
     pmset: str = "",
     sntp: str | None = None,
     sntp_missing: bool = False,
+    rdma: str | None = None,
+    rdma_missing: bool | None = None,
     error: str | None = None,
 ) -> HostSnapshot:
+    """`rdma_missing=None` means RDMA was not probed on this path (e.g. local host)."""
     used, free = parse_vm_stat_ram_gb(vm_stat)
+    if rdma_missing is None:
+        rdma_tool_available: bool | None = None
+        rdma_enabled: bool | None = None
+    elif rdma_missing:
+        rdma_tool_available = False
+        rdma_enabled = None
+    else:
+        rdma_tool_available = True
+        rdma_enabled = parse_rdma_enabled(rdma or "")
     return HostSnapshot(
         node_id=node_id,
         ram_used_gb=used,
@@ -119,6 +149,8 @@ def snapshot_from_raw(
         ntp_offset_s=None if sntp_missing else parse_sntp_offset_s(sntp or ""),
         error=error,
         ntp_missing=sntp_missing,
+        rdma_tool_available=rdma_tool_available,
+        rdma_enabled=rdma_enabled,
     )
 
 
@@ -167,6 +199,8 @@ def snapshot_from_json(node_id: str, text: str) -> HostSnapshot:
         missing = bool(data.get("sntp_missing"))
         if sntp_val is None and "sntp_missing" not in data:
             missing = True
+        rdma_val = data.get("rdma")
+        rdma_missing = bool(data.get("rdma_missing")) if "rdma_missing" in data else None
         return snapshot_from_raw(
             node_id,
             vm_stat=str(data.get("vm_stat") or ""),
@@ -175,6 +209,8 @@ def snapshot_from_json(node_id: str, text: str) -> HostSnapshot:
             pmset=str(data.get("pmset") or ""),
             sntp=None if sntp_val is None else str(sntp_val),
             sntp_missing=missing,
+            rdma=None if rdma_val is None else str(rdma_val),
+            rdma_missing=rdma_missing,
             error=str(data["error"]) if data.get("error") else None,
         )
     try:
@@ -188,6 +224,12 @@ def snapshot_from_json(node_id: str, text: str) -> HostSnapshot:
             ntp_offset_s=_opt_float(data.get("ntp_offset_s")),
             error=str(data["error"]) if data.get("error") else None,
             ntp_missing=bool(data.get("ntp_missing")),
+            rdma_tool_available=(
+                None
+                if data.get("rdma_tool_available") is None
+                else bool(data["rdma_tool_available"])
+            ),
+            rdma_enabled=(None if data.get("rdma_enabled") is None else bool(data["rdma_enabled"])),
         )
     except (TypeError, ValueError) as exc:
         return HostSnapshot(

@@ -22,6 +22,9 @@ _REMOTE_HOST_PY = (
     "s=shutil.which('sntp');"
     "d['sntp_missing']=s is None;"
     "d['sntp']=(R([s,'-d','time.apple.com']) if s else None);"
+    "r=shutil.which('rdma_ctl');"
+    "d['rdma_missing']=r is None;"
+    "d['rdma']=(R([r,'status']) if r else None);"
     "print(json.dumps(d,separators=(',',':')))"
 )
 REMOTE_HOST_SNAPSHOT_CMD = "python3 -c " + repr(_REMOTE_HOST_PY)
@@ -34,12 +37,16 @@ def findings_from_snapshot(
 ) -> list[DoctorFinding]:
     if snap.error:
         return [checks.check_host(snap, peer=peer)]
-    return [
+    findings = [
         checks.check_host(snap, peer=peer),
         checks.check_disk(snap, peer=peer),
         checks.check_thermal(snap, peer=peer),
         checks.check_ntp(snap, peer=peer),
     ]
+    if peer:
+        # self RDMA already covered by the always-on top-level `rdma` check
+        findings.append(checks.check_rdma_host(snap, peer=peer))
+    return findings
 
 
 def collect_local(ctx: AppContext, node_id: str) -> HostSnapshot:

@@ -66,7 +66,13 @@ class RecordingRunner:
         return ProcessResult(argv=full, returncode=1, stdout="", stderr="unexpected")
 
 
-def _ok_raw_json(*, limit: int | None = 100, disk_blocks: int = 41943040) -> str:
+def _ok_raw_json(
+    *,
+    limit: int | None = 100,
+    disk_blocks: int = 41943040,
+    rdma: str | None = "RDMA: enabled\n",
+    rdma_missing: bool = False,
+) -> str:
     raw = {
         "vm_stat": _vm_stat_16k(),
         "df": _df(disk_blocks),
@@ -74,6 +80,8 @@ def _ok_raw_json(*, limit: int | None = 100, disk_blocks: int = 41943040) -> str
         "pmset": "" if limit is None else f"CPU_Speed_Limit = {limit}\n",
         "sntp": None,
         "sntp_missing": True,
+        "rdma": rdma,
+        "rdma_missing": rdma_missing,
     }
     return json.dumps(raw, separators=(",", ":"))
 
@@ -184,6 +192,47 @@ def test_fleet_down_peer_warns_and_keeps_other_snapshots(fake_ctx):
     assert "BindAddress=10.42.0.1" in joined
     assert "python3 -c" in joined or "python3" in joined
     assert REMOTE_HOST_SNAPSHOT_CMD.split()[0] == "python3"
+
+
+def test_fleet_reports_rdma_per_peer(fake_ctx):
+    ssh = {
+        "10.42.0.2": ProcessResult(
+            argv=("ssh",),
+            returncode=0,
+            stdout=_ok_raw_json(rdma="RDMA: enabled\n", rdma_missing=False),
+            stderr="",
+        ),
+        "10.42.0.3": ProcessResult(
+            argv=("ssh",),
+            returncode=0,
+            stdout=_ok_raw_json(rdma="RDMA: disabled\n", rdma_missing=False),
+            stderr="",
+        ),
+        "10.42.0.4": ProcessResult(
+            argv=("ssh",),
+            returncode=0,
+            stdout=_ok_raw_json(rdma=None, rdma_missing=True),
+            stderr="",
+        ),
+    }
+    runner = RecordingRunner(ssh_by_ip=ssh)
+    fake_ctx.runner = runner
+    fake_ctx.host = FakeHost()
+    report = run_doctor(fake_ctx, include_host=True, include_fleet=True)
+    by_id = {f.check_id: f for f in report.findings}
+
+    assert by_id["rdma:node-b"].severity.value == "ok"
+    assert by_id["rdma:node-c"].severity.value == "info"
+    assert "Recovery" in by_id["rdma:node-c"].detail
+    assert by_id["rdma:node-d"].severity.value == "info"
+    assert "unavailable" in by_id["rdma:node-d"].summary
+
+    # RDMA disabled/missing on a peer never degrades the fleet exit code.
+    assert report.exit_code == DEGRADED  # from the pre-seeded node-d ping-down, not rdma
+
+    # self RDMA stays on the always-on top-level "rdma" check, no per-node duplicate.
+    assert "rdma:node-a" not in by_id
+    assert "rdma" in by_id
 
 
 def test_fleet_peer_filter_only_one_hop(fake_ctx):

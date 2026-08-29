@@ -367,3 +367,28 @@ def check_ntp(snap, *, peer: bool = False) -> DoctorFinding:
             f"|offset| > {NTP_OFFSET_WARN_S:g}s",
         )
     return DoctorFinding(cid, CheckSeverity.OK, f"{snap.node_id} ntp offset {off:.3f}s", "")
+
+
+def check_rdma_host(snap, *, peer: bool = False) -> DoctorFinding:
+    """Fleet-hop RDMA finding (per node_id). Self RDMA uses check_rdma instead."""
+    from maccluster.domain.models import HostSnapshot
+
+    if not isinstance(snap, HostSnapshot):
+        return DoctorFinding("rdma", CheckSeverity.INFO, "rdma not probed", "")
+    cid = _host_cid("rdma", snap.node_id, peer=peer)
+    if snap.error:
+        return DoctorFinding(
+            cid, CheckSeverity.WARN, f"host {snap.node_id} {snap.error}", snap.error
+        )
+    if not snap.rdma_tool_available:
+        return DoctorFinding(cid, CheckSeverity.INFO, f"{snap.node_id} rdma_ctl unavailable", "")
+    if snap.rdma_enabled is True:
+        return DoctorFinding(cid, CheckSeverity.OK, f"{snap.node_id} RDMA enabled", "")
+    if snap.rdma_enabled is False:
+        return DoctorFinding(
+            cid,
+            CheckSeverity.INFO,
+            f"{snap.node_id} RDMA disabled",
+            "enable only in Recovery OS: rdma_ctl enable (not via maccluster)",
+        )
+    return DoctorFinding(cid, CheckSeverity.INFO, f"{snap.node_id} RDMA status unknown", "")

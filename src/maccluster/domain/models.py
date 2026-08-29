@@ -233,7 +233,7 @@ class HealAction:
 
 @dataclass(frozen=True)
 class HostSnapshot:
-    """RAM / load / disk / thermal / NTP from a Mac (local or fleet hop)."""
+    """RAM / load / disk / thermal / NTP / RDMA from a Mac (local or fleet hop)."""
 
     node_id: str
     ram_used_gb: float | None
@@ -244,6 +244,8 @@ class HostSnapshot:
     ntp_offset_s: float | None
     error: str | None = None
     ntp_missing: bool = False
+    rdma_tool_available: bool | None = None  # None = not probed (e.g. local host path)
+    rdma_enabled: bool | None = None
 
 
 @dataclass(frozen=True)
