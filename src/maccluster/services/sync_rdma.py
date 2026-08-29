@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 import threading
@@ -44,6 +45,31 @@ Direction = Literal["push", "pull"]
 ProgressCb = Callable[[int, int], None]  # (bytes_done, bytes_total)
 LineCb = Callable[[str], None]
 _STDERR_TAIL = 400
+# argv safety: a node id is a plain token (never starts with "-", so arep can
+# not read it as an option); the binary is the bare name or an absolute path.
+_NODE_ID_RE = re.compile(r"[A-Za-z0-9._-]+")
+
+
+def _check_node_id(node_id: str) -> str:
+    if (
+        not isinstance(node_id, str)
+        or not _NODE_ID_RE.fullmatch(node_id)
+        or node_id.startswith("-")
+    ):
+        raise ValueError(f"unsafe node id {node_id!r} (want [A-Za-z0-9._-]+, no leading '-')")
+    return node_id
+
+
+def _check_arep_bin(arep_bin: str) -> str:
+    if not isinstance(arep_bin, str) or not arep_bin or "\x00" in arep_bin:
+        raise ValueError(f"unsafe arep binary {arep_bin!r}")
+    if arep_bin == AREP_BIN:
+        return arep_bin
+    if not arep_bin.startswith("/") or Path(arep_bin).name != AREP_BIN:
+        raise ValueError(
+            f"arep binary must be {AREP_BIN!r} or an absolute path to it: {arep_bin!r}"
+        )
+    return arep_bin
 
 
 class XferRunner(Protocol):
@@ -129,10 +155,11 @@ def _handle_line(line: str, state: _XferState, on_progress: ProgressCb) -> None:
 def _prepare_argv(argv: Sequence[str]) -> list[str]:
     if not argv:
         raise CliError("empty argv", exit_code=1)
-    first = argv[0]
-    if "/" in first:
-        if Path(first).name != AREP_BIN:
-            raise CliError(f"refusing non-{AREP_BIN} binary: {first!r}", exit_code=1)
+    try:
+        first = _check_arep_bin(argv[0])
+    except ValueError as exc:
+        raise CliError(f"refusing non-{AREP_BIN} binary: {exc}", exit_code=1) from exc
+    if first.startswith("/"):
         return [first, *argv[1:]]
     return [arep_process_runner().resolve(first), *argv[1:]]
 
@@ -233,6 +260,8 @@ def run_rdma_transfer(
     """
     if direction not in ("push", "pull"):
         raise ValueError(f"direction must be push|pull, got {direction!r}")
+    node_id = _check_node_id(node_id)
+    arep_bin = _check_arep_bin(arep_bin)
     rels = list(rels)
     if not rels:
         return 0
