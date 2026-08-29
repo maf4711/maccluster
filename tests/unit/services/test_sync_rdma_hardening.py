@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from maccluster.constants import TIMEOUT_SYNC
 from maccluster.errors import CliError
 from maccluster.services.sync_rdma import (
     manifest_lines,
@@ -15,6 +16,7 @@ from maccluster.services.sync_rdma import (
     xfer_subprocess_runner,
 )
 from maccluster.services.sync_service import FileMeta
+from maccluster.services.transport_ladder import TransportFailed
 
 INV = {
     "Documents/a.txt": FileMeta(mtime_ns=1, size=10),
@@ -151,3 +153,103 @@ def test_run_unsafe_rel_never_spawns():
     with pytest.raises(ValueError):
         _run(fake, rels=["../escape"], inv=inv)
     assert fake.argv == ()
+
+
+# --- stdout parsing --------------------------------------------------------------------
+
+
+def test_run_survives_garbage_and_partial_json():
+    seen: list[tuple[int, int]] = []
+    fake = FakeXfer(
+        [
+            "{",
+            '{"event":',
+            '{"event":"progress","done":1,"total":',
+            "\x00\x01\x02",
+            "{" * 3000,
+            '{"event":"progress","done":' + "[" * 50_000 + "]" * 50_000 + "}",
+            "[1,2,3]",
+            '"str"',
+            "null",
+            '{"event":"progress","done":4,"total":10}',
+            '{"event":"done","bytes":10}',
+        ]
+    )
+    assert _run(fake, on_progress=lambda d, t: seen.append((d, t))) == 10
+    assert seen == [(4, 10)]
+
+
+def test_run_ignores_nonfinite_and_negative_numbers():
+    seen: list[tuple[int, int]] = []
+    fake = FakeXfer(
+        [
+            '{"event":"progress","done":NaN,"total":10}',
+            '{"event":"progress","done":Infinity,"total":10}',
+            '{"event":"progress","done":1e400,"total":10}',
+            '{"event":"progress","done":-5,"total":10}',
+            '{"event":"progress","done":2,"total":-1}',
+            '{"event":"progress","done":3,"total":NaN}',
+            '{"event":"done","bytes":-1}',
+        ]
+    )
+    assert _run(fake, on_progress=lambda d, t: seen.append((d, t))) == 3
+    assert seen == [(2, 2), (3, 3)]
+
+
+def test_run_error_reason_is_sanitized_and_capped():
+    reason = "\x1b[31mred\x1b[0m " + "x" * 5000 + "\n\tend"
+    fake = FakeXfer([json.dumps({"event": "error", "reason": reason})])
+    with pytest.raises(TransportFailed) as ei:
+        _run(fake)
+    assert "\x1b" not in ei.value.reason
+    assert "\n" not in ei.value.reason
+    assert "red" in ei.value.reason
+    assert len(ei.value.reason) <= 400
+
+
+def test_run_stderr_tail_is_sanitized():
+    fake = FakeXfer([], rc=2, stderr="\x1b]0;evil\x07link down\x00")
+    with pytest.raises(TransportFailed) as ei:
+        _run(fake)
+    assert "link down" in ei.value.reason
+    assert "\x1b" not in ei.value.reason and "\x00" not in ei.value.reason
+
+
+def test_run_progress_callback_error_becomes_transport_failed():
+    fake = FakeXfer(['{"event":"progress","done":1,"total":2}'])
+
+    def bad(done: int, total: int) -> None:
+        raise RuntimeError("bar broke")
+
+    with pytest.raises(TransportFailed) as ei:
+        _run(fake, on_progress=bad)
+    assert "bar broke" in ei.value.reason
+
+
+# --- partial flag / timeout defaults ------------------------------------------------------
+
+
+def test_run_failure_after_spawn_is_marked_partial():
+    with pytest.raises(TransportFailed) as rc_fail:
+        _run(FakeXfer([], rc=3, stderr="boom"))
+    assert rc_fail.value.partial is True
+    with pytest.raises(TransportFailed) as ev_fail:
+        _run(FakeXfer(['{"event":"error","reason":"peer aborted"}']))
+    assert ev_fail.value.partial is True
+    with pytest.raises(TransportFailed) as to_fail:
+        _run(FakeXfer([], rc=124))
+    assert to_fail.value.partial is True
+
+    def broken(argv, *, stdin_text, on_line, timeout):
+        raise CliError("tool not found: arep", exit_code=1)
+
+    with pytest.raises(TransportFailed) as spawn_fail:
+        _run(broken)  # type: ignore[arg-type]
+    assert spawn_fail.value.partial is False
+
+
+@pytest.mark.parametrize("timeout", [0, -1.0])
+def test_run_non_positive_timeout_falls_back_to_default(timeout: float):
+    fake = FakeXfer([json.dumps({"event": "done", "bytes": 10})])
+    _run(fake, timeout=timeout)
+    assert fake.timeout == TIMEOUT_SYNC

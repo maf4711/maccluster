@@ -16,6 +16,7 @@ whole path is unit-testable without arep.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import subprocess
@@ -28,7 +29,12 @@ from typing import TYPE_CHECKING, Literal, Protocol
 
 from maccluster.constants import TIMEOUT_SYNC
 from maccluster.errors import CliError
-from maccluster.services.transport_ladder import AREP_BIN, TransportFailed, arep_process_runner
+from maccluster.services.transport_ladder import (
+    AREP_BIN,
+    TransportFailed,
+    arep_process_runner,
+    clean_text,
+)
 
 if TYPE_CHECKING:
     from maccluster.services.sync_service import FileMeta
@@ -140,9 +146,13 @@ class _XferState:
 
 
 def _as_int(value: object) -> int | None:
+    """Non-negative finite number → int; anything else (bool, NaN, inf, <0) → None."""
     if isinstance(value, bool) or not isinstance(value, int | float):
         return None
-    return int(value)
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    out = int(value)
+    return out if out >= 0 else None
 
 
 def _handle_line(line: str, state: _XferState, on_progress: ProgressCb) -> None:
@@ -151,7 +161,7 @@ def _handle_line(line: str, state: _XferState, on_progress: ProgressCb) -> None:
         return
     try:
         event = json.loads(text)
-    except ValueError:
+    except (ValueError, RecursionError):
         return
     if not isinstance(event, dict):
         return
@@ -168,7 +178,7 @@ def _handle_line(line: str, state: _XferState, on_progress: ProgressCb) -> None:
     elif kind == "done":
         state.done_bytes = _as_int(event.get("bytes"))
     elif kind == "error" and state.error is None:
-        state.error = str(event.get("reason") or "arep reported error")
+        state.error = clean_text(event.get("reason") or "arep reported error", _STDERR_TAIL)
 
 
 # --- default subprocess runner ----------------------------------------------------------------
@@ -278,12 +288,17 @@ def run_rdma_transfer(
 
     Raises ``TransportFailed("rdma", reason)`` on an ``error`` event, a
     non-zero exit, a timeout, or when arep cannot be started — the ladder
-    then downgrades to the next rung. Empty *rels* is a no-op (0 bytes).
+    then downgrades to the next rung. Failures after arep was spawned carry
+    ``partial=True`` (bytes may have moved; the ladder re-stats), a failure
+    to spawn does not. Empty *rels* is a no-op (0 bytes). A non-positive
+    *timeout* falls back to ``TIMEOUT_SYNC`` — arep must never run unbounded.
     """
     if direction not in ("push", "pull"):
         raise ValueError(f"direction must be push|pull, got {direction!r}")
     node_id = _check_node_id(node_id)
     arep_bin = _check_arep_bin(arep_bin)
+    if not timeout or timeout <= 0:
+        timeout = TIMEOUT_SYNC
     rels = list(rels)
     if not rels:
         return 0
@@ -300,13 +315,18 @@ def run_rdma_transfer(
         )
     except TransportFailed:
         raise
-    except Exception as exc:
+    except CliError as exc:  # runner refused / could not start arep: nothing moved
         raise TransportFailed("rdma", f"arep xfer {direction}: {exc}") from exc
+    except Exception as exc:  # reader/callback died mid-run: unknown how far arep got
+        raise TransportFailed("rdma", f"arep xfer {direction}: {exc}", partial=True) from exc
     if state.error:
-        raise TransportFailed("rdma", state.error)
+        raise TransportFailed("rdma", state.error, partial=True)
     if rc == 124:
-        raise TransportFailed("rdma", f"arep xfer {direction} timeout after {timeout:.0f}s")
+        raise TransportFailed(
+            "rdma", f"arep xfer {direction} timeout after {timeout:.0f}s", partial=True
+        )
     if rc != 0:
-        tail = " ".join(stderr.split())[-_STDERR_TAIL:] or "no stderr"
-        raise TransportFailed("rdma", f"arep exit {rc}: {tail}")
+        raw_tail = (stderr or "")[-4 * _STDERR_TAIL :]
+        tail = clean_text(raw_tail, 4 * _STDERR_TAIL)[-_STDERR_TAIL:] or "no stderr"
+        raise TransportFailed("rdma", f"arep exit {rc}: {tail}", partial=True)
     return state.done_bytes if state.done_bytes is not None else state.last_done
