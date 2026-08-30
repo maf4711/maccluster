@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import os
 from collections.abc import Sequence
 from ipaddress import IPv4Address
@@ -136,7 +137,26 @@ def _target(tmp_path: Path, *, wifi: str | None = "a321@mac-mini-b.local") -> Tr
     )
 
 
+class _ToolOnlyRunner:
+    """Resolves the tools the tb/wifi rung looks up before delegating to the
+    injected fakes. The real ``ProcessRunner`` would search the host for
+    ``ditto`` (macOS-only) and fail on Linux CI — host tooling must never be a
+    test criterion. ``run`` is unreachable because every rung is faked."""
+
+    def resolve(self, basename: str) -> str:
+        return f"/usr/bin/{basename}"
+
+    def run(self, argv: Sequence[str], **_: object) -> ProcessResult:
+        raise AssertionError(f"unexpected real process run: {argv!r}")
+
+
 def _run(fake_ctx, tmp_path: Path, rungs: Sequence[str], **kw) -> TransferOutcome:
+    from maccluster.adapters.process import ProcessRunner
+
+    # Tests that script the re-stat round install their own runner; only the
+    # fixture's real ProcessRunner is swapped out.
+    if isinstance(fake_ctx.runner, ProcessRunner):
+        fake_ctx = dataclasses.replace(fake_ctx, runner=_ToolOnlyRunner())
     work = tmp_path / "work"
     work.mkdir(exist_ok=True)
     args = dict(
