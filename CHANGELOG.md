@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.4.0 — 2026-08-30
+
 ### Added — sync transport ladder `rdma` → `tb` → `wifi`
 
 Inventory and planning are unchanged; the transfer stage of every sync

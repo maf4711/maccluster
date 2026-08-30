@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "maccluster"
-version = "0.3.3"
+version = "0.4.0"
 description = "CLI tool for Thunderbolt-networked Apple Silicon Mac mini clusters (2–4 nodes)"
 readme = "README.md"
 license = "MIT"
