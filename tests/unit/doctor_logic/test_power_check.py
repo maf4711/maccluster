@@ -122,3 +122,11 @@ def test_check_power_not_reported_is_info():
 def test_check_power_not_a_snapshot_is_info():
     f = check_power(None)
     assert f.severity.value == "info"
+
+
+def test_power_warn_is_cluster_relevant_and_degrades_exit():
+    from maccluster.cli.exit_codes import DEGRADED
+    from maccluster.doctor_logic.report import build_report
+
+    f = check_power(_snap(sleep_minutes=1, powernap_enabled=False), peer=True)
+    assert build_report([f]).exit_code == DEGRADED
