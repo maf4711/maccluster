@@ -144,6 +144,21 @@ def test_progress_percent_never_jumps_backwards_in_a_phase():
     assert "1.0%" in buf.getvalue()
 
 
+def test_set_totals_clears_the_scan_counters():
+    """Planned bytes are a new unit of work — the scan's bytes are not progress."""
+    buf = io.StringIO()
+    p = SyncProgress(enabled=True, stream=buf, force=True, min_interval_s=0)
+    p.phase("inventory", direction="local")
+    p.update(files_done=3000, bytes_done=91_000_000, force=True)
+    buf.truncate(0)
+    buf.seek(0)
+    # plan: 92 MB to move. Without the reset this read ~98% before a byte moved.
+    p.set_totals(files=3200, bytes_=92_000_000)
+    text = buf.getvalue()
+    assert "  0.0%" in text
+    assert "0 B/92.00 MB" in text
+
+
 def test_progress_shows_indeterminate_when_no_total_is_known():
     buf = io.StringIO()
     p = SyncProgress(enabled=True, stream=buf, force=True, min_interval_s=0)

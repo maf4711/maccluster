@@ -176,9 +176,18 @@ class SyncProgress:
         self._scan_bps = 0.0
 
     def set_totals(self, *, files: int = 0, bytes_: int = 0) -> None:
+        """Announce the planned work — this starts a new unit, so counters reset.
+
+        Called once the plan is known, between the scan and the transfer. The
+        scan's counters must not carry over: leaving them made the bar read
+        ~98% of the payload before a single byte moved, then fall back to 0 as
+        the transfer legs reported their own absolute progress.
+        """
         self._state.files_total = max(0, files)
         self._state.bytes_total = max(0, bytes_)
-        # New totals are a new unit of work: start the high-water mark over.
+        self._state.files_done = 0
+        self._state.bytes_done = 0
+        self._state.file_index = 0
         self._pct_floor = 0.0
         self._pct_source = ""
         self._dirty = True
