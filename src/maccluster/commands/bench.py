@@ -11,7 +11,7 @@ from maccluster.services.bench_history import (
     compare_to_dict,
     exit_for_compare,
     format_compare,
-    read_samples,
+    read_all_samples,
     record_bench_result,
 )
 from maccluster.services.bench_service import run_bench
@@ -23,7 +23,7 @@ from maccluster.services.mesh_bench_service import (
 
 
 def _compare(ctx: AppContext, *, peer: str | None) -> int:
-    rows = compare_last_vs_best(read_samples(), peer=peer)
+    rows = compare_last_vs_best(read_all_samples(), peer=peer)
     if ctx.json_mode:
         print(dumps("bench", compare_to_dict(rows)))
     else:

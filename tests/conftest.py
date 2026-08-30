@@ -30,8 +30,13 @@ def _no_real_arep(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _isolated_bench_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """bench/speedtest append to a throughput history; never the real ~/.local/state."""
+    """bench/speedtest append to a throughput history; never the real ~/.local/state.
+
+    The arep history is redirected too, so compare/doctor tests never see a
+    real ~/.autoreplikator/bench-history.jsonl on a developer Mac.
+    """
     monkeypatch.setenv("MACCLUSTER_BENCH_HISTORY", str(tmp_path / "bench-history.jsonl"))
+    monkeypatch.setenv("MACCLUSTER_AREP_HISTORY", str(tmp_path / "arep-bench-history.jsonl"))
 
 
 @pytest.fixture
