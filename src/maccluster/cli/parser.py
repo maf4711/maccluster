@@ -184,7 +184,7 @@ def _add_sync_tree_flags(
     parser.add_argument(
         "--no-progress",
         action="store_true",
-        help="Disable live progress bar (percent / path / speed)",
+        help="Disable live progress bar (summary + run log are still written)",
     )
     parser.add_argument(
         "--allow-partial-inventory",
