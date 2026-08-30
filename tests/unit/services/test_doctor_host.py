@@ -241,6 +241,14 @@ def test_fleet_reports_rdma_per_peer(fake_ctx):
     assert "rdma" in by_id
 
 
+def test_remote_snapshot_snippet_is_valid_python():
+    """Live regression: `...;def R(c):` is a SyntaxError — every fleet hop then
+    exits 1 and gets mislabeled "unreachable". The snippet must compile."""
+    from maccluster.services.doctor_host import _REMOTE_HOST_PY
+
+    compile(_REMOTE_HOST_PY, "<remote-host-snapshot>", "exec")
+
+
 def test_fleet_power_ok_warn_and_unreadable(fake_ctx):
     """node-b clean, node-c powernap+short sleep, node-d unreachable → INFO."""
     ssh = {

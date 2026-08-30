@@ -12,11 +12,11 @@ from maccluster.services.fleet_exec import iter_peers, run_on_peer
 HOST_FLEET_TIMEOUT_S = 4.0
 
 # Remote prints one JSON object of raw tool dumps; parsed locally (16K pages stay here).
+# Must stay simple statements only (`def` after `;` is a SyntaxError — see the
+# compile() unit test); a failing snippet exits 1 and looks like "unreachable".
 _REMOTE_HOST_PY = (
     "import json,shutil,subprocess;"
-    "def R(c):"
-    " p=subprocess.run(c,capture_output=True,text=True,timeout=1.5);"
-    " return p.stdout or '';"
+    "R=lambda c:(subprocess.run(c,capture_output=True,text=True,timeout=1.5).stdout or '');"
     "d={'vm_stat':R(['vm_stat']),'df':R(['df','-P','/']),"
     "'uptime':R(['uptime']),'pmset':R(['pmset','-g','therm']),"
     "'pmset_g':R(['pmset','-g'])};"
