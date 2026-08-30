@@ -20,8 +20,8 @@ _EXPORTS: dict[str, tuple[str, ...]] = {
         "_scp_one_file",
     ),
     "maccluster.services.sync_inventory": (
-        "_REMOTE_INVENTORY_PY",
         "FileMeta",
+        "LocalInventory",
         "_norm_rel",
         "is_excluded",
         "_INV_PREF",
@@ -31,6 +31,9 @@ _EXPORTS: dict[str, tuple[str, ...]] = {
         "_safe_scandir",
         "inventory_local",
         "parse_inventory_text",
+    ),
+    "maccluster.services.sync_inventory_remote": (
+        "_REMOTE_INVENTORY_PY",
         "_remote_inventory",
     ),
     "maccluster.services.sync_plan": (
