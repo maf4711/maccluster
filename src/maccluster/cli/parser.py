@@ -387,7 +387,12 @@ def _add_home_dev_transfer_flags(
     p.add_argument(
         "--no-progress",
         action="store_true",
-        help="Disable live progress bar",
+        help="Disable live progress bar (summary + run log are still written)",
+    )
+    p.add_argument(
+        "--allow-partial-inventory",
+        action="store_true",
+        help="Transfer even when the local walk was truncated (off by default)",
     )
     p.add_argument(
         "--force-icloud",
