@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from maccluster.domain.models import ClusterConfig, Node
+from maccluster.domain.models import DEFAULT_TRANSPORT_PRIORITY, ClusterConfig, Node
 
 
 def dump_toml(cfg: ClusterConfig) -> str:
@@ -13,8 +13,11 @@ def dump_toml(cfg: ClusterConfig) -> str:
         f'bridge_interface = "{_escape(cfg.bridge_interface)}"',
         f"heal_interval_seconds = {int(cfg.heal_interval_seconds)}",
         f"ssh_probes_enabled = {'true' if cfg.ssh_probes_enabled else 'false'}",
-        "",
     ]
+    if tuple(cfg.transport_priority) != DEFAULT_TRANSPORT_PRIORITY:
+        rungs = ", ".join(f'"{_escape(r)}"' for r in cfg.transport_priority)
+        lines.append(f"transport_priority = [{rungs}]")
+    lines.append("")
     for node in cfg.nodes:
         lines.extend(_dump_node(node))
         lines.append("")

@@ -90,6 +90,7 @@ def parse_system_profiler_tb(text: str) -> ThunderboltSnapshot:
                 peer_domain_uuid=(
                     current.get("peer_domain_uuid") if link_state == LinkState.CONNECTED else None
                 ),
+                peer_uid=current.get("peer_uid") if link_state == LinkState.CONNECTED else None,
             )
         )
         current = {}
@@ -124,7 +125,14 @@ def parse_system_profiler_tb(text: str) -> ThunderboltSnapshot:
             if host_model is None and val:
                 host_model = val
         elif line.startswith("UID:"):
-            current["uid"] = line.split(":", 1)[1].strip()
+            val = line.split(":", 1)[1].strip()
+            # After the port's Status line we're inside the attached device's block:
+            # its UID is the peer's controller UID (a display exposes one, a Mac
+            # does not on macOS 27) and must never overwrite this bus's UID.
+            if current.get("status"):
+                current["peer_uid"] = val
+            else:
+                current["uid"] = val
         elif line.startswith("Domain UUID:"):
             val = line.split(":", 1)[1].strip()
             # After the port's Status line we're in the nested attached-device
@@ -203,6 +211,23 @@ def _loose_parse(text: str) -> Sequence[ThunderboltPort]:
             )
         )
     return ports
+
+
+def run_system_profiler_json(runner: ProcessRunnerPort) -> str:
+    """Raw ``system_profiler SPThunderboltDataType -json`` text (the structured form
+    carries ``switch_uid_key`` per bus); ``CliError`` when the tool yields nothing."""
+    result = runner.run(
+        ["system_profiler", "SPThunderboltDataType", "-json"],
+        timeout=TIMEOUT_PROFILER,
+    )
+    if result.returncode != 0 and not result.stdout.strip():
+        from maccluster.errors import CliError
+
+        raise CliError(
+            f"system_profiler -json failed: {result.stderr.strip() or 'no output'}",
+            exit_code=1,
+        )
+    return result.stdout
 
 
 class SystemProfilerTB:

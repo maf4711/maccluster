@@ -6,6 +6,20 @@ import argparse
 
 from maccluster import __version__
 from maccluster.constants import DEFAULT_MONITOR_INTERVAL_S, SYNC_DEV_WIFI_TOP
+from maccluster.domain.models import DEFAULT_TRANSPORT_PRIORITY
+
+
+def _add_transport_flag(target: argparse.ArgumentParser | argparse._ActionsContainer) -> None:
+    """`--transport rdma|tb|wifi`: force one rung of the sync transport ladder."""
+    target.add_argument(
+        "--transport",
+        choices=DEFAULT_TRANSPORT_PRIORITY,
+        default=None,
+        help=(
+            "Force one transport rung (default: cluster.toml transport_priority, "
+            f"{' → '.join(DEFAULT_TRANSPORT_PRIORITY)} with downgrade on failure)"
+        ),
+    )
 
 
 def _add_sync_tree_flags(
@@ -437,6 +451,27 @@ def build_parser() -> argparse.ArgumentParser:
     cfg_sub = p_cfg.add_subparsers(dest="config_action", metavar="ACTION")
     cfg_sub.add_parser("show", help="Show config")
     cfg_sub.add_parser("validate", help="Validate config and self-match")
+    p_refresh = cfg_sub.add_parser(
+        "refresh-tb",
+        help=(
+            "Print this Mac's live Thunderbolt domain UUIDs (change on reboot) and "
+            "controller UIDs (stable) as a cluster.toml [[nodes]] snippet; dry-run "
+            "unless --apply"
+        ),
+    )
+    p_refresh.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the snippet only (default behaviour)",
+    )
+    p_refresh.add_argument(
+        "--apply",
+        action="store_true",
+        help=(
+            "Rewrite tb_domain_uuids + tb_controller_uids of the self node in "
+            "cluster.toml (a .bak-<timestamp> copy is kept)"
+        ),
+    )
 
     p_up = sub.add_parser("up", help="Ensure local bridge + fixed Self IP")
     p_up.add_argument("--dry-run", action="store_true", help="Plan only (no mutate)")
@@ -557,6 +592,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--force",
         action="store_true",
         help="Run even if MACCLUSTER_BUSY or ~/.config/maccluster/busy is set",
+    )
+    p_bench.add_argument(
+        "--compare",
+        action="store_true",
+        help=(
+            "No bench: print last-vs-best throughput per peer/transport from "
+            "~/.local/state/maccluster/bench-history.jsonl and mark regressions > 15%% "
+            "(exit 3); --peer filters"
+        ),
     )
 
     p_st = sub.add_parser(
@@ -679,6 +723,7 @@ def build_parser() -> argparse.ArgumentParser:
             "Library/CloudStorage hangs."
         ),
     )
+    _add_transport_flag(p_home)
     p_dev = sync_sub.add_parser(
         "dev",
         aliases=["developer"],
@@ -705,6 +750,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip Thunderbolt; only sync recent git repos over Wi-Fi (.local)",
     )
+    _add_transport_flag(wifi_g)
     p_dev.add_argument(
         "--wifi-top",
         type=int,

@@ -83,6 +83,7 @@ class ProgressState:
     files_done: int = 0
     files_total: int = 0
     detail: str = ""
+    transport: str = ""  # rdma | tb | wifi — rung currently moving bytes
 
 
 @dataclass
@@ -142,12 +143,16 @@ class SyncProgress:
         self._dirty = True
         self._draw(force=True)
 
-    def phase(self, name: str, *, direction: str = "", detail: str = "") -> None:
+    def phase(
+        self, name: str, *, direction: str = "", detail: str = "", transport: str = ""
+    ) -> None:
         self._state.phase = name
         if direction:
             self._state.direction = direction
         if detail:
             self._state.detail = detail
+        if transport:
+            self._state.transport = transport
         self._state.path = ""
         # Phase change: reset sample window so rates don't spike from stale counters
         now = time.monotonic()
@@ -177,11 +182,14 @@ class SyncProgress:
         direction: str | None = None,
         phase: str | None = None,
         detail: str | None = None,
+        transport: str | None = None,
         force: bool = False,
     ) -> None:
         st = self._state
         if path is not None:
             st.path = path
+        if transport is not None:
+            st.transport = transport
         if file_index is not None:
             st.file_index = file_index
         if file_total is not None:
@@ -322,7 +330,7 @@ class SyncProgress:
             eta = format_eta(None)
 
         dir_tag = f"{st.direction} " if st.direction else ""
-        phase = st.phase or "sync"
+        phase = (st.phase or "sync") + (f" transport={st.transport}" if st.transport else "")
         if st.bytes_total > 0:
             size_part = f"{format_bytes(st.bytes_done)}/{format_bytes(st.bytes_total)}"
         elif st.files_total > 0:
@@ -398,7 +406,9 @@ class NullProgress:
     def set_totals(self, *, files: int = 0, bytes_: int = 0) -> None:
         return None
 
-    def phase(self, name: str, *, direction: str = "", detail: str = "") -> None:
+    def phase(
+        self, name: str, *, direction: str = "", detail: str = "", transport: str = ""
+    ) -> None:
         return None
 
     def update(self, **kwargs) -> None:

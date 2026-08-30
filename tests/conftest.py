@@ -13,6 +13,27 @@ os.environ.setdefault("MACCLUSTER_SKIP_PLATFORM_GUARD", "1")
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
+@pytest.fixture(autouse=True)
+def _no_real_arep(monkeypatch):
+    """Unit tests never run the installed ``arep`` binary; rdma reads as unavailable."""
+    for module in (
+        "maccluster.services.sync_transport",
+        "maccluster.services.doctor_service",
+        "maccluster.services.status_service",
+    ):
+        monkeypatch.setattr(f"{module}.arep_status_json", lambda *a, **k: None, raising=False)
+    # `status` also reads the real ~/Library/Logs sync-last.json; never in unit tests.
+    monkeypatch.setattr(
+        "maccluster.services.status_service.read_last_run", lambda *a, **k: None, raising=False
+    )
+
+
+@pytest.fixture(autouse=True)
+def _isolated_bench_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """bench/speedtest append to a throughput history; never the real ~/.local/state."""
+    monkeypatch.setenv("MACCLUSTER_BENCH_HISTORY", str(tmp_path / "bench-history.jsonl"))
+
+
 @pytest.fixture
 def fixtures_dir() -> Path:
     return FIXTURES
