@@ -678,6 +678,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Only the first N peers from cluster inventory (after self)",
     )
     _add_home_dev_transfer_flags(p_delta, command="delta")
+    _add_transport_flag(p_delta)
 
     p_pull = sub.add_parser(
         "pull",
@@ -687,6 +688,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     _add_home_dev_transfer_flags(p_pull, command="pull")
+    _add_transport_flag(p_pull)
 
     p_push = sub.add_parser(
         "push",
@@ -696,6 +698,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     _add_home_dev_transfer_flags(p_push, command="push")
+    _add_transport_flag(p_push)
 
     p_sync = sub.add_parser(
         "sync",

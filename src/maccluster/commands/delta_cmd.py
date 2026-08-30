@@ -68,6 +68,7 @@ def run(ctx: AppContext, args) -> int:
         identical=bool(getattr(args, "identical", False)),
         icloud_timeout=float(getattr(args, "icloud_timeout", 20.0) or 20.0),
         icloud_max_seconds=float(getattr(args, "icloud_max_seconds", 900.0) or 900.0),
+        transport=getattr(args, "transport", None),
     )
 
     if not ctx.json_mode:
