@@ -242,7 +242,11 @@ def sync_home(
         save_sync_state,
         write_run_log,
     )
-    from maccluster.services.sync_safetynet import backup_before_overwrite, new_run_dir
+    from maccluster.services.sync_safetynet import (
+        backup_before_overwrite,
+        new_run_dir,
+        prune_old_runs,
+    )
     from maccluster.services.sync_verify import verify_local_sample
 
     if push_only and pull_only:
@@ -685,6 +689,7 @@ def sync_home(
                 if safetynet and not dry_run and not push_only and to_pull:
                     if sn_run is None:
                         sn_run = new_run_dir()
+                        prune_old_runs()
                     overwrite = [r for r in to_pull if r in local_inv]
                     sn_count = backup_before_overwrite(
                         local_home,
