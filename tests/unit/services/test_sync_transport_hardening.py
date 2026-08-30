@@ -207,6 +207,9 @@ def test_downgrade_reason_is_capped_and_sanitized(fake_ctx, tmp_path: Path):
     def rdma(**kw) -> int:
         raise TransportFailed("rdma", "\x1b[31mbad\x1b[0m " + "y" * 5000)
 
+    # The tb rung resolves ssh/scp/ditto before delegating to the fakes; the
+    # fixture's real ProcessRunner would search the host (no ditto on Linux CI).
+    fake_ctx.runner = RestatRunner("")
     out = run_transfer_ladder(
         fake_ctx,
         choice=TransportChoice(rungs=("rdma", "tb")),
