@@ -6,10 +6,12 @@ import io
 
 from maccluster.render.progress import (
     SyncProgress,
+    clamp_pct,
     format_bytes,
     format_eta,
     format_rate,
     render_bar,
+    render_indeterminate_bar,
     shorten_path,
 )
 
@@ -87,6 +89,70 @@ def test_progress_draws_percent():
     assert "Documents/a.txt" in text or "a.txt" in text
     p.finish("done")
     assert "done" in buf.getvalue()
+
+
+def test_clamp_pct_never_moves_backwards_within_a_phase():
+    """A phase that discovers more work must not rewind the bar (35.0% → 5.1%)."""
+    assert clamp_pct(35.0, floor=0.0) == 35.0
+    assert clamp_pct(5.1, floor=35.0) == 35.0
+    assert clamp_pct(60.0, floor=35.0) == 60.0
+    # bounded to 0–100 either way
+    assert clamp_pct(-4.0, floor=0.0) == 0.0
+    assert clamp_pct(140.0, floor=0.0) == 100.0
+    # unknown total stays unknown — an indeterminate phase never fakes a number
+    assert clamp_pct(None, floor=35.0) is None
+
+
+def test_clamp_pct_is_monotonic_over_a_shrinking_denominator():
+    floor = 0.0
+    seen = []
+    # denominator grows as the scan discovers work: raw percent would fall
+    for done, total in ((350, 1000), (350, 7000), (900, 7000), (7000, 7000)):
+        value = clamp_pct(100.0 * done / total, floor=floor)
+        floor = value
+        seen.append(value)
+    assert seen == sorted(seen)
+    assert seen[0] == 35.0 and seen[-1] == 100.0
+
+
+def test_render_indeterminate_bar_is_fixed_width_and_moves():
+    a = render_indeterminate_bar(0.0, width=12)
+    b = render_indeterminate_bar(0.5, width=12)
+    assert len(a) == len(b) == 12
+    assert "█" in a and "█" in b
+    assert a != b
+
+
+def test_progress_percent_never_jumps_backwards_in_a_phase():
+    buf = io.StringIO()
+    p = SyncProgress(enabled=True, stream=buf, force=True, min_interval_s=0)
+    p.phase("inventory", direction="local")
+    p.update(files_done=350, files_total=1000, force=True)
+    assert "35.0%" in buf.getvalue()
+    buf.truncate(0)
+    buf.seek(0)
+    # the walk finds 6000 more files: raw percent would drop to 5.0%
+    p.update(files_done=350, files_total=7000, force=True)
+    text = buf.getvalue()
+    assert "  5.0%" not in text  # the 5-wide percent field, not a substring of 35.0%
+    assert " 35.0%" in text
+    # a new phase starts over
+    buf.truncate(0)
+    buf.seek(0)
+    p.phase("transfer", direction="push")
+    p.update(bytes_done=10, bytes_total=1000, force=True)
+    assert "1.0%" in buf.getvalue()
+
+
+def test_progress_shows_indeterminate_when_no_total_is_known():
+    buf = io.StringIO()
+    p = SyncProgress(enabled=True, stream=buf, force=True, min_interval_s=0)
+    p.phase("inventory", direction="local")
+    p.update(files_done=1234, force=True)
+    text = buf.getvalue()
+    # no total → no invented percentage
+    assert "--%" in text
+    assert "1234 files" in text
 
 
 def test_progress_renders_transport_tag():

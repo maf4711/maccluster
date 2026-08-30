@@ -54,6 +54,37 @@ def render_bar(pct: float, *, width: int = 28) -> str:
     return "█" * filled + "░" * (width - filled)
 
 
+def render_indeterminate_bar(elapsed_s: float, *, width: int = 28, block: int = 4) -> str:
+    """Bouncing block for a phase whose total is not known yet.
+
+    An inventory does not know how many files it will find, so there is no
+    honest percentage to draw. A moving block says "working" without inventing
+    one (the old sawtooth read as real progress, then jumped backwards).
+    """
+    width = max(1, int(width))
+    block = max(1, min(int(block), width))
+    span = width - block
+    if span <= 0:
+        return "█" * width
+    pos = int(max(0.0, elapsed_s) * 8) % (2 * span)
+    if pos > span:
+        pos = 2 * span - pos
+    return "░" * pos + "█" * block + "░" * (width - block - pos)
+
+
+def clamp_pct(pct: float | None, *, floor: float = 0.0) -> float | None:
+    """Displayed percent: bounded to 0–100 and never below the phase floor.
+
+    The scan discovers work while it runs, so the raw ratio can fall when the
+    denominator grows (observed 35.0% → 5.1% mid-inventory). Within one phase
+    the number only moves forward; ``None`` stays ``None`` because an unknown
+    total must render as indeterminate, not as a made-up figure.
+    """
+    if pct is None:
+        return None
+    return max(floor, max(0.0, min(100.0, float(pct))))
+
+
 def shorten_path(path: str, max_len: int = 42) -> str:
     path = path.replace("\n", " ").strip()
     if len(path) <= max_len:
@@ -116,6 +147,11 @@ class SyncProgress:
     _dirty: bool = field(default=False, init=False)
     _finished: bool = field(default=False, init=False)
     _tty: bool = field(default=True, init=False)
+    # High-water mark of the displayed percent, plus the counter it came from.
+    # Reset on a phase change or a new counter so the bar never rewinds inside
+    # one phase but still starts over for genuinely new work (see clamp_pct).
+    _pct_floor: float = field(default=0.0, init=False)
+    _pct_source: str = field(default="", init=False)
 
     def __post_init__(self) -> None:
         stream = self.stream
@@ -126,6 +162,8 @@ class SyncProgress:
             self.min_interval_s = self.plain_interval_s
 
     def reset_timer(self) -> None:
+        self._pct_floor = 0.0
+        self._pct_source = ""
         self._started = time.monotonic()
         self._last_rate_t = self._started
         self._last_down_bytes = 0
@@ -140,6 +178,9 @@ class SyncProgress:
     def set_totals(self, *, files: int = 0, bytes_: int = 0) -> None:
         self._state.files_total = max(0, files)
         self._state.bytes_total = max(0, bytes_)
+        # New totals are a new unit of work: start the high-water mark over.
+        self._pct_floor = 0.0
+        self._pct_source = ""
         self._dirty = True
         self._draw(force=True)
 
@@ -154,7 +195,10 @@ class SyncProgress:
         if transport:
             self._state.transport = transport
         self._state.path = ""
-        # Phase change: reset sample window so rates don't spike from stale counters
+        # Phase change: percent starts over (and so does the rate sample window,
+        # so rates don't spike from stale counters).
+        self._pct_floor = 0.0
+        self._pct_source = ""
         now = time.monotonic()
         self._last_rate_t = now
         self._last_down_bytes = (
@@ -269,20 +313,23 @@ class SyncProgress:
 
         self._last_rate_t = now
 
-    def _pct(self) -> float:
+    def _pct(self) -> tuple[float | None, str]:
+        """Raw completion plus which counter produced it.
+
+        The caller only holds the no-rewind floor while the *same* counter keeps
+        answering: a phase that switches from files to bytes is measuring
+        something else, so its percent legitimately starts over.
+        """
         st = self._state
         if st.bytes_total > 0:
-            return 100.0 * min(st.bytes_done, st.bytes_total) / st.bytes_total
+            return 100.0 * min(st.bytes_done, st.bytes_total) / st.bytes_total, "bytes"
         if st.files_total > 0:
-            return 100.0 * min(st.files_done, st.files_total) / st.files_total
+            return 100.0 * min(st.files_done, st.files_total) / st.files_total, "files"
         if st.file_total > 0 and st.file_index > 0:
-            return 100.0 * min(st.file_index, st.file_total) / st.file_total
-        # Indeterminate phase (inventory): pulse by elapsed time so bar is not stuck
-        if st.phase == "inventory" or st.files_done > 0:
-            elapsed = max(0.0, time.monotonic() - self._started)
-            # Slow sawtooth 5–35% so it looks alive without lying about completion
-            return 5.0 + (elapsed % 40.0) * 0.75
-        return 0.0
+            return 100.0 * min(st.file_index, st.file_total) / st.file_total, "index"
+        # Inventory has no denominator until the walk ends — say so instead of
+        # pulsing a fake number that then falls back (35.0% → 5.1%).
+        return None, ""
 
     def _rate_part(self) -> str:
         """Always show D/U; during inventory also show scan speed."""
@@ -310,8 +357,18 @@ class SyncProgress:
         self._dirty = False
 
         st = self._state
-        pct = self._pct()
-        bar = render_bar(pct, width=self.bar_width)
+        raw, pct_source = self._pct()
+        if pct_source != self._pct_source:
+            self._pct_source = pct_source
+            self._pct_floor = 0.0
+        pct = clamp_pct(raw, floor=self._pct_floor)
+        if pct is None:
+            bar = render_indeterminate_bar(now - self._started, width=self.bar_width)
+            pct_part = f"{'--':>5}%"
+        else:
+            self._pct_floor = pct
+            bar = render_bar(pct, width=self.bar_width)
+            pct_part = f"{pct:5.1f}%"
 
         active = self._down_bps if self._traffic_lane() == "down" else self._up_bps
         if self._traffic_lane() == "scan":
@@ -350,8 +407,7 @@ class SyncProgress:
         what = shorten_path(what, 36) if what else "—"
 
         body = (
-            f"[{bar}] {pct:5.1f}%  {dir_tag}{phase}  "
-            f"{size_part}  {self._rate_part()}  {eta}  {what}"
+            f"[{bar}] {pct_part}  {dir_tag}{phase}  {size_part}  {self._rate_part()}  {eta}  {what}"
         )
         try:
             if self._tty:
