@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## 0.5.0 — 2026-08-30
+
+### Added
+- Per-peer Thunderbolt link rate in `status` / `speedtest` (each cable's own
+  negotiated speed, not a single cluster-wide number).
+- `maccluster bench --compare` and doctor fold `arep`'s bench-history.jsonl.
+- Doctor warns when a fleet peer can doze mid-sync (`pmset` sleep / Power Nap)
+  and that warning degrades the fleet exit code.
+
+### Fixed
+- Local inventory lists directories through one pooled helper (~51× on a
+  real home tree); a partial walk cannot drive a newest-wins transfer.
+- Progress percent is monotonic; planned totals reset the counters they
+  replace; `--allow-partial-inventory` is reachable from pull/push too.
+- Dated backup-dump folders stay out of home sync; SafetyNet run dirs prune
+  to the last 5.
+
 ## 0.4.0 — 2026-08-30
 
 ### Added — sync transport ladder `rdma` → `tb` → `wifi`
