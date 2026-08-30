@@ -20,6 +20,7 @@ _CLUSTER_WARN_IDS = frozenset(
         "host",
         "disk",
         "thermal",
+        "power",  # peer that sleeps/powernaps mid-sync breaks the cluster (node-b sleep=1)
     }
 )
 

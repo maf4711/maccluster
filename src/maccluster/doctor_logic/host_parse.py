@@ -15,6 +15,11 @@ _CPU_LIMIT_RE = re.compile(r"CPU_Speed_Limit\s*=\s*(\d+)", re.IGNORECASE)
 _SNTP_PAREN_RE = re.compile(r"offset[^\n]*\(\s*([+-]?\d+\.\d+)\s*\)", re.IGNORECASE)
 _SNTP_EQ_RE = re.compile(r"offset\s*[:=]\s*([+-]?\d+\.\d+)", re.IGNORECASE)
 _SNTP_PLUSMINUS_RE = re.compile(r"([+-]\d+\.\d+)\s+\+/-")
+# `pmset -g` rows; case-sensitive so "Sleep On Power Button" never matches, and
+# anchored so "disksleep"/"displaysleep" never match. Trailing text is allowed
+# ("sleep 1 (sleep prevented by powerd, ...)").
+_PMSET_SLEEP_RE = re.compile(r"^\s*sleep\s+(\d+)", re.MULTILINE)
+_PMSET_POWERNAP_RE = re.compile(r"^\s*powernap\s+(\d+)", re.MULTILINE)
 
 
 def _to_float(text: str) -> float:
@@ -100,6 +105,15 @@ def parse_rdma_enabled(text: str, returncode: int | None = None) -> bool | None:
     return None
 
 
+def parse_pmset_power(text: str) -> tuple[int | None, bool | None]:
+    """(sleep_minutes, powernap_enabled) from `pmset -g`. None = not reported."""
+    sleep_m = _PMSET_SLEEP_RE.search(text)
+    nap_m = _PMSET_POWERNAP_RE.search(text)
+    sleep = int(sleep_m.group(1)) if sleep_m else None
+    powernap = (int(nap_m.group(1)) != 0) if nap_m else None
+    return sleep, powernap
+
+
 def parse_sntp_offset_s(text: str) -> float | None:
     if not text.strip():
         return None
@@ -122,6 +136,7 @@ def snapshot_from_raw(
     df: str = "",
     uptime: str = "",
     pmset: str = "",
+    pmset_g: str | None = None,
     sntp: str | None = None,
     sntp_missing: bool = False,
     rdma: str | None = None,
@@ -130,6 +145,7 @@ def snapshot_from_raw(
 ) -> HostSnapshot:
     """`rdma_missing=None` means RDMA was not probed on this path (e.g. local host)."""
     used, free = parse_vm_stat_ram_gb(vm_stat)
+    sleep_minutes, powernap_enabled = parse_pmset_power(pmset_g) if pmset_g else (None, None)
     if rdma_missing is None:
         rdma_tool_available: bool | None = None
         rdma_enabled: bool | None = None
@@ -151,6 +167,8 @@ def snapshot_from_raw(
         ntp_missing=sntp_missing,
         rdma_tool_available=rdma_tool_available,
         rdma_enabled=rdma_enabled,
+        sleep_minutes=sleep_minutes,
+        powernap_enabled=powernap_enabled,
     )
 
 
@@ -201,12 +219,14 @@ def snapshot_from_json(node_id: str, text: str) -> HostSnapshot:
             missing = True
         rdma_val = data.get("rdma")
         rdma_missing = bool(data.get("rdma_missing")) if "rdma_missing" in data else None
+        pmset_g_val = data.get("pmset_g")
         return snapshot_from_raw(
             node_id,
             vm_stat=str(data.get("vm_stat") or ""),
             df=str(data.get("df") or ""),
             uptime=str(data.get("uptime") or ""),
             pmset=str(data.get("pmset") or ""),
+            pmset_g=None if pmset_g_val is None else str(pmset_g_val),
             sntp=None if sntp_val is None else str(sntp_val),
             sntp_missing=missing,
             rdma=None if rdma_val is None else str(rdma_val),
@@ -230,6 +250,10 @@ def snapshot_from_json(node_id: str, text: str) -> HostSnapshot:
                 else bool(data["rdma_tool_available"])
             ),
             rdma_enabled=(None if data.get("rdma_enabled") is None else bool(data["rdma_enabled"])),
+            sleep_minutes=_opt_int(data.get("sleep_minutes")),
+            powernap_enabled=(
+                None if data.get("powernap_enabled") is None else bool(data["powernap_enabled"])
+            ),
         )
     except (TypeError, ValueError) as exc:
         return HostSnapshot(
