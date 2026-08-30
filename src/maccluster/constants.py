@@ -125,6 +125,10 @@ SYNC_HOME_EXCLUDES: tuple[str, ...] = (
     ".orbstack/",
     ".docker/",
     ".grok/sessions/",
+    # Dated backup dumps (e.g. "Documents-Backup-2026-07-12"): sync never
+    # deletes, so a local cleanup on one machine keeps getting undone by the
+    # next pull as long as a peer still has the folder. Keep these local-only.
+    "**/*-Backup-20*/",
 )
 
 # Extra excludes when the tree root is ~/Developer (`maccluster sync dev`)

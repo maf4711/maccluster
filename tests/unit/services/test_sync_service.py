@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from maccluster.constants import SYNC_HOME_EXCLUDES
 from maccluster.errors import CliError
 from maccluster.ports.process import ProcessResult
 from maccluster.services.sync_filters import merge_includes, resolve_presets
@@ -34,6 +35,15 @@ def test_is_excluded_caches_and_glob():
     assert is_excluded("proj/node_modules/x", ("**/node_modules/",))
     assert is_excluded(".DS_Store", (".DS_Store",))
     assert not is_excluded("Documents/note.txt", ("Library/Caches/",))
+
+
+def test_sync_home_excludes_dated_backup_dumps():
+    # Regression: "Documents-Backup-2026-07-12" kept reappearing after local
+    # cleanup because it was pulled back in from a peer on the next sync.
+    assert is_excluded("Documents-Backup-2026-07-12/notes.txt", SYNC_HOME_EXCLUDES)
+    assert is_excluded("Desktop-Backup-2026-01-01", SYNC_HOME_EXCLUDES)
+    # Legit structure folders named just "Backups" must still sync normally.
+    assert not is_excluded("Documents/Backups/Backup/file.zip", SYNC_HOME_EXCLUDES)
 
 
 def test_plan_transfers_newest_wins():
