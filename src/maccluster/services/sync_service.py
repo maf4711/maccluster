@@ -44,16 +44,19 @@ from maccluster.services.config_service import load_and_bind_self
 from maccluster.services.sync_inventory import (
     _INV_PREF,  # noqa: F401
     _INV_SKIP_NAMES,  # noqa: F401
-    _REMOTE_INVENTORY_PY,  # noqa: F401
     _UF_DATALESS,  # noqa: F401
     FileMeta,
+    LocalInventory,  # noqa: F401
     _inv_skip_names,  # noqa: F401
     _norm_rel,  # noqa: F401
-    _remote_inventory,
     _safe_scandir,  # noqa: F401
     inventory_local,
     is_excluded,  # noqa: F401
     parse_inventory_text,  # noqa: F401
+)
+from maccluster.services.sync_inventory_remote import (
+    _REMOTE_INVENTORY_PY,  # noqa: F401
+    _remote_inventory,
 )
 from maccluster.services.sync_plan import (
     SYNC_CHUNK_BYTES,  # noqa: F401
