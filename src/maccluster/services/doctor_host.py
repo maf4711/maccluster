@@ -18,7 +18,8 @@ _REMOTE_HOST_PY = (
     " p=subprocess.run(c,capture_output=True,text=True,timeout=1.5);"
     " return p.stdout or '';"
     "d={'vm_stat':R(['vm_stat']),'df':R(['df','-P','/']),"
-    "'uptime':R(['uptime']),'pmset':R(['pmset','-g','therm'])};"
+    "'uptime':R(['uptime']),'pmset':R(['pmset','-g','therm']),"
+    "'pmset_g':R(['pmset','-g'])};"
     "s=shutil.which('sntp');"
     "d['sntp_missing']=s is None;"
     "d['sntp']=(R([s,'-d','time.apple.com']) if s else None);"
@@ -36,7 +37,11 @@ def findings_from_snapshot(
     peer: bool = False,
 ) -> list[DoctorFinding]:
     if snap.error:
-        return [checks.check_host(snap, peer=peer)]
+        findings = [checks.check_host(snap, peer=peer)]
+        if peer:
+            # unreadable node: power stays INFO (host already carries the WARN)
+            findings.append(checks.check_power(snap, peer=peer))
+        return findings
     findings = [
         checks.check_host(snap, peer=peer),
         checks.check_disk(snap, peer=peer),
@@ -46,6 +51,8 @@ def findings_from_snapshot(
     if peer:
         # self RDMA already covered by the always-on top-level `rdma` check
         findings.append(checks.check_rdma_host(snap, peer=peer))
+        # sleep/powernap regression class: a peer that dozes breaks the cluster
+        findings.append(checks.check_power(snap, peer=peer))
     return findings
 
 
