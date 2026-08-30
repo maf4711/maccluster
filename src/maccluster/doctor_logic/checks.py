@@ -295,6 +295,27 @@ def check_iperf(available: bool) -> DoctorFinding:
     )
 
 
+def check_arep_bench_history(
+    age_days: float | None, *, stale_after_days: float = 7.0
+) -> DoctorFinding | None:
+    """arep's own bench history: INFO once it is stale, silent when there is none."""
+    if age_days is None:
+        return None
+    if age_days > stale_after_days:
+        return DoctorFinding(
+            "arep_bench",
+            CheckSeverity.INFO,
+            f"arep bench history stale ({age_days:.0f}d old)",
+            "refresh: arep bench --peer <node> --transport both",
+        )
+    return DoctorFinding(
+        "arep_bench",
+        CheckSeverity.OK,
+        f"arep bench history fresh ({age_days:.1f}d old)",
+        "",
+    )
+
+
 def _host_cid(base: str, node_id: str, *, peer: bool) -> str:
     return f"{base}:{node_id}" if peer else base
 

@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from maccluster.cli.exit_codes import DEGRADED, OK
 from maccluster.commands import bench
 from maccluster.services.bench_history import (
+    AREP_BENCH_HISTORY_ENV,
     BENCH_HISTORY_ENV,
     BenchSample,
     append_samples,
@@ -90,6 +91,33 @@ def test_compare_empty_history(fake_ctx, tmp_path, monkeypatch, capsys):
     code = bench.run(fake_ctx, SimpleNamespace(compare=True, target=None, mesh=False, peer=None))
     assert code == OK
     assert "no bench history" in capsys.readouterr().out
+
+
+def test_compare_shows_arep_and_iperf_side_by_side(fake_ctx, tmp_path, monkeypatch, capsys):
+    hist = tmp_path / "h.jsonl"
+    monkeypatch.setenv(BENCH_HISTORY_ENV, str(hist))
+    _seed(hist)
+    arep = tmp_path / "arep.jsonl"
+    arep.write_text(
+        json.dumps(
+            {
+                "ts": "2026-08-03T00:00:00Z",
+                "peer": {"fingerprint": "SHA256:bb", "name": "mac-mini-b"},
+                "transport": "tcp",
+                "bytes": 5000000000,
+                "seconds": 2.0,
+                "mbps": 20000.0,
+            }
+        )
+        + "\ngarbage — malformed lines never break compare\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(AREP_BENCH_HISTORY_ENV, str(arep))
+    code = bench.run(fake_ctx, SimpleNamespace(compare=True, target=None, mesh=False, peer=None))
+    out = capsys.readouterr().out
+    assert code == DEGRADED  # regression in the iperf history still counts
+    assert "mac-mini-b" in out and "tcp" in out
+    assert "arep" in out and "iperf" in out
 
 
 def test_single_target_bench_records_history(fake_ctx, tmp_path, monkeypatch, capsys):

@@ -11,6 +11,7 @@ from maccluster.domain.enums import CheckSeverity, ReachabilityState
 from maccluster.domain.models import DoctorFinding, DoctorReport, NodeHealth
 from maccluster.health.mesh import build_mesh_health
 from maccluster.mapping.tb_identity import check_tb_identity
+from maccluster.services.bench_history import AREP_STALE_AFTER_DAYS, arep_history_age_days
 from maccluster.services.config_service import load_and_bind_self, load_config
 from maccluster.services.heal_heartbeat import read_heartbeat
 from maccluster.services.tb_service import probe_tb
@@ -144,6 +145,13 @@ def run_doctor(
         except Exception:
             iperf_ok = False
     findings.append(checks.check_iperf(iperf_ok))
+
+    # arep keeps its own bench history; nudge (INFO) when it exists but went stale.
+    arep_bench = checks.check_arep_bench_history(
+        arep_history_age_days(ctx.clock.now()), stale_after_days=AREP_STALE_AFTER_DAYS
+    )
+    if arep_bench is not None:
+        findings.append(arep_bench)
 
     if include_host:
         from maccluster.services.doctor_host import (
