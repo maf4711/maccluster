@@ -366,7 +366,8 @@ maccluster service sync-uninstall
 | `--notify` | Notify on failure |
 | `--no-speedtest` | Skip cable/iperf preflight |
 | `--timeout SEC` | Budget per heavy step (default 3600); also the `arep xfer` kill timeout |
-| `--no-progress` | Disable live progress bar |
+| `--no-progress` | Disable live progress bar (summary and JSON run log are still written) |
+| `--allow-partial-inventory` | Transfer even when the local walk was truncated. Off by default: files the walk never reached look "peer-only" to newest-wins and get pulled back over local copies |
 | `--transport rdma\|tb\|wifi` | Force one rung of the transport ladder (no downgrade); `sync dev`: single pass, no Wi-Fi top-N |
 | `--no-wifi` | `sync dev` only: skip Wi-Fi recent-repo pass |
 | `--wifi-only` | `sync dev` only: skip TB; Wi-Fi top-N only |
@@ -382,7 +383,13 @@ maccluster service sync-uninstall
 ## Progress bar
 
 On a TTY (not with `--json` / `--no-progress`), stderr shows a live line with
-percent, direction/phase, size, rate, ETA, path.
+percent, direction/phase, size, rate, ETA, path. The percent never moves
+backwards within a phase; while no total is known yet (the inventory does not
+know how many files it will find) the bar shows `--%` and a moving block
+rather than a number it cannot justify.
+
+`--no-progress` suppresses only that stderr line. The stdout summary and the
+JSON run log under `~/Library/Logs/maccluster/` are written either way.
 
 ## Default excludes
 

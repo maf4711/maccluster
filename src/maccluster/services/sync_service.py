@@ -11,9 +11,11 @@ Apple ID and internet; this path stays on the Thunderbolt mesh.
 
 This module keeps the orchestration (``sync_home``, peer resolution, exit
 codes). The phases live in sibling modules and are re-exported from here:
-``sync_ssh`` (argv builders), ``sync_inventory`` (walks + excludes),
-``sync_plan`` (diff/policy/batching), ``sync_push`` / ``sync_pull`` (ditto
-legs), ``sync_prep`` (disk-free, snapshot, iCloud, notify).
+``sync_ssh`` (argv builders), ``sync_inventory`` (local walk + excludes +
+completeness), ``sync_inventory_remote`` (the peer-side walk),
+``sync_scandir`` (the pooled killable lister), ``sync_plan``
+(diff/policy/batching), ``sync_push`` / ``sync_pull`` (ditto legs),
+``sync_prep`` (disk-free, snapshot, iCloud, notify).
 """
 
 from __future__ import annotations
