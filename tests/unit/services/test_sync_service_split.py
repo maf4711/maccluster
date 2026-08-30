@@ -30,6 +30,8 @@ _EXPORTS: dict[str, tuple[str, ...]] = {
         "_UF_DATALESS",
         "_safe_scandir",
         "inventory_local",
+        "describe_partial",
+        "guard_partial_inventory",
         "parse_inventory_text",
     ),
     "maccluster.services.sync_inventory_remote": (

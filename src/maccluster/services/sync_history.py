@@ -187,6 +187,8 @@ def _result_to_dict(result: SyncHomeResult) -> dict[str, Any]:
         "includes": list(result.includes),
         "excludes": list(result.excludes)[:50],
         "log_path": result.log_path,
+        "local_inventory_partial": getattr(result, "local_inventory_partial", False),
+        "local_inventory_note": getattr(result, "local_inventory_note", ""),
         "apfs_snapshot": result.apfs_snapshot,
         "max_files": result.max_files,
         "max_bytes": result.max_bytes,

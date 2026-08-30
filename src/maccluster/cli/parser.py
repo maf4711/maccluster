@@ -187,6 +187,15 @@ def _add_sync_tree_flags(
         help="Disable live progress bar (percent / path / speed)",
     )
     parser.add_argument(
+        "--allow-partial-inventory",
+        action="store_true",
+        help=(
+            "Transfer even when the local walk was truncated (time budget / hung "
+            "directories). Unscanned files look 'peer-only' to newest-wins and are "
+            "pulled back — off by default"
+        ),
+    )
+    parser.add_argument(
         "--force-icloud",
         action="store_true",
         help=(

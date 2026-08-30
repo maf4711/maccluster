@@ -345,6 +345,10 @@ class SyncHomeResult:
     wifi_repos: tuple[str, ...] = ()  # recent git repos on the Wi-Fi pass
     mcprt: McprtResult | None = None
     transport_priority: tuple[str, ...] = ()  # ladder order this run used
+    # Local walk did not cover the whole tree (time budget / hung directories).
+    # A partial view cannot drive a real transfer — see sync_home.
+    local_inventory_partial: bool = False
+    local_inventory_note: str = ""
 
     @property
     def ok(self) -> bool:

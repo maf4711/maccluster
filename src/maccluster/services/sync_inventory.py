@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from fnmatch import fnmatch
 from pathlib import Path
 
+from maccluster.errors import CliError
 from maccluster.render.progress import NullProgress, ProgressLike
 from maccluster.services.sync_scandir import (
     REASON_TIMEOUT,
@@ -361,6 +362,49 @@ def inventory_local(
     if out.partial:
         prog.note(f"  local inventory INCOMPLETE: {out.partial_reason}")
     return out
+
+
+def describe_partial(inv: dict[str, FileMeta]) -> str:
+    """One line saying why a local walk is incomplete — "" when it is complete."""
+    if not getattr(inv, "partial", False):
+        return ""
+    detail = str(getattr(inv, "partial_reason", "") or "walk truncated")
+    skipped = tuple(getattr(inv, "skipped_dirs", ()) or ())
+    if skipped:
+        more = f" (+{len(skipped) - 3} more)" if len(skipped) > 3 else ""
+        detail += f"; skipped: {', '.join(skipped[:3])}{more}"
+    return detail
+
+
+def guard_partial_inventory(
+    inv: dict[str, FileMeta],
+    *,
+    dry_run: bool,
+    allow_partial: bool,
+) -> str:
+    """Refuse to drive a real transfer from a walk that never saw the whole tree.
+
+    ``plan_transfers`` is newest-wins *bidirectional*: a local file the walk
+    never reached is indistinguishable from a file that only exists on the
+    peer, so it gets pulled back — silently, and reported as success. Returns
+    the note to display (empty when the inventory is complete) and raises
+    ``CliError`` when a real run would otherwise plan from a truncated view.
+    """
+    detail = describe_partial(inv)
+    if not detail:
+        return ""
+    if dry_run:
+        return f"PARTIAL local inventory ({detail}) — the plan below is incomplete"
+    if allow_partial:
+        return f"PARTIAL local inventory ({detail}) — proceeding (--allow-partial-inventory)"
+    raise CliError(
+        f"local inventory is PARTIAL ({detail}). Refusing to transfer: files the "
+        "walk never reached look like 'only on the peer' to a newest-wins sync and "
+        "would be pulled back over newer local copies. Narrow the scope with "
+        "--include/--preset, raise MACCLUSTER_INV_MAX_SEC, or pass "
+        "--allow-partial-inventory to accept that risk.",
+        exit_code=1,
+    )
 
 
 def parse_inventory_text(text: str) -> dict[str, FileMeta]:
