@@ -1,0 +1,12 @@
+{"ts":"2026-08-28T10:00:00Z","peer":{"fingerprint":"SHA256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","name":"mac-mini-b"},"transport":"rdma","bytes":21474836480,"seconds":4.295,"mbps":40000.4}
+{"ts":"2026-08-28T10:01:00Z","peer":{"fingerprint":"SHA256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","name":"mac-mini-b"},"transport":"tcp","bytes":5368709120,"seconds":2.5,"mbps":17179.9}
+{"ts":"2026-08-28T10:02:00Z","peer":{"fingerprint":"SHA256:ccccccccccccccccccccccccccccccccccccccccccc","name":"mac-mini-c"},"transport":"tcp","bytes":1000000000,"seconds":2.0}
+{"ts":"2026-08-28T10:03:00Z","peer":{"fingerprint":"SHA256:ddddddddddddddddddddddddddddddddddddddddddd"},"transport":"rdma","bytes":100,"seconds":1.0,"mbps":0.0008}
+{"ts":"2026-08-28T10:04:00Z","peer":"mac-mini-e","transport":"tcp","bytes":25000000,"seconds":2.0,"mbps":100.0}
+garbage not json
+{"peer":{"name":"mac-mini-x"}}
+{"ts":"2026-08-28T10:05:00Z","peer":{"name":"mac-mini-b"},"transport":"rdma","mbps":"fast"}
+[1,2,3]
+{"ts":"2026-08-28T10:06:00Z","peer":{"name":"mac-mini-b"},"mbps":123.0}
+
+{"ts":"2026-08-28T10:07:00Z","peer":{"name":"mac-mini-f"},"transport":"tcp","bytes":1000,"seconds":0}
