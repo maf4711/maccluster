@@ -8,7 +8,7 @@ from maccluster.app_factory import AppContext
 from maccluster.cluster_ssh import node_ssh_user, ssh_bind_argv
 from maccluster.domain.cable import (
     assess_cluster_cables,
-    grade_link_speed,
+    assess_port,
     iperf_verdict,
 )
 from maccluster.domain.enums import NodeRole
@@ -17,6 +17,7 @@ from maccluster.errors import CliError
 from maccluster.services.bench_history import record_samples, samples_from_speedtest
 from maccluster.services.config_service import load_and_bind_self
 from maccluster.services.tb_service import probe_tb
+from maccluster.topology.match import best_link_speed, ports_by_peer
 
 
 def run_speedtest(
@@ -52,28 +53,39 @@ def run_speedtest(
         tb = None
     cable = assess_cluster_cables(tb)
 
+    all_peers = tuple(n for n in cfg.nodes if n.id != self_node.id and n.role != NodeRole.SELF)
     peers = []
-    for n in cfg.nodes:
-        if n.id == self_node.id or n.role == NodeRole.SELF:
-            continue
+    for n in all_peers:
         if peer and peer not in (n.id, str(n.ip)):
             continue
         peers.append(n)
     if peer and not peers:
         raise CliError(f"no peer matched {peer!r}", exit_code=2)
 
-    # Link speed from TB Mac peer ports (best)
-    link_gbps = cable.best_mac_peer_gbps
+    # Machine-level best Mac↔Mac rate (report header only, never a peer row).
+    best_gbps = cable.best_mac_peer_gbps
+    # Attribute ports across ALL configured peers so a --peer filter can't
+    # turn the single-peer fallback into a wrong attribution.
+    peer_tb_ports = ports_by_peer(tb=tb, peers=all_peers)
 
     results: list[SpeedtestPeerResult] = []
     for n in peers:
         peer_ip = str(n.ip)
-        # Per-peer cable grade uses cluster best Mac link as proxy (topology map is coarse)
-        grade = grade_link_speed(
-            link_gbps,
-            connected=link_gbps is not None,
-        )
-        cable_summary = cable.summary
+        # Each peer row shows ITS link's negotiated rate; the per-link cable
+        # classification (assess_port) grades exactly that port.
+        matched_ports = peer_tb_ports.get(n.id, ())
+        link_gbps = best_link_speed(matched_ports)
+        if matched_ports:
+            best_port = max(matched_ports, key=lambda p: p.link_speed_gbps or 0.0)
+            assessment = assess_port(best_port)
+            grade = assessment.grade
+            cable_summary = assessment.summary
+            cable_good = assessment.good_enough_for_cluster
+        else:
+            # Port not attributable to this peer — cluster-level view, no rate.
+            grade = cable.overall_grade
+            cable_summary = cable.summary
+            cable_good = cable.good_enough
         iperf_mbps = None
         iperf_ok = False
         iperf_msg = "skipped"
@@ -111,16 +123,16 @@ def run_speedtest(
                     )
                 except Exception as exc:
                     iperf_msg = str(exc)[:200]
-        good = cable.good_enough and (
+        good = cable_good and (
             skip_iperf
             or (iperf_ok and iperf_mbps is not None and iperf_mbps >= 1000)
-            or (not iperf_ok and cable.good_enough)  # cable ok even if iperf needs server
+            or (not iperf_ok and cable_good)  # cable ok even if iperf needs server
         )
         # For "good enough" on cable-only: use cable; if iperf ran successfully use both
         if not skip_iperf and iperf_ok and iperf_mbps is not None:
-            good = cable.good_enough and iperf_mbps >= 1000
+            good = cable_good and iperf_mbps >= 1000
         elif not skip_iperf and not iperf_ok:
-            good = cable.good_enough  # still good_enough if cable is 40G; note iperf failed
+            good = cable_good  # still good_enough if cable is 40G; note iperf failed
 
         results.append(
             SpeedtestPeerResult(
@@ -142,7 +154,7 @@ def run_speedtest(
             SpeedtestPeerResult(
                 peer_id="(no peer)",
                 peer_ip="-",
-                link_speed_gbps=link_gbps,
+                link_speed_gbps=best_gbps,
                 cable_grade=cable.overall_grade.value,
                 cable_summary=cable.summary,
                 iperf_mbps=None,
@@ -156,7 +168,7 @@ def run_speedtest(
         cable_summary=cable.summary,
         cable_grade=cable.overall_grade.value,
         cable_recommendation=cable.recommendation,
-        best_link_gbps=link_gbps,
+        best_link_gbps=best_gbps,
         good_enough=cable.good_enough,
         peers=tuple(results),
         bind_ip=bind_ip,

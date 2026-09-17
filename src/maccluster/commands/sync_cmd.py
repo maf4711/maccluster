@@ -34,6 +34,9 @@ def _render_plain(result) -> str:
     ]
     if result.includes:
         lines.append(f"includes={', '.join(result.includes)}")
+    if getattr(result, "local_inventory_partial", False):
+        note = getattr(result, "local_inventory_note", "") or "PARTIAL local inventory"
+        lines.append(f"WARNING: {note}")
     if getattr(result, "wifi_repos", ()):
         lines.append(f"wifi_repos={', '.join(result.wifi_repos)}")
     mcprt = getattr(result, "mcprt", None)
@@ -189,6 +192,7 @@ def run(ctx: AppContext, args) -> int:
         identical=bool(getattr(args, "identical", False)),
         icloud_timeout_per_file=float(getattr(args, "icloud_timeout", 20.0) or 20.0),
         icloud_max_seconds=float(getattr(args, "icloud_max_seconds", 900.0) or 900.0),
+        allow_partial_inventory=bool(getattr(args, "allow_partial_inventory", False)),
     )
 
     run_tb = not wifi_only

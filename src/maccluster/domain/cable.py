@@ -55,6 +55,14 @@ class CableAssessment:
 
 @dataclass(frozen=True)
 class ClusterCableReport:
+    """Machine-level cable view. Per-link truth lives in ``assessments``.
+
+    ``best_mac_peer_gbps`` is the HIGHEST trained Mac↔Mac rate on this machine
+    — a header number. It must never stand in for one peer's link rate: with
+    two peers (80G + 40G) it silently promotes the slower one to 80G. Per-peer
+    rates come from matching each port to its node (``topology.match.ports_by_peer``).
+    """
+
     assessments: tuple[CableAssessment, ...]
     best_mac_peer_gbps: float | None
     overall_grade: CableGrade

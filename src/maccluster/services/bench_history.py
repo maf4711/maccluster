@@ -2,8 +2,12 @@
 
 Every bench, mesh bench and speedtest appends one line per measured peer to
 ``~/.local/state/maccluster/bench-history.jsonl`` (path injectable, or via
-``MACCLUSTER_BENCH_HISTORY``). ``bench --compare`` folds that log into
-last-vs-best per (peer, transport) and marks regressions > 15 %.
+``MACCLUSTER_BENCH_HISTORY``). ``arep bench`` keeps its own history at
+``~/.autoreplikator/bench-history.jsonl`` (``{ts, peer fingerprint+name,
+transport rdma|tcp, bytes, seconds, mbps}``); that file is read too and
+normalised into the same :class:`BenchSample` shape with ``source="arep"``.
+``bench --compare`` folds both logs into last-vs-best per (peer, transport,
+source) and marks regressions > 15 %.
 
 Aggregation is pure; nothing here touches the network.
 """
@@ -11,8 +15,9 @@ Aggregation is pure; nothing here touches the network.
 from __future__ import annotations
 
 import json
+import math
 import os
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -30,6 +35,10 @@ from maccluster.domain.models import (
 
 BENCH_HISTORY_ENV = "MACCLUSTER_BENCH_HISTORY"
 BENCH_HISTORY_FILE_NAME = "bench-history.jsonl"
+AREP_BENCH_HISTORY_ENV = "MACCLUSTER_AREP_HISTORY"
+AREP_HISTORY_DIR_NAME = ".autoreplikator"
+AREP_SOURCE = "arep"
+AREP_STALE_AFTER_DAYS = 7.0
 REGRESSION_THRESHOLD_PCT = 15.0
 DEFAULT_TRANSPORT = "tb"
 
@@ -40,9 +49,9 @@ class BenchSample:
 
     ts: str
     peer: str  # node id; "<peer>→self" for reverse, "<a>→<b>" for peer↔peer mesh paths
-    transport: str  # tb | rdma | wifi
+    transport: str  # tb | rdma | wifi (own history) | rdma | tcp (arep history)
     mbps: float
-    source: str  # bench | mesh | speedtest
+    source: str  # bench | mesh | speedtest (all iperf-based) | arep
     retransmits: int | None = None
     duration_s: int | None = None
 
@@ -51,6 +60,7 @@ class BenchSample:
 class CompareRow:
     peer: str
     transport: str
+    source: str  # arep | iperf
     last_mbps: float
     best_mbps: float
     delta_pct: float  # (last - best) / best * 100, never > 0
@@ -68,6 +78,15 @@ def default_bench_history_path(env: Mapping[str, str] | None = None) -> Path:
     if override:
         return Path(override).expanduser()
     return Path.home() / ".local" / "state" / CONFIG_DIR_NAME / BENCH_HISTORY_FILE_NAME
+
+
+def default_arep_history_path(env: Mapping[str, str] | None = None) -> Path:
+    """Where ``arep bench`` writes its own history (never written by maccluster)."""
+    environ = env if env is not None else os.environ
+    override = (environ.get(AREP_BENCH_HISTORY_ENV) or "").strip()
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / AREP_HISTORY_DIR_NAME / BENCH_HISTORY_FILE_NAME
 
 
 def transport_of(obj: Any, default: str = DEFAULT_TRANSPORT) -> str:
@@ -123,19 +142,36 @@ def read_samples(
     env: Mapping[str, str] | None = None,
 ) -> list[BenchSample]:
     """Parse the history; corrupt or incomplete lines are skipped."""
-    p = path or default_bench_history_path(env)
+    return _read_jsonl(path or default_bench_history_path(env), _parse_line)
+
+
+def read_arep_samples(
+    *,
+    path: Path | None = None,
+    env: Mapping[str, str] | None = None,
+) -> list[BenchSample]:
+    """arep's bench history, normalised to BenchSample; malformed lines are skipped."""
+    return _read_jsonl(path or default_arep_history_path(env), _parse_arep_line)
+
+
+def read_all_samples(
+    *,
+    path: Path | None = None,
+    arep_path: Path | None = None,
+    env: Mapping[str, str] | None = None,
+) -> list[BenchSample]:
+    """Own iperf-based history plus arep's bench history as one sample list."""
+    return read_samples(path=path, env=env) + read_arep_samples(path=arep_path, env=env)
+
+
+def _read_jsonl(p: Path, parse: Callable[[str], BenchSample | None]) -> list[BenchSample]:
     if not p.is_file():
         return []
     try:
         text = p.read_text(encoding="utf-8")
     except OSError:
         return []
-    out: list[BenchSample] = []
-    for line in text.splitlines():
-        sample = _parse_line(line)
-        if sample is not None:
-            out.append(sample)
-    return out
+    return [s for line in text.splitlines() if (s := parse(line)) is not None]
 
 
 def _parse_line(line: str) -> BenchSample | None:
@@ -155,6 +191,74 @@ def _parse_line(line: str) -> BenchSample | None:
         )
     except (ValueError, TypeError, KeyError, AttributeError):
         return None
+
+
+def _parse_arep_line(line: str) -> BenchSample | None:
+    """One arep entry: {ts, peer fingerprint+name, transport rdma|tcp, bytes, seconds, mbps}.
+
+    The peer may be an object (``name``/``displayName`` preferred, fingerprint
+    as fallback label) or a plain string. A missing ``mbps`` is derived from
+    ``bytes``/``seconds``. Anything else malformed skips the line.
+    """
+    line = line.strip()
+    if not line:
+        return None
+    try:
+        raw = json.loads(line)
+    except ValueError:
+        return None
+    if not isinstance(raw, dict):
+        return None
+    peer = _arep_peer_label(raw.get("peer"))
+    ts = raw.get("ts")
+    transport = raw.get("transport")
+    mbps = _arep_mbps(raw)
+    if peer is None or mbps is None or not isinstance(ts, str) or not ts:
+        return None
+    if not isinstance(transport, str) or not transport.strip():
+        return None
+    return BenchSample(
+        ts=ts,
+        peer=peer,
+        transport=transport.strip().lower(),
+        mbps=mbps,
+        source=AREP_SOURCE,
+        retransmits=None,
+        duration_s=_arep_duration(raw.get("seconds")),
+    )
+
+
+def _arep_peer_label(raw: Any) -> str | None:
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    if isinstance(raw, dict):
+        for key in ("name", "displayName", "fingerprint"):
+            value = raw.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return None
+
+
+def _finite(value: Any) -> float | None:
+    if isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value):
+        return float(value)
+    return None
+
+
+def _arep_mbps(raw: Mapping[str, Any]) -> float | None:
+    mbps = _finite(raw.get("mbps"))
+    if mbps is not None and mbps >= 0:
+        return mbps
+    size = _finite(raw.get("bytes"))
+    seconds = _finite(raw.get("seconds"))
+    if size is not None and size >= 0 and seconds is not None and seconds > 0:
+        return size * 8.0 / seconds / 1e6
+    return None
+
+
+def _arep_duration(seconds: Any) -> int | None:
+    value = _finite(seconds)
+    return int(round(value)) if value is not None and value > 0 else None
 
 
 # --- sample builders ----------------------------------------------------------------
@@ -262,7 +366,40 @@ def _peer_label(ctx: AppContext, target: str) -> str:
     return target
 
 
+# --- staleness (doctor) -------------------------------------------------------------
+
+
+def arep_history_age_days(
+    now: datetime,
+    *,
+    path: Path | None = None,
+    env: Mapping[str, str] | None = None,
+) -> float | None:
+    """Days since the newest arep bench sample; None without a readable history."""
+    newest: datetime | None = None
+    for s in read_arep_samples(path=path, env=env):
+        t = _parse_ts(s.ts)
+        if t is not None and (newest is None or t > newest):
+            newest = t
+    if newest is None:
+        return None
+    return (now - newest).total_seconds() / 86400.0
+
+
+def _parse_ts(ts: str) -> datetime | None:
+    try:
+        t = datetime.fromisoformat(ts)
+    except ValueError:
+        return None
+    return t if t.tzinfo is not None else t.replace(tzinfo=UTC)
+
+
 # --- pure aggregation ---------------------------------------------------------------
+
+
+def source_class(source: str) -> str:
+    """Compare bucket for a sample source: arep vs maccluster's iperf-based ones."""
+    return AREP_SOURCE if source == AREP_SOURCE else "iperf"
 
 
 def compare_last_vs_best(
@@ -271,14 +408,17 @@ def compare_last_vs_best(
     threshold_pct: float = REGRESSION_THRESHOLD_PCT,
     peer: str | None = None,
 ) -> list[CompareRow]:
-    """Per (peer, transport): latest sample vs. best ever; regression if it lost > threshold."""
-    groups: dict[tuple[str, str], list[BenchSample]] = {}
+    """Per (peer, transport, source): latest vs. best ever; regression if it lost > threshold.
+
+    arep and iperf samples never share a bucket — the two measure differently.
+    """
+    groups: dict[tuple[str, str, str], list[BenchSample]] = {}
     for s in samples:
         if peer and s.peer != peer:
             continue
-        groups.setdefault((s.peer, s.transport), []).append(s)
+        groups.setdefault((s.peer, s.transport, source_class(s.source)), []).append(s)
     rows: list[CompareRow] = []
-    for (peer_id, transport), items in sorted(groups.items()):
+    for (peer_id, transport, source), items in sorted(groups.items()):
         last = max(items, key=lambda s: s.ts)  # ISO-8601 UTC sorts lexically
         best = max(s.mbps for s in items)
         delta = 0.0 if best <= 0 else (last.mbps - best) / best * 100.0
@@ -286,6 +426,7 @@ def compare_last_vs_best(
             CompareRow(
                 peer=peer_id,
                 transport=transport,
+                source=source,
                 last_mbps=last.mbps,
                 best_mbps=best,
                 delta_pct=delta,
@@ -315,19 +456,23 @@ def format_compare(
     rows: Sequence[CompareRow], *, threshold_pct: float = REGRESSION_THRESHOLD_PCT
 ) -> str:
     if not rows:
-        return "no bench history yet (run: maccluster bench <peer> | bench --mesh | speedtest)"
+        return (
+            "no bench history yet "
+            "(run: maccluster bench <peer> | bench --mesh | speedtest | arep bench)"
+        )
     head = (
         f"=== bench history: last vs best per peer/transport (regression > {threshold_pct:g}%) ==="
     )
     width = max(len(r.peer) for r in rows)
     lines = [
         head,
-        f"  {'peer':<{width}}  transport  {'last':>14}  {'best':>14}  {'delta':>7}  n    status",
+        f"  {'peer':<{width}}  transport  source  {'last':>14}  {'best':>14}  {'delta':>7}"
+        "  n    status",
     ]
     for r in rows:
         status = "REGRESSION" if r.regression else "ok"
         lines.append(
-            f"  {r.peer:<{width}}  {r.transport:<9}  {r.last_mbps:>9.0f} Mb/s  "
+            f"  {r.peer:<{width}}  {r.transport:<9}  {r.source:<6}  {r.last_mbps:>9.0f} Mb/s  "
             f"{r.best_mbps:>9.0f} Mb/s  {r.delta_pct:>+6.1f}%  {r.samples:<4} {status}"
         )
     n_reg = sum(1 for r in rows if r.regression)

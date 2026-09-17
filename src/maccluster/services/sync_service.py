@@ -11,9 +11,11 @@ Apple ID and internet; this path stays on the Thunderbolt mesh.
 
 This module keeps the orchestration (``sync_home``, peer resolution, exit
 codes). The phases live in sibling modules and are re-exported from here:
-``sync_ssh`` (argv builders), ``sync_inventory`` (walks + excludes),
-``sync_plan`` (diff/policy/batching), ``sync_push`` / ``sync_pull`` (ditto
-legs), ``sync_prep`` (disk-free, snapshot, iCloud, notify).
+``sync_ssh`` (argv builders), ``sync_inventory`` (local walk + excludes +
+completeness), ``sync_inventory_remote`` (the peer-side walk),
+``sync_scandir`` (the pooled killable lister), ``sync_plan``
+(diff/policy/batching), ``sync_push`` / ``sync_pull`` (ditto legs),
+``sync_prep`` (disk-free, snapshot, iCloud, notify).
 """
 
 from __future__ import annotations
@@ -44,16 +46,21 @@ from maccluster.services.config_service import load_and_bind_self
 from maccluster.services.sync_inventory import (
     _INV_PREF,  # noqa: F401
     _INV_SKIP_NAMES,  # noqa: F401
-    _REMOTE_INVENTORY_PY,  # noqa: F401
     _UF_DATALESS,  # noqa: F401
     FileMeta,
+    LocalInventory,  # noqa: F401
     _inv_skip_names,  # noqa: F401
     _norm_rel,  # noqa: F401
-    _remote_inventory,
     _safe_scandir,  # noqa: F401
+    describe_partial,  # noqa: F401
+    guard_partial_inventory,
     inventory_local,
     is_excluded,  # noqa: F401
     parse_inventory_text,  # noqa: F401
+)
+from maccluster.services.sync_inventory_remote import (
+    _REMOTE_INVENTORY_PY,  # noqa: F401
+    _remote_inventory,
 )
 from maccluster.services.sync_plan import (
     SYNC_CHUNK_BYTES,  # noqa: F401
@@ -210,6 +217,7 @@ def sync_home(
     identical: bool = False,
     icloud_timeout_per_file: float = 20.0,
     icloud_max_seconds: float = 900.0,
+    allow_partial_inventory: bool = False,
     target: str = "home",
     via: str = "tb",
     transport: str | None = None,
@@ -411,6 +419,7 @@ def sync_home(
         )
 
     local_inv: dict[str, FileMeta] | None = None
+    local_partial_note = ""
     peer_results: list[SyncPeerResult] = []
     sample_n = verify_sample if verify_sample > 0 else SYNC_VERIFY_SAMPLE_DEFAULT
     sn_run: Path | None = None
@@ -487,6 +496,18 @@ def sync_home(
                 # Keep local inventory bounded; same default as remote script
                 max_sec=min(240.0, max(60.0, timeout * 0.5)),
             )
+            # A truncated walk must not drive a newest-wins bidirectional plan.
+            try:
+                local_partial_note = guard_partial_inventory(
+                    local_inv,
+                    dry_run=dry_run or compare_only,
+                    allow_partial=allow_partial_inventory,
+                )
+            except CliError:
+                prog.finish("")
+                raise
+            if local_partial_note:
+                prog.note(f"  {local_partial_note}")
             local_inv = filter_inventory(local_inv, includes_resolved)
             if quick and last_ts_ns > 0:
                 cutoff = last_ts_ns - SYNC_QUICK_SLACK_S * 1_000_000_000
@@ -833,6 +854,8 @@ def sync_home(
         target=target,
         wifi_repos=includes_resolved if via_n == "wifi" else (),
         transport_priority=tuple(cfg.transport_priority),
+        local_inventory_partial=bool(local_partial_note),
+        local_inventory_note=local_partial_note,
     )
 
     log_path: str | None = None

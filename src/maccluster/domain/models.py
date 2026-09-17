@@ -265,6 +265,8 @@ class HostSnapshot:
     ntp_missing: bool = False
     rdma_tool_available: bool | None = None  # None = not probed (e.g. local host path)
     rdma_enabled: bool | None = None
+    sleep_minutes: int | None = None  # pmset -g "sleep"; 0 = never sleeps; None = not read
+    powernap_enabled: bool | None = None  # pmset -g "powernap"; None = not read
 
 
 @dataclass(frozen=True)
@@ -345,6 +347,10 @@ class SyncHomeResult:
     wifi_repos: tuple[str, ...] = ()  # recent git repos on the Wi-Fi pass
     mcprt: McprtResult | None = None
     transport_priority: tuple[str, ...] = ()  # ladder order this run used
+    # Local walk did not cover the whole tree (time budget / hung directories).
+    # A partial view cannot drive a real transfer — see sync_home.
+    local_inventory_partial: bool = False
+    local_inventory_note: str = ""
 
     @property
     def ok(self) -> bool:

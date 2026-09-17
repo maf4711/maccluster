@@ -66,18 +66,24 @@ class RecordingRunner:
         return ProcessResult(argv=full, returncode=1, stdout="", stderr="unexpected")
 
 
+def _pmset_g(name: str) -> str:
+    return (FIXTURES / "pmset_g" / name).read_text(encoding="utf-8")
+
+
 def _ok_raw_json(
     *,
     limit: int | None = 100,
     disk_blocks: int = 41943040,
     rdma: str | None = "RDMA: enabled\n",
     rdma_missing: bool = False,
+    pmset_g: str | None = None,
 ) -> str:
     raw = {
         "vm_stat": _vm_stat_16k(),
         "df": _df(disk_blocks),
         "uptime": "load averages: 0.40 0.30 0.20",
         "pmset": "" if limit is None else f"CPU_Speed_Limit = {limit}\n",
+        "pmset_g": _pmset_g("ok.txt") if pmset_g is None else pmset_g,
         "sntp": None,
         "sntp_missing": True,
         "rdma": rdma,
@@ -233,6 +239,71 @@ def test_fleet_reports_rdma_per_peer(fake_ctx):
     # self RDMA stays on the always-on top-level "rdma" check, no per-node duplicate.
     assert "rdma:node-a" not in by_id
     assert "rdma" in by_id
+
+
+def test_remote_snapshot_snippet_is_valid_python():
+    """Live regression: `...;def R(c):` is a SyntaxError — every fleet hop then
+    exits 1 and gets mislabeled "unreachable". The snippet must compile."""
+    from maccluster.services.doctor_host import _REMOTE_HOST_PY
+
+    compile(_REMOTE_HOST_PY, "<remote-host-snapshot>", "exec")
+
+
+def test_fleet_power_ok_warn_and_unreadable(fake_ctx):
+    """node-b clean, node-c powernap+short sleep, node-d unreachable → INFO."""
+    ssh = {
+        "10.42.0.2": ProcessResult(
+            argv=("ssh",),
+            returncode=0,
+            stdout=_ok_raw_json(pmset_g=_pmset_g("ok.txt")),
+            stderr="",
+        ),
+        "10.42.0.3": ProcessResult(
+            argv=("ssh",),
+            returncode=0,
+            stdout=_ok_raw_json(pmset_g=_pmset_g("warn_powernap.txt")),
+            stderr="",
+        ),
+        "10.42.0.4": ProcessResult(
+            argv=("ssh",), returncode=255, stdout="", stderr="Connection timed out"
+        ),
+    }
+    runner = RecordingRunner(ssh_by_ip=ssh)
+    fake_ctx.runner = runner
+    fake_ctx.host = FakeHost()
+    report = run_doctor(fake_ctx, include_host=True, include_fleet=True)
+    by_id = {f.check_id: f for f in report.findings}
+
+    assert by_id["power:node-b"].severity.value == "ok"
+    assert by_id["power:node-c"].severity.value == "warn"
+    assert "powernap" in by_id["power:node-c"].summary
+    # unreadable node stays INFO on the power check (host check already warns)
+    assert by_id["power:node-d"].severity.value == "info"
+
+    # self power is not duplicated as an unscoped finding
+    assert "power" not in by_id
+
+    # remote snapshot collects full settings via pmset -g on the fleet SSH path
+    assert "pmset_g" in REMOTE_HOST_SNAPSHOT_CMD
+    assert report.exit_code == DEGRADED
+
+
+def test_fleet_power_short_sleep_warns(fake_ctx):
+    ssh = {
+        "10.42.0.2": ProcessResult(
+            argv=("ssh",),
+            returncode=0,
+            stdout=_ok_raw_json(pmset_g=_pmset_g("warn_sleep_short.txt")),
+            stderr="",
+        ),
+    }
+    runner = RecordingRunner(ssh_by_ip=ssh)
+    fake_ctx.runner = runner
+    fake_ctx.host = FakeHost()
+    report = run_doctor(fake_ctx, include_host=True, include_fleet=True, peer="node-b")
+    by_id = {f.check_id: f for f in report.findings}
+    assert by_id["power:node-b"].severity.value == "warn"
+    assert "sleep=1" in by_id["power:node-b"].summary
 
 
 def test_fleet_peer_filter_only_one_hop(fake_ctx):

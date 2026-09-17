@@ -184,7 +184,16 @@ def _add_sync_tree_flags(
     parser.add_argument(
         "--no-progress",
         action="store_true",
-        help="Disable live progress bar (percent / path / speed)",
+        help="Disable live progress bar (summary + run log are still written)",
+    )
+    parser.add_argument(
+        "--allow-partial-inventory",
+        action="store_true",
+        help=(
+            "Transfer even when the local walk was truncated (time budget / hung "
+            "directories). Unscanned files look 'peer-only' to newest-wins and are "
+            "pulled back — off by default"
+        ),
     )
     parser.add_argument(
         "--force-icloud",
@@ -378,7 +387,12 @@ def _add_home_dev_transfer_flags(
     p.add_argument(
         "--no-progress",
         action="store_true",
-        help="Disable live progress bar",
+        help="Disable live progress bar (summary + run log are still written)",
+    )
+    p.add_argument(
+        "--allow-partial-inventory",
+        action="store_true",
+        help="Transfer even when the local walk was truncated (off by default)",
     )
     p.add_argument(
         "--force-icloud",

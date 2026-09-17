@@ -6,6 +6,7 @@ from collections.abc import Callable
 from typing import Any
 
 from maccluster.app_factory import AppContext
+from maccluster.domain.cable import is_mac_peer_name
 from maccluster.domain.enums import LinkState, NodeRole, ReachabilityState
 from maccluster.domain.models import (
     TRANSPORT_NAMES,
@@ -21,6 +22,7 @@ from maccluster.services.config_service import load_and_bind_self
 from maccluster.services.sync_history import read_last_run
 from maccluster.services.tb_service import probe_tb
 from maccluster.services.transport_ladder import arep_peer_for_node, arep_status_json, clean_text
+from maccluster.topology.match import best_link_speed, ports_by_peer
 
 # Module-level sampler so consecutive `status` / `monitor` ticks share prev counters.
 _SAMPLER: TrafficSampler | None = None
@@ -181,6 +183,11 @@ def collect_status(
         elif all(p.link_state == LinkState.UNCONNECTED for p in tb.ports):
             local_link = LinkState.UNCONNECTED
 
+    # Each peer row shows ITS link's negotiated rate (controller UID / domain
+    # UUID / hostname mapping), never the machine's best Mac↔Mac link.
+    peer_nodes = tuple(n for n in cfg.nodes if n.id != self_node.id and n.role != NodeRole.SELF)
+    peer_tb_ports = ports_by_peer(tb=tb, peers=peer_nodes)
+
     node_health: list[NodeHealth] = []
     for node in cfg.nodes:
         if node.id == self_node.id or node.role == NodeRole.SELF:
@@ -215,22 +222,25 @@ def collect_status(
             except Exception:
                 pass
 
-        # Infer peer TB link when local TB has Mac-to-Mac connections and peer is up
+        # This peer's own TB link (matched port); rate only when attributable.
         peer_link = LinkState.UNKNOWN
         peer_speed: float | None = None
-        if tb and tb.ports and state == ReachabilityState.UP:
-            mac_links = [
-                p
+        matched_ports = peer_tb_ports.get(node.id, ())
+        if matched_ports:
+            peer_link = LinkState.CONNECTED
+            peer_speed = best_link_speed(matched_ports)
+        elif (
+            tb
+            and tb.ports
+            and state == ReachabilityState.UP
+            and any(
+                p.link_state == LinkState.CONNECTED and is_mac_peer_name(p.peer_name)
                 for p in tb.ports
-                if p.link_state == LinkState.CONNECTED
-                and p.peer_name
-                and "mac" in p.peer_name.lower()
-            ]
-            if mac_links:
-                peer_link = LinkState.CONNECTED
-                speeds = [p.link_speed_gbps for p in mac_links if p.link_speed_gbps is not None]
-                if speeds:
-                    peer_speed = max(speeds)
+            )
+        ):
+            # A Mac↔Mac link exists but can't be pinned to this peer:
+            # report the state without borrowing another peer's rate.
+            peer_link = LinkState.CONNECTED
 
         transport, t_source, t_detail = derive_peer_transport(
             arep_peer_for_node(arep, node),

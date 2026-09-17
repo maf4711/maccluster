@@ -295,6 +295,27 @@ def check_iperf(available: bool) -> DoctorFinding:
     )
 
 
+def check_arep_bench_history(
+    age_days: float | None, *, stale_after_days: float = 7.0
+) -> DoctorFinding | None:
+    """arep's own bench history: INFO once it is stale, silent when there is none."""
+    if age_days is None:
+        return None
+    if age_days > stale_after_days:
+        return DoctorFinding(
+            "arep_bench",
+            CheckSeverity.INFO,
+            f"arep bench history stale ({age_days:.0f}d old)",
+            "refresh: arep bench --peer <node> --transport both",
+        )
+    return DoctorFinding(
+        "arep_bench",
+        CheckSeverity.OK,
+        f"arep bench history fresh ({age_days:.1f}d old)",
+        "",
+    )
+
+
 def _host_cid(base: str, node_id: str, *, peer: bool) -> str:
     return f"{base}:{node_id}" if peer else base
 
@@ -406,6 +427,52 @@ def check_ntp(snap, *, peer: bool = False) -> DoctorFinding:
             f"|offset| > {NTP_OFFSET_WARN_S:g}s",
         )
     return DoctorFinding(cid, CheckSeverity.OK, f"{snap.node_id} ntp offset {off:.3f}s", "")
+
+
+def check_power(snap, *, peer: bool = False) -> DoctorFinding:
+    """WARN when a node can doze mid-sync: sleep < 30 min (but not 0) or powernap on.
+
+    The regression class this guards: node-b stood at sleep=1, which parked the
+    node daily and broke the cluster. sleep=0 means "never sleeps" and is OK.
+    INFO when the node's settings could not be read.
+    """
+    from maccluster.constants import SLEEP_WARN_MIN_MINUTES
+    from maccluster.domain.models import HostSnapshot
+
+    if not isinstance(snap, HostSnapshot):
+        return DoctorFinding("power", CheckSeverity.INFO, "power not probed", "")
+    cid = _host_cid("power", snap.node_id, peer=peer)
+    if snap.error:
+        return DoctorFinding(
+            cid,
+            CheckSeverity.INFO,
+            f"{snap.node_id} power settings unreadable",
+            snap.error,
+        )
+    if snap.sleep_minutes is None and snap.powernap_enabled is None:
+        return DoctorFinding(
+            cid, CheckSeverity.INFO, f"{snap.node_id} power settings not reported", ""
+        )
+    problems: list[str] = []
+    if snap.sleep_minutes is not None and 0 < snap.sleep_minutes < SLEEP_WARN_MIN_MINUTES:
+        problems.append(f"sleep={snap.sleep_minutes}m < {SLEEP_WARN_MIN_MINUTES}m")
+    if snap.powernap_enabled:
+        problems.append("powernap=1")
+    sleep_txt = "n/a" if snap.sleep_minutes is None else str(snap.sleep_minutes)
+    nap_txt = "n/a" if snap.powernap_enabled is None else str(int(snap.powernap_enabled))
+    if problems:
+        return DoctorFinding(
+            cid,
+            CheckSeverity.WARN,
+            f"{snap.node_id} {', '.join(problems)}",
+            "node can doze mid-sync — on that Mac: sudo pmset -a sleep 0 powernap 0",
+        )
+    return DoctorFinding(
+        cid,
+        CheckSeverity.OK,
+        f"{snap.node_id} sleep={sleep_txt} powernap={nap_txt}",
+        "",
+    )
 
 
 def check_rdma_host(snap, *, peer: bool = False) -> DoctorFinding:

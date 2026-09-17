@@ -85,6 +85,9 @@ ALLOWLIST_BASENAMES = frozenset(
 # doctor --host thresholds
 DISK_FREE_WARN_GIB = 20.0
 NTP_OFFSET_WARN_S = 2.0
+# a peer that sleeps sooner than this can doze mid-sync (node-b sleep=1 broke the
+# cluster daily); sleep=0 means "never sleeps" and is fine for a cluster node
+SLEEP_WARN_MIN_MINUTES = 30
 
 # Keychain (local login keychain only — security cannot create iCloud-sync items)
 KEYCHAIN_SERVICE_CONFIG = "ai.maccluster.cluster-config"

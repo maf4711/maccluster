@@ -77,6 +77,7 @@ def run_transfer(
         no_speedtest=bool(getattr(args, "no_speedtest", False)),
         timeout=getattr(args, "timeout", None),
         no_progress=bool(getattr(args, "no_progress", False)),
+        allow_partial_inventory=bool(getattr(args, "allow_partial_inventory", False)),
         force_icloud=bool(getattr(args, "force_icloud", False)),
         identical=identical,
         icloud_timeout=float(getattr(args, "icloud_timeout", 20.0) or 20.0),
