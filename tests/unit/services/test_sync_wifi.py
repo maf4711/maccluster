@@ -132,6 +132,49 @@ def test_wifi_hostname_prefers_bonjour_local():
     assert wifi_hostname(bare) is None
 
 
+def test_wifi_hostname_skips_a_local_name_that_does_not_resolve():
+    """macOS appends -2/-2930 on a name collision and `config refresh` keeps the
+    old name in the list, so entry #1 is routinely stale while a working alias
+    sits further down (node-a: CM-CFMQ2D029F.local dead, -2.local live)."""
+    node = Node(
+        id="node-a",
+        hostnames=(
+            "CM-CFMQ2D029F",
+            "CM-CFMQ2D029F.local",
+            "CM-CFMQ2D029F-2",
+            "CM-CFMQ2D029F-2.local",
+        ),
+        ip=IPv4Address("10.42.0.1"),
+        hw_uuid="u",
+    )
+    resolves = {"cm-cfmq2d029f-2.local"}
+    assert wifi_hostname(node, resolves=lambda h: h.lower() in resolves) == "CM-CFMQ2D029F-2.local"
+
+
+def test_wifi_hostname_falls_back_to_first_when_none_resolve():
+    """A resolver that answers no is not proof of a dead host — mDNS is flaky and
+    the peer may be asleep. Keep the old behaviour so ssh reports the real error."""
+    node = Node(
+        id="node-a",
+        hostnames=("a.local", "b.local"),
+        ip=IPv4Address("10.42.0.1"),
+        hw_uuid="u",
+    )
+    assert wifi_hostname(node, resolves=lambda _h: False) == "a.local"
+
+
+def test_wifi_ssh_target_prefers_the_resolvable_alias():
+    node = Node(
+        id="node-a",
+        hostnames=("dead.local", "live.local"),
+        ip=IPv4Address("10.42.0.1"),
+        hw_uuid="u",
+        ssh_target="a321@10.42.0.1",
+    )
+    target = wifi_ssh_target(node, default_user="fallback", resolves=lambda h: h == "live.local")
+    assert target == "a321@live.local"
+
+
 def test_wifi_ssh_target_uses_local_not_tb_ip():
     node = Node(
         id="node-b",
