@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## 0.6.0 — 2026-09-21
+
+### Added
+- Scheduled fleet maintenance, package updates and saved automation settings.
+- SHA-256 pinning for local release wheels and retained artifacts for verified
+  local package recovery after failed updates.
+- Shared installation locks for remote bootstrap and local maintenance.
+- Packaging smoke tests, Python 3.13 CI coverage and scheduled dependency audits.
+
+### Fixed
+- Stop fleet package updates and optional sync after an unsuccessful peer update,
+  while continuing local diagnostics and independent healing-only runs.
+- Harden process streaming, launchagent failures and sync path handling.
+
+### Limitations
+- Recovery requires a verified predecessor; no remote or timeout rollback.
+- Release wheels remain opt-in; the default update source is still main.
+
 ## 0.5.0 — 2026-08-30
 
 ### Added
