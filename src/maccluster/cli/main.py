@@ -85,6 +85,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def _dispatch(command: str):
     from maccluster.commands import (
+        automation_cmd,
         bench,
         config_cmd,
         delta_cmd,
@@ -107,6 +108,8 @@ def _dispatch(command: str):
     )
 
     table = {
+        "automation": automation_cmd.run,
+        "update": automation_cmd.run,
         "tb": tb.run,
         "init": init_cmd.run,
         "config": config_cmd.run,

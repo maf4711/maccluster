@@ -9,10 +9,10 @@
 #   unzip maccluster.zip && cd maccluster-main && ./install.sh
 #
 set -euo pipefail
+export PIP_NO_INPUT=1 PIP_DISABLE_PIP_VERSION_CHECK=1 GIT_TERMINAL_PROMPT=0
 
 REPO_SLUG="${MACCLUSTER_REPO:-maf4711/maccluster}"
 BRANCH="${MACCLUSTER_BRANCH:-main}"
-RAW_BASE="https://raw.githubusercontent.com/${REPO_SLUG}/${BRANCH}"
 ARCHIVE_URL="https://github.com/${REPO_SLUG}/archive/refs/heads/${BRANCH}.zip"
 CLONE_URL="https://github.com/${REPO_SLUG}.git"
 
@@ -38,7 +38,7 @@ fetch_to_tmpdir() {
   tmp="$(mktemp -d "${TMPDIR:-/tmp}/maccluster-install.XXXXXX")"
   echo "Downloading ${ARCHIVE_URL} ..." >&2
   if have curl; then
-    curl -fsSL "${ARCHIVE_URL}" -o "${tmp}/maccluster.zip"
+    curl -fsSL --connect-timeout 15 --max-time 120 --retry 2 "${ARCHIVE_URL}" -o "${tmp}/maccluster.zip"
   elif have wget; then
     wget -qO "${tmp}/maccluster.zip" "${ARCHIVE_URL}"
   else
@@ -78,15 +78,41 @@ install_package() {
     echo "Installing with pipx from ${root} ..."
     pipx install --force .
   elif have python3; then
-    echo "pipx not found; installing with python3 -m pip --user ..."
-    python3 -m pip install --user .
-    echo "Ensure ~/.local/bin is on PATH"
+    local venv_path="${HOME}/.local/share/maccluster/venv"
+    echo "pipx not found; installing into ${venv_path} ..."
+    python3 -m venv "${venv_path}"
+    "${venv_path}/bin/python" -m pip install --no-input --upgrade --force-reinstall .
+    mkdir -p "${HOME}/.local/bin"
+    ln -sfn "${venv_path}/bin/maccluster" "${HOME}/.local/bin/maccluster"
   else
     die "need pipx or python3"
   fi
 }
 
 main() {
+  local automate=0 schedule=0 interval=86400 config_path="" automation_source="${ARCHIVE_URL}"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --automate) automate=1; shift ;;
+      --schedule) automate=1; schedule=1; shift ;;
+      --interval|--config|--source)
+        [[ $# -ge 2 ]] || die "$1 requires a value"
+        case "$1" in
+          --interval) interval="$2" ;;
+          --config) config_path="$2" ;;
+          --source) automation_source="$2" ;;
+        esac
+        shift 2 ;;
+      --help|-h)
+        echo "usage: install.sh [--automate] [--schedule] [--interval SEC] [--config PATH] [--source PATH_OR_URL]"
+        echo "--automate runs cluster maintenance; --schedule also enables recurring maintenance."
+        return 0 ;;
+      *) die "unknown option: $1" ;;
+    esac
+  done
+  [[ "$interval" =~ ^[0-9]+$ ]] && [[ "$interval" -ge 300 ]] || die "interval must be >= 300 seconds"
+  local cli_options=()
+  if [[ -n "$config_path" ]]; then cli_options=(--config "$config_path"); fi
   local root
   if root="$(resolve_root)"; then
     echo "Local checkout: ${root}"
@@ -102,11 +128,19 @@ main() {
 
   if have maccluster; then
     maccluster --version
+    if [[ "$automate" == 1 ]]; then
+      maccluster ${cli_options[@]:+"${cli_options[@]}"} config validate
+      # Register independently: transient peer failures must not prevent retries.
+      if [[ "$schedule" == 1 ]]; then
+        maccluster ${cli_options[@]:+"${cli_options[@]}"} automation install --interval "$interval" --source "$automation_source"
+      fi
+      maccluster ${cli_options[@]:+"${cli_options[@]}"} automation run --source "$automation_source"
+    fi
     echo "Done. Try: maccluster --help"
     echo "Config:    maccluster init"
     echo "Docs:      https://github.com/${REPO_SLUG}#readme"
   else
-    echo "Installed, but maccluster not on PATH. Add ~/.local/bin to PATH." >&2
+    die "installed entry point not found; check ~/.local/bin"
   fi
 }
 

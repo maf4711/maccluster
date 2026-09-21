@@ -9,6 +9,7 @@ import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
+from maccluster.adapters.process_stream import kill_process_group
 from maccluster.constants import (
     ALLOWLIST_BASENAMES,
     EXTRA_SEARCH_PATHS,
@@ -111,10 +112,16 @@ class ProcessRunner:
         c_argv = self._prepare_argv(consumer)
         env = self._child_env()
         argv_repr = (*p_argv, "|", *c_argv)
+        deadline = time.monotonic() + timeout
         with tempfile.TemporaryFile() as perr:
             try:
                 prod = subprocess.Popen(  # noqa: S603 — shell=False, allowlisted argv
-                    p_argv, stdout=subprocess.PIPE, stderr=perr, env=env, shell=False
+                    p_argv,
+                    stdout=subprocess.PIPE,
+                    stderr=perr,
+                    env=env,
+                    shell=False,
+                    start_new_session=True,
                 )
             except OSError as exc:
                 return ProcessResult(argv_repr, 127, "", str(exc), False)
@@ -127,9 +134,10 @@ class ProcessRunner:
                     stderr=subprocess.PIPE,
                     env=env,
                     shell=False,
+                    start_new_session=True,
                 )
             except OSError as exc:
-                prod.kill()
+                kill_process_group(prod)
                 prod.wait()
                 return ProcessResult(argv_repr, 127, "", str(exc), False)
             # Close our copy so the producer sees EPIPE if the consumer exits.
@@ -139,13 +147,14 @@ class ProcessRunner:
                 out_b, err_b = cons.communicate(timeout=timeout)
             except subprocess.TimeoutExpired:
                 timed_out = True
-                cons.kill()
-                prod.kill()
+                kill_process_group(cons)
+                kill_process_group(prod)
                 out_b, err_b = cons.communicate()
             try:
-                prod.wait(timeout=30)
+                prod.wait(timeout=max(0.0, deadline - time.monotonic()))
             except subprocess.TimeoutExpired:
-                prod.kill()
+                timed_out = True
+                kill_process_group(prod)
                 prod.wait()
             perr.seek(0)
             p_err = perr.read().decode("utf-8", errors="replace")
@@ -233,67 +242,17 @@ class ProcessRunner:
         on_progress: ProgressChunkCb | None = None,
     ) -> ProcessResult:
         """Run command with file piped to stdin; optional byte progress callback."""
-        full_argv = self._prepare_argv(argv)
-        path = Path(input_path)
-        total = path.stat().st_size if path.is_file() else 0
-        env = self._child_env()
-        started = time.monotonic()
-        try:
-            proc = subprocess.Popen(  # noqa: S603
-                full_argv,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                shell=False,
-                env=env,
-            )
-        except OSError as exc:
-            raise CliError(f"cannot start process: {exc}", exit_code=1) from exc
-        assert proc.stdin is not None
-        sent = 0
-        err = ""
-        out = ""
-        timed_out = False
-        try:
-            with path.open("rb") as fh:
-                while True:
-                    if timeout and (time.monotonic() - started) > timeout:
-                        proc.kill()
-                        timed_out = True
-                        break
-                    chunk = fh.read(chunk_size)
-                    if not chunk:
-                        break
-                    proc.stdin.write(chunk)
-                    sent += len(chunk)
-                    if on_progress:
-                        on_progress(sent, total)
-            proc.stdin.close()
-            try:
-                stdout_b, stderr_b = proc.communicate(
-                    timeout=max(1.0, timeout - (time.monotonic() - started)) if timeout else None
-                )
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                stdout_b, stderr_b = proc.communicate()
-                timed_out = True
-            out = (stdout_b or b"").decode(errors="replace")
-            err = (stderr_b or b"").decode(errors="replace")
-            if on_progress and not timed_out:
-                on_progress(total if total else sent, total if total else sent)
-            rc = 124 if timed_out else int(proc.returncode or 0)
-        except Exception as exc:
-            try:
-                proc.kill()
-            except Exception:
-                pass
-            raise CliError(f"stream_stdin_file failed: {exc}", exit_code=1) from exc
-        return ProcessResult(
-            argv=tuple(full_argv),
-            returncode=rc,
-            stdout=out,
-            stderr=err,
-            timed_out=timed_out,
+        from maccluster.adapters.process_stream import stream_file
+
+        return stream_file(
+            self._prepare_argv(argv),
+            self._child_env(),
+            path=Path(input_path),
+            direction="stdin",
+            timeout=timeout,
+            expected_size=0,
+            chunk_size=chunk_size,
+            on_progress=on_progress,
         )
 
     def stream_stdout_file(
@@ -307,64 +266,15 @@ class ProcessRunner:
         on_progress: ProgressChunkCb | None = None,
     ) -> ProcessResult:
         """Run command and write stdout to file; optional byte progress callback."""
-        full_argv = self._prepare_argv(argv)
-        path = Path(output_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        env = self._child_env()
-        started = time.monotonic()
-        try:
-            proc = subprocess.Popen(  # noqa: S603
-                full_argv,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                shell=False,
-                env=env,
-            )
-        except OSError as exc:
-            raise CliError(f"cannot start process: {exc}", exit_code=1) from exc
-        assert proc.stdout is not None
-        received = 0
-        err = ""
-        timed_out = False
-        try:
-            with path.open("wb") as fh:
-                while True:
-                    if timeout and (time.monotonic() - started) > timeout:
-                        proc.kill()
-                        timed_out = True
-                        break
-                    chunk = proc.stdout.read(chunk_size)
-                    if not chunk:
-                        break
-                    fh.write(chunk)
-                    received += len(chunk)
-                    if on_progress:
-                        total = expected_size if expected_size > 0 else received
-                        on_progress(received, total)
-            try:
-                _, stderr_b = proc.communicate(
-                    timeout=max(1.0, timeout - (time.monotonic() - started)) if timeout else None
-                )
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                _, stderr_b = proc.communicate()
-                timed_out = True
-            err = (stderr_b or b"").decode(errors="replace")
-            if on_progress and not timed_out:
-                total = expected_size if expected_size > 0 else received
-                on_progress(received, total)
-            rc = 124 if timed_out else int(proc.returncode or 0)
-        except Exception as exc:
-            try:
-                proc.kill()
-            except Exception:
-                pass
-            raise CliError(f"stream_stdout_file failed: {exc}", exit_code=1) from exc
-        return ProcessResult(
-            argv=tuple(full_argv),
-            returncode=rc,
-            stdout="",
-            stderr=err,
-            timed_out=timed_out,
+        from maccluster.adapters.process_stream import stream_file
+
+        return stream_file(
+            self._prepare_argv(argv),
+            self._child_env(),
+            path=Path(output_path),
+            direction="stdout",
+            timeout=timeout,
+            expected_size=expected_size,
+            chunk_size=chunk_size,
+            on_progress=on_progress,
         )

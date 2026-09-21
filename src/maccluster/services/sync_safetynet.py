@@ -8,6 +8,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from maccluster.config.paths import default_safetynet_root
+from maccluster.errors import CliError
+from maccluster.services.sync_paths import contained_path
 
 _RUN_DIR_NAME = re.compile(r"^\d{8}T\d{6}Z$")
 
@@ -56,42 +58,31 @@ def backup_before_overwrite(
     """
     Copy existing local files that will be overwritten by pull into SafetyNet.
 
-    Returns number of files backed up. Uses hardlink/ditto when possible;
-    falls back to shutil.copy2.
+    Returns number of files backed up. Copies must own their data: a hardlink
+    would be overwritten together with the original by an in-place transfer.
     """
     n = 0
     for rel in rels:
-        if ".." in rel.split("/"):
-            continue
-        src = local_home / rel
+        src = contained_path(local_home, rel)
         if not src.exists() and not src.is_symlink():
             continue
-        dst = run_dir / rel
+        dst = contained_path(run_dir, rel)
         dst.parent.mkdir(parents=True, exist_ok=True)
         if dst.exists() or dst.is_symlink():
-            try:
-                dst.unlink()
-            except OSError:
-                pass
+            dst.unlink()
         ok = False
         try:
-            import os
-
-            os.link(src, dst)
-            ok = True
-        except OSError:
-            if abs_ditto and runner is not None:
+            if src.is_symlink():
+                dst.symlink_to(src.readlink())
+                ok = True
+            elif abs_ditto and runner is not None:
                 r = runner.run([abs_ditto, str(src), str(dst)], timeout=min(timeout, 60.0))
                 ok = r.returncode == 0
             if not ok:
-                try:
-                    if src.is_symlink():
-                        dst.symlink_to(src.readlink())
-                    else:
-                        shutil.copy2(src, dst, follow_symlinks=False)
-                    ok = True
-                except OSError:
-                    ok = False
+                shutil.copy2(src, dst, follow_symlinks=False)
+                ok = True
+        except OSError as exc:
+            raise CliError(f"SafetyNet backup failed for {rel!r}: {exc}", exit_code=1) from exc
         if ok:
             n += 1
     return n

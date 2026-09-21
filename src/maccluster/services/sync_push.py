@@ -14,6 +14,7 @@ from pathlib import Path
 
 from maccluster.app_factory import AppContext
 from maccluster.render.progress import NullProgress, ProgressLike, format_bytes
+from maccluster.services.sync_paths import contained_path, validate_relpath
 from maccluster.services.sync_plan import _chunk_rels, _sample_list, _split_large_files
 from maccluster.services.sync_ssh import _scp_argv, _scp_one_file, _ssh_argv
 
@@ -38,18 +39,13 @@ def _stage_hardlinks(
     total_files = len(rels)
     sizes = sizes or {}
     for i, rel in enumerate(rels, start=1):
-        if ".." in rel.split("/"):
-            continue
-        src = home / rel
-        dst = stage / rel
+        src = contained_path(home, rel)
+        dst = contained_path(stage, rel)
         if not src.exists() and not src.is_symlink():
             continue
         dst.parent.mkdir(parents=True, exist_ok=True)
         if dst.exists() or dst.is_symlink():
-            try:
-                dst.unlink()
-            except OSError:
-                pass
+            dst.unlink()
         sz = sizes.get(rel, 0)
         if sz <= 0:
             try:
@@ -100,10 +96,11 @@ def _transfer_large_files_push(
     prog = progress or NullProgress()
     done = 0
     for i, rel in enumerate(rels, 1):
+        validate_relpath(rel)
         sz = int(sizes.get(rel, 0) or 0)
         prog.note(f"push large file {i}/{len(rels)}: {rel} ({format_bytes(sz)})")
         prog.phase("transfer", direction="push", detail=f"scp large {format_bytes(sz)}")
-        src = local_home / rel
+        src = contained_path(local_home, rel)
         remote = f"{remote_home.rstrip('/')}/{rel}"
         # ensure remote parent exists
         parent = str(Path(remote).parent)

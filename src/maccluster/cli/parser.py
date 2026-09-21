@@ -439,6 +439,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose errors")
 
     sub = parser.add_subparsers(dest="command", metavar="COMMAND")
+    from maccluster.cli.automation_parser import add_automation_parsers
+
+    add_automation_parsers(sub)
 
     sub.add_parser("tb", help="Show Thunderbolt hardware info")
 

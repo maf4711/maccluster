@@ -14,6 +14,14 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 
 @pytest.fixture(autouse=True)
+def _isolated_user_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep default locks, caches, logs and config away from the operator's home."""
+    test_home = tmp_path / "user-home"
+    test_home.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: test_home))
+
+
+@pytest.fixture(autouse=True)
 def _no_real_arep(monkeypatch):
     """Unit tests never run the installed ``arep`` binary; rdma reads as unavailable."""
     for module in (

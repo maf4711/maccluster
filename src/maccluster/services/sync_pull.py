@@ -13,10 +13,11 @@ from pathlib import Path
 
 from maccluster.app_factory import AppContext
 from maccluster.render.progress import NullProgress, ProgressLike, format_bytes
+from maccluster.services.sync_paths import contained_path, validate_relpath
 from maccluster.services.sync_plan import _chunk_rels, _sample_list, _split_large_files
 from maccluster.services.sync_ssh import _scp_argv, _scp_one_file, _ssh_argv
 
-_REMOTE_STAGE_PY = 'import os, stat, subprocess, sys\n\nhome, list_path, stage, archive = sys.argv[1:5]\nos.makedirs(stage, exist_ok=True)\nUF_DATALESS = 0x40000000\nn = 0\nskipped = 0\nwith open(list_path, encoding="utf-8") as fh:\n    for line in fh:\n        rel = line.strip()\n        if not rel or ".." in rel.split("/"):\n            continue\n        src = os.path.join(home, rel)\n        dst = os.path.join(stage, rel)\n        if not os.path.lexists(src):\n            skipped += 1\n            continue\n        try:\n            st = os.lstat(src)\n        except OSError:\n            skipped += 1\n            continue\n        if getattr(st, "st_flags", 0) & UF_DATALESS:\n            skipped += 1\n            continue\n        if not (stat.S_ISREG(st.st_mode) or stat.S_ISLNK(st.st_mode)):\n            skipped += 1\n            continue\n        # Unreadable dataless-ish edge cases\n        if not os.access(src, os.R_OK) and not stat.S_ISLNK(st.st_mode):\n            skipped += 1\n            continue\n        os.makedirs(os.path.dirname(dst) or ".", exist_ok=True)\n        if os.path.lexists(dst):\n            try:\n                os.unlink(dst)\n            except OSError:\n                pass\n        ok = False\n        try:\n            os.link(src, dst)\n            ok = True\n        except OSError:\n            try:\n                r = subprocess.run(\n                    ["/bin/cp", "-p", src, dst],\n                    stdout=subprocess.DEVNULL,\n                    stderr=subprocess.DEVNULL,\n                    timeout=30,\n                    check=False,\n                )\n                ok = r.returncode == 0 and os.path.lexists(dst)\n            except Exception:\n                ok = False\n        if ok:\n            n += 1\n        else:\n            skipped += 1\n\nif n == 0:\n    print("staged=0 skipped=%d archive_rc=0" % skipped, flush=True)\n    open(archive, "wb").close()\n    sys.exit(0)\n\nrc = 1\ntry:\n    rc = subprocess.run(\n        ["/usr/bin/ditto", "-c", stage, archive],\n        timeout=max(120, min(3600, n // 10 + 60)),\n        check=False,\n    ).returncode\nexcept Exception:\n    rc = 1\n\narch_ok = os.path.isfile(archive) and os.path.getsize(archive) > 0\nif rc != 0 and arch_ok:\n    rc = 0\nprint("staged=%d skipped=%d archive_rc=%d" % (n, skipped, rc), flush=True)\n# Soft-ok empty transfer only when nothing staged; never claim success with missing archive\nif n > 0 and not arch_ok:\n    sys.exit(1)\nsys.exit(0 if arch_ok or n == 0 else rc)\n'
+_REMOTE_STAGE_PY = 'import os, stat, subprocess, sys\n\nhome, list_path, stage, archive = sys.argv[1:5]\nos.makedirs(stage, exist_ok=True)\nUF_DATALESS = 0x40000000\nn = 0\nskipped = 0\nwith open(list_path, encoding="utf-8") as fh:\n    for line in fh:\n        rel = line.rstrip("\\n")\n        if not rel or rel.startswith("/") or any(p in ("", ".", "..") for p in rel.split("/")) or any(ord(c) < 32 for c in rel):\n            continue\n        src = os.path.join(home, rel)\n        dst = os.path.join(stage, rel)\n        if not os.path.lexists(src):\n            skipped += 1\n            continue\n        try:\n            st = os.lstat(src)\n        except OSError:\n            skipped += 1\n            continue\n        if getattr(st, "st_flags", 0) & UF_DATALESS:\n            skipped += 1\n            continue\n        if not (stat.S_ISREG(st.st_mode) or stat.S_ISLNK(st.st_mode)):\n            skipped += 1\n            continue\n        # Unreadable dataless-ish edge cases\n        if not os.access(src, os.R_OK) and not stat.S_ISLNK(st.st_mode):\n            skipped += 1\n            continue\n        os.makedirs(os.path.dirname(dst) or ".", exist_ok=True)\n        if os.path.lexists(dst):\n            try:\n                os.unlink(dst)\n            except OSError:\n                pass\n        ok = False\n        try:\n            os.link(src, dst)\n            ok = True\n        except OSError:\n            try:\n                r = subprocess.run(\n                    ["/bin/cp", "-p", src, dst],\n                    stdout=subprocess.DEVNULL,\n                    stderr=subprocess.DEVNULL,\n                    timeout=30,\n                    check=False,\n                )\n                ok = r.returncode == 0 and os.path.lexists(dst)\n            except Exception:\n                ok = False\n        if ok:\n            n += 1\n        else:\n            skipped += 1\n\nif n == 0:\n    print("staged=0 skipped=%d archive_rc=0" % skipped, flush=True)\n    open(archive, "wb").close()\n    sys.exit(0)\n\nrc = 1\ntry:\n    rc = subprocess.run(\n        ["/usr/bin/ditto", "-c", stage, archive],\n        timeout=max(120, min(3600, n // 10 + 60)),\n        check=False,\n    ).returncode\nexcept Exception:\n    rc = 1\n\narch_ok = os.path.isfile(archive) and os.path.getsize(archive) > 0\nif rc != 0 and arch_ok:\n    rc = 0\nprint("staged=%d skipped=%d archive_rc=%d" % (n, skipped, rc), flush=True)\n# Soft-ok empty transfer only when nothing staged; never claim success with missing archive\nif n > 0 and not arch_ok:\n    sys.exit(1)\nsys.exit(0 if arch_ok or n == 0 else rc)\n'
 
 
 def _transfer_large_files_pull(
@@ -37,10 +38,13 @@ def _transfer_large_files_pull(
     prog = progress or NullProgress()
     done = 0
     for i, rel in enumerate(rels, 1):
+        validate_relpath(rel)
         sz = int(sizes.get(rel, 0) or 0)
         prog.note(f"pull large file {i}/{len(rels)}: {rel} ({format_bytes(sz)})")
         prog.phase("transfer", direction="pull", detail=f"scp large {format_bytes(sz)}")
-        dest = local_home / rel
+        dest = contained_path(local_home, rel)
+        if dest.is_symlink():
+            raise ValueError(f"refusing large-file pull through symlink: {rel!r}")
         remote = f"{remote_home.rstrip('/')}/{rel}"
         rc, err = _scp_one_file(
             ctx,
@@ -84,6 +88,8 @@ def _transfer_pull_once(
     bind_ip: str | None = None,
 ) -> tuple[int, str, str, int]:
     prog = progress or NullProgress()
+    for rel in rels:
+        contained_path(local_home, rel)
     payload = sum(sizes.get(r, 0) for r in rels)
     if not rels:
         return 0, "pull: 0 files", "", 0

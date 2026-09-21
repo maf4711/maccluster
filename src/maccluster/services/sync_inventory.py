@@ -18,6 +18,7 @@ from pathlib import Path
 
 from maccluster.errors import CliError
 from maccluster.render.progress import NullProgress, ProgressLike
+from maccluster.services.sync_paths import validate_relpath
 from maccluster.services.sync_scandir import (
     REASON_TIMEOUT,
     REASON_UNREADABLE,  # noqa: F401 — re-exported for callers/tests
@@ -206,6 +207,7 @@ def inventory_local(
 
     def _emit_path(path: Path, rel: str) -> bool:
         nonlocal n_emit, bytes_emit
+        validate_relpath(rel)
         if is_excluded(rel, excludes):
             return False
         try:
@@ -240,6 +242,9 @@ def inventory_local(
                 rel = f"{rel_dir}/{d}" if rel_dir else d
                 rel = rel.replace("\\", "/")
                 if is_excluded(rel, excludes) or is_excluded(rel + "/", excludes):
+                    continue
+                if (Path(dirpath) / d).is_symlink():
+                    _emit_path(Path(dirpath) / d, rel)
                     continue
                 keep.append(d)
             dirnames[:] = keep
@@ -312,6 +317,9 @@ def inventory_local(
                 p0 = os.path.join(str(root), inc)
                 if not os.path.lexists(p0):
                     continue
+                if not Path(p0).is_dir() or Path(p0).is_symlink():
+                    _emit_path(Path(p0), inc)
+                    continue
                 base = inc.split("/")[0]
                 hang_prone = base in ("Documents", "Desktop")
                 if hang_prone and "/" not in inc:
@@ -319,12 +327,12 @@ def inventory_local(
                     if kids is None:
                         _record_skip(p0, worker.last_reason)
                         continue
-                    for name, path, is_dir, is_file in kids:
+                    for name, path, is_dir, _is_file in kids:
                         if name in _INV_SKIP_NAMES or name == ".DS_Store":
                             continue
                         if is_dir:
                             walk_jobs.append((path, f"{inc}/{name}", True))
-                        elif is_file:
+                        else:
                             rel = os.path.relpath(path, root).replace("\\", "/")
                             _emit_path(Path(path), rel)
                 else:
@@ -416,8 +424,7 @@ def parse_inventory_text(text: str) -> dict[str, FileMeta]:
         if len(parts) < 3:
             continue
         rel, mtime_s, size_s = parts[0], parts[1], parts[2]
-        if ".." in rel.split("/"):
-            continue
+        validate_relpath(rel)
         try:
             out[rel] = FileMeta(mtime_ns=int(mtime_s), size=int(size_s))
         except ValueError:

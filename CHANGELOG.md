@@ -450,3 +450,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Optional `iperf3` bandwidth bench and optional SSH peer probes.
 - Plaintext symbols + optional rich monitor; `--json` with `schema_version`.
 - Exit codes: 0 ok, 1 error, 2 usage, 3 degraded.
+# Unreleased
+
+- Add unattended cluster maintenance, local updates, optional persisted schedules,
+  structured receipts, and opt-in verified home sync.
+- Verify and reuse one wheel across peers; preserve existing peer configuration
+  during automation, honor remote `--no-config`, and make remote dry runs inert.
+- Report LaunchAgent activation failures and reuse unchanged loaded services.
+- Use kernel-backed mutation locks, enforce transfer deadlines across child
+  processes, validate heartbeat data, and write heartbeats atomically.
+- Keep SafetyNet backups independent of overwritten files, reject unsafe sync
+  paths, and include file/directory symlinks consistently in inventory.
+- Isolate test home-directory state and add failure-path regression coverage.

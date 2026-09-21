@@ -30,6 +30,7 @@ from typing import IO, TYPE_CHECKING, Literal, Protocol
 
 from maccluster.constants import TIMEOUT_SYNC
 from maccluster.errors import CliError
+from maccluster.services.sync_paths import validate_relpath as _check_rel
 from maccluster.services.transport_ladder import (
     AREP_BIN,
     TransportFailed,
@@ -120,26 +121,6 @@ class XferRunner(Protocol):
 
 
 # --- manifest ----------------------------------------------------------------------------
-
-
-def _check_rel(rel: object) -> str:
-    """A manifest rel is a normalised relative path arep may join onto a home.
-
-    Rejected: non-str, empty, absolute, any ``.``/``..``/empty component,
-    control characters (incl. NUL and newline) and text that is not valid
-    UTF-8 (lone surrogates from a mis-decoded name). ``ValueError`` — the
-    whole rung refuses rather than dropping a file silently.
-    """
-    if not isinstance(rel, str) or not rel:
-        raise ValueError(f"unsafe manifest rel {rel!r}: empty or not a string")
-    if rel.startswith("/"):
-        raise ValueError(f"unsafe manifest rel {rel!r}: absolute path")
-    if any(part in ("", ".", "..") for part in rel.split("/")):
-        raise ValueError(f"unsafe manifest rel {rel!r}: '.', '..' or empty component")
-    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in rel):
-        raise ValueError(f"unsafe manifest rel {rel!r}: control character")
-    rel.encode("utf-8")  # UnicodeEncodeError is a ValueError
-    return rel
 
 
 def manifest_lines(rels: Iterable[str], inv: Mapping[str, FileMeta]) -> Iterator[str]:

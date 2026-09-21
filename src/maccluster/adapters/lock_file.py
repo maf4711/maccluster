@@ -1,9 +1,11 @@
-"""File lock for mutate operations (PID + stale takeover)."""
+"""Kernel-backed mutation lock; the persistent inode must never be unlinked."""
 
 from __future__ import annotations
 
 import contextlib
+import fcntl
 import os
+import stat
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -28,55 +30,35 @@ class _LockCtx:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         if self.path.is_symlink():
             raise CliError(f"refusing lock through symlink: {self.path}", exit_code=2)
-        deadline = time.monotonic() + self.timeout
-        while True:
-            try:
-                self._fd = os.open(
-                    str(self.path),
-                    os.O_CREAT | os.O_EXCL | os.O_WRONLY,
-                    0o600,
-                )
-                os.write(self._fd, f"{os.getpid()}\n{time.time()}\n".encode())
-                return
-            except FileExistsError:
-                if self._try_stale():
-                    continue
-                if time.monotonic() >= deadline:
-                    raise CliError(
-                        f"mutate lock in progress: {self.path}",
-                        exit_code=1,
-                    ) from None
-                time.sleep(0.1)
+        fd = os.open(self.path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+        self._fd = fd
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise CliError(f"lock must be a regular file: {self.path}", exit_code=2)
+            deadline = time.monotonic() + self.timeout
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        raise CliError(
+                            f"mutate lock in progress: {self.path}", exit_code=1
+                        ) from None
+                    time.sleep(min(0.1, max(0.0, deadline - time.monotonic())))
+            os.fchmod(fd, 0o600)
+            os.ftruncate(fd, 0)
+            os.write(fd, f"{os.getpid()}\n{time.time()}\n".encode())
+        except BaseException:
+            self.__exit__()
+            raise
 
     def __exit__(self, *exc: object) -> None:
         if self._fd is not None:
-            try:
-                os.close(self._fd)
-            except OSError:
-                pass
+            os.close(self._fd)
             self._fd = None
-        try:
-            self.path.unlink(missing_ok=True)
-        except OSError:
-            pass
-
-    def _try_stale(self) -> bool:
-        try:
-            text = self.path.read_text(encoding="utf-8")
-            lines = text.strip().splitlines()
-            if not lines:
-                self.path.unlink(missing_ok=True)
-                return True
-            pid = int(lines[0].strip())
-            # If process gone, take over
-            try:
-                os.kill(pid, 0)
-                return False
-            except OSError:
-                self.path.unlink(missing_ok=True)
-                return True
-        except Exception:
-            return False
+        # Closing releases the kernel lock, including on process death.
+        # Unlinking would let waiters acquire distinct inodes simultaneously.
 
 
 @contextlib.contextmanager

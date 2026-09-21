@@ -3,6 +3,41 @@
 from __future__ import annotations
 
 import html
+import plistlib
+from pathlib import Path
+
+
+def render_automation_plist(
+    *,
+    label: str,
+    program: str,
+    config_path: str,
+    interval_seconds: int = 3600,
+) -> str:
+    logs = Path.home() / "Library" / "Logs" / "maccluster"
+    return plistlib.dumps(
+        {
+            "Label": label,
+            "ProgramArguments": [
+                program,
+                "--config",
+                config_path,
+                "--json",
+                "automation",
+                "run",
+                "--saved",
+            ],
+            "RunAtLoad": False,
+            "StartInterval": interval_seconds,
+            "StandardOutPath": str(logs / "automation.log"),
+            "StandardErrorPath": str(logs / "automation.err"),
+            "EnvironmentVariables": {
+                "PATH": str(Path.home() / ".local" / "bin")
+                + ":/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+            },
+        },
+        sort_keys=False,
+    ).decode("utf-8")
 
 
 def render_heal_plist(

@@ -69,6 +69,9 @@ default) sets the order of the sync transport ladder — see
 
 | Command | Mutation | Notes |
 |---|---|---|
+| `automation run` | local + peers | Unattended updates, peer installation, healing, services and diagnostics. `--dry-run`, `--peer`, `--local-only`, `--no-update`; optional verified `--sync`. |
+| `automation install\|status\|uninstall` | LaunchAgent | Optional recurring maintenance with persisted options and per-step receipts. See [Automation](docs/AUTOMATION.md). |
+| `update` | local package | Build and verify an update from a local wheel/checkout or HTTPS archive; `--dry-run` plans without writes. |
 | `tb` | no | Thunderbolt ports, capability, speeds, peers |
 | `init` | config file | Template with subnet `10.42.0.0/24`; `--force` backups existing |
 | `config show` | no | Print resolved config |
@@ -233,6 +236,7 @@ make verify
 
 Tests use fixtures and fake adapters; no live 4-node cluster is required in CI.
 On non-macOS CI hosts set `MACCLUSTER_SKIP_PLATFORM_GUARD=1`.
+Tests isolate default home-directory state, locks and logs in temporary directories.
 
 ## FAQ
 
