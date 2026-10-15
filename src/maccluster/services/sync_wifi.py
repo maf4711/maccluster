@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import socket
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
@@ -66,22 +68,54 @@ def list_recent_repos(root: Path | str, limit: int = 10) -> tuple[str, ...]:
     return tuple(name for _, name in scored[:limit])
 
 
-def wifi_hostname(node: Node) -> str | None:
-    """First Bonjour ``*.local`` hostname from cluster.toml, if any."""
-    for raw in node.hostnames:
-        host = str(raw).strip()
-        if host.lower().endswith(".local"):
+def _resolves(host: str) -> bool:
+    """Whether *host* has an address right now. Name lookup only — no connect."""
+    try:
+        socket.getaddrinfo(host, None)
+    except (OSError, UnicodeError):
+        return False
+    return True
+
+
+def wifi_hostname(
+    node: Node,
+    *,
+    resolves: Callable[[str], bool] | None = None,
+) -> str | None:
+    """First Bonjour ``*.local`` hostname from cluster.toml that resolves.
+
+    Entry #1 is routinely stale: macOS appends ``-2``/``-2930`` to the computer
+    name on a collision, and `config refresh` appends the new name rather than
+    replacing the old one, so a node commonly carries both a dead and a live
+    ``.local``. Committing to the first match made the Wi-Fi rung unusable for
+    that node even though a working alias sat two entries below it.
+
+    If none of them resolve, the first is still returned: mDNS is flaky and a
+    sleeping peer answers nothing, so ssh should report the real error rather
+    than this function inventing "no Wi-Fi target".
+    """
+    check = resolves or _resolves
+    candidates = [
+        host for raw in node.hostnames if (host := str(raw).strip()).lower().endswith(".local")
+    ]
+    for host in candidates:
+        if check(host):
             return host
-    return None
+    return candidates[0] if candidates else None
 
 
-def wifi_ssh_target(node: Node, *, default_user: str) -> str | None:
+def wifi_ssh_target(
+    node: Node,
+    *,
+    default_user: str,
+    resolves: Callable[[str], bool] | None = None,
+) -> str | None:
     """SSH target for the Wi-Fi pass: ``user@host.local``, never the TB IP.
 
     ``node.ssh_target`` may be ``user@10.42.0.x``; that IP is TB-only and must
     not be reused here. The user part is kept.
     """
-    host = wifi_hostname(node)
+    host = wifi_hostname(node, resolves=resolves)
     if not host:
         return None
     user = (default_user or "").strip()
