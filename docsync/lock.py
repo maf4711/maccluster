@@ -19,7 +19,7 @@ MAX_RECORD = 4096
 def _record() -> bytes:
     head = f"{os.getpid()}\n{time.time():.3f}\n".encode()
     cmd = shlex.join(sys.argv).replace("\n", " ").encode()[: MAX_RECORD - len(head) - 1]
-    return head + cmd.decode(errors="ignore").encode() + b"\n"
+    return head + cmd.decode(errors="ignore").encode() + b"\n"  # drop a UTF-8 sequence cut in half
 
 
 def acquire(state_dir: Path, wait: float = 0.0):

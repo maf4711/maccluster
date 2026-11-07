@@ -70,18 +70,19 @@ def kill_descendants(grace: float = 1.0) -> None:
     """SIGTERM this process's descendants, SIGKILL whatever is left after `grace` seconds.
     Never signals anything outside this process's own tree."""
     pids = descendants()
-    for sig in (signal.SIGTERM, signal.SIGKILL):
-        for p in pids:
-            try:
-                os.kill(p, sig)
-            except OSError:
-                pass
-        end = time.monotonic() + grace
-        while sig == signal.SIGTERM and time.monotonic() < end and _alive(pids):
-            time.sleep(0.05)
-        pids = [p for p in pids if _alive([p])]
-        if not pids:
-            return
+    _signal(pids, signal.SIGTERM)
+    end = time.monotonic() + grace
+    while time.monotonic() < end and _alive(pids):
+        time.sleep(0.05)
+    _signal([p for p in pids if _alive([p])], signal.SIGKILL)
+
+
+def _signal(pids: list[int], sig: int) -> None:
+    for p in pids:
+        try:
+            os.kill(p, sig)
+        except OSError:
+            pass
 
 
 def _alive(pids: list[int]) -> bool:

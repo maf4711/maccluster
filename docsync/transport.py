@@ -12,6 +12,7 @@ import shlex
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -197,7 +198,6 @@ def _test_hang() -> None:
     if flag != "1":
         os.unlink(flag)
     subprocess.run(["sleep", "86400"])
-    import threading
     threading.Event().wait()
 
 
