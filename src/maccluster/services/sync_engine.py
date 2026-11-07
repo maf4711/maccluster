@@ -23,7 +23,7 @@ def sync_tree(
     ctx: AppContext, *, engine: str | None = None, force_deletes: bool = False, **kwargs
 ) -> SyncHomeResult:
     """`sync_home` keyword arguments plus ``engine`` (auto|docsync|ditto) and ``force_deletes``."""
-    from maccluster.services.sync_service import sync_home
+    from maccluster.services.sync_service import normalize_sync_target, sync_home
 
     policy = (kwargs.get("conflict_policy") or "newer").strip().lower()
     reasons = sync_docsync.ditto_only_reasons(
@@ -34,6 +34,7 @@ def sync_tree(
         force_icloud=bool(kwargs.get("force_icloud")),
         identical=bool(kwargs.get("identical")),
         quick=bool(kwargs.get("quick")),
+        target=normalize_sync_target(kwargs.get("target", "home")) or "home",
         max_files=kwargs.get("max_files"),
         max_bytes=kwargs.get("max_bytes"),
     )
@@ -90,6 +91,19 @@ def _sync_docsync(
         prog.note("default scope: " + ", ".join(includes) + "  (pass --full-home for entire $HOME)")
     elif kw.get("full_home") and includes:
         raise CliError("use either --full-home or --preset/--include, not both", exit_code=2)
+    includes, dropped = sync_docsync.drop_git_trees(includes)
+    if dropped:
+        prog.note(
+            "docsync engine skips git trees: "
+            + ", ".join(dropped)
+            + "  (sync repos with git, or `maccluster sync dev --engine ditto`)"
+        )
+    if kw.get("full_home"):
+        excludes = excludes + tuple(f"{t}/" for t in sync_docsync.GIT_TREES)
+    if target == "home" and not includes and not kw.get("full_home"):
+        raise CliError(
+            "nothing to sync with the docsync engine after leaving out git trees", exit_code=2
+        )
 
     peers = _resolve_peers(
         cfg.nodes,
