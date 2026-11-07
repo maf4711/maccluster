@@ -183,3 +183,50 @@ class ThunderboltTests(unittest.TestCase):
             discover.tb_networks, discover.cluster_tb_subnet = orig
         self.assertEqual(got, [("10.42.0.1", "Thunderbolt"), ("mini.local", "LAN"),
                                ("169.254.9.9", "Thunderbolt (link down)")])
+
+
+class ThunderboltProfilerTests(unittest.TestCase):
+    SAMPLE = """Thunderbolt/USB4:
+
+    Thunderbolt/USB4 Bus 1:
+
+      Vendor Name: Apple Inc.
+      Device Name: MacBook Pro
+      UID: 0x05AC20D5BAF28991
+      Port:
+          Status: No device connected
+          Link Status: 0x100
+          Speed: Up to 120 Gb/s
+          Receptacle: 2
+
+    Thunderbolt/USB4 Bus 0:
+
+      Vendor Name: Apple Inc.
+      Device Name: MacBook Pro
+      UID: 0x05AC20D5BAF28990
+      Port:
+          Status: Device connected
+          Link Status: 0x2
+          Speed: Up to 40 Gb/s
+          Receptacle: 1
+      Mac mini:
+
+          Vendor Name: Apple Inc.
+          Device Name: Mac mini
+          UID: 0x05AC51E771159CF0
+"""
+
+    def test_ports_speed_and_device(self):
+        from docsync.thunderbolt import TBState, parse_profiler_text
+        ports = parse_profiler_text(self.SAMPLE)
+        self.assertEqual(len(ports), 2)
+        idle, up = ports
+        self.assertFalse(idle.connected)
+        self.assertEqual((idle.speed_gbps, idle.receptacle), (120, "2"))
+        self.assertTrue(up.connected)
+        self.assertEqual((up.speed_gbps, up.receptacle, up.device, up.device_uid), (40, "1", "Mac mini", "0x05AC51E771159CF0"))
+        st = TBState(ports=ports, active_ifaces={"bridge0": ["10.42.0.3"]})
+        self.assertTrue(st.link_up)
+        self.assertEqual(st.label(), "Thunderbolt 40 Gb/s")
+        self.assertEqual(TBState(ports=ports).label(), "Thunderbolt cable attached, bridge has no IP")
+        self.assertEqual(TBState(ports=[idle], interfaces=["bridge0"]).label(), "no Thunderbolt link")

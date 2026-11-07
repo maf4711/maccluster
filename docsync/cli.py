@@ -10,7 +10,7 @@ import sys
 import time
 from pathlib import Path
 
-from docsync import __version__, agent, discover
+from docsync import __version__, agent, discover, thunderbolt
 from docsync.config import (CONFIG_FILE, MACCLUSTER_CONFIG, STATE_DIR, Config, Peer, load_config,
                             local_hostnames, peers_from_maccluster, save_config)
 from docsync.manifest import scan
@@ -102,9 +102,7 @@ def cmd_init(a) -> int:
 def cmd_peers(a) -> int:
     cfg = load_config()
     print(f"local: {cfg.local_root}   excludes: {len(cfg.excludes)}   policy: {cfg.conflict_policy}")
-    nets = discover.tb_networks()
-    print(f"thunderbolt: {', '.join(str(n) for n in nets) if nets else 'no active link'}   "
-          f"(ifaces: {', '.join(discover.tb_interfaces()) or '-'})")
+    print(thunderbolt.render(thunderbolt.state()))
     for p in cfg.peers:
         host, via = resolve_peer(p)
         state = f"→ {host} via {via}" if host else "unreachable"
@@ -113,6 +111,25 @@ def cmd_peers(a) -> int:
         print(f"   {p.name:<10} user={p.user or os.environ.get('USER', '?'):<8} {state:<48} last sync: {last}")
     print(agent.status())
     return 0
+
+
+def cmd_tb(a) -> int:
+    st = thunderbolt.state()
+    print(thunderbolt.render(st))
+    cfg = None
+    try:
+        cfg = load_config()
+    except FileNotFoundError:
+        pass
+    if cfg:
+        for p in cfg.peers:
+            tb_hosts = [h for h, via in discover.order_hosts(p.hosts) if via.startswith("Thunderbolt")]
+            if not tb_hosts:
+                print(f"   {p.name:<10} no Thunderbolt address configured")
+                continue
+            ms = discover.ping(tb_hosts[0]) if st.link_up else None
+            print(f"   {p.name:<10} {tb_hosts[0]:<16} {'%.1f ms over Thunderbolt' % ms if ms is not None else 'not reachable over Thunderbolt'}")
+    return 0 if st.link_up else 1
 
 
 def cmd_discover(a) -> int:
@@ -150,6 +167,9 @@ def cmd_sync(a, dry: bool) -> int:
             if host is None:
                 rep = run_peer(cfg, p.name, _Unreachable(p), dry=dry)
             else:
+                if via == "Thunderbolt":
+                    speed = thunderbolt.state().best_speed
+                    via = f"Thunderbolt {speed} Gb/s" if speed else via
                 rep = run_peer(cfg, p.name, _transport(p, host), dry=dry, verbose=a.verbose, log=log,
                                progress=not a.quiet and sys.stderr.isatty())
                 rep.via = via
@@ -223,8 +243,7 @@ def cmd_doctor(a) -> int:
     if icloud_managed(cfg.local_root):
         print("           ⚠ this folder is iCloud 'Desktop & Documents' — Macs on the same Apple ID are already")
         print("             synced by iCloud; docsync skips evicted files and is meant for peers on OTHER accounts")
-    nets = discover.tb_networks()
-    print(f"thunderbolt {', '.join(str(n) for n in nets) if nets else 'no active link'} (ifaces: {', '.join(discover.tb_interfaces()) or '-'})")
+    print(thunderbolt.render(thunderbolt.state()))
     for p in cfg.peers:
         host, via = resolve_peer(p)
         if not host:
@@ -273,6 +292,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("peers", help="peers, reachability, last sync").set_defaults(fn=cmd_peers)
     sub.add_parser("status", help="local tree size + peers").set_defaults(fn=cmd_status)
+    sub.add_parser("tb", help="Thunderbolt ports, link state, speed, bridge IPs, peers over TB").set_defaults(fn=cmd_tb)
     s = sub.add_parser("discover", help="Bonjour scan for Macs with Remote Login")
     s.add_argument("--seconds", type=float, default=3.0)
     s.set_defaults(fn=cmd_discover)

@@ -8,6 +8,7 @@ docsync init --from-maccluster      # peers from ~/.config/maccluster/cluster.to
 docsync doctor                      # rsync, ssh keys, peer reachability
 docsync plan                        # dry run: what would move
 docsync sync                        # do it, then print the report
+docsync tb                          # Thunderbolt ports, link, speed, peers over TB
 docsync install-agent --interval 15 # launchd: every 15 min in the background
 ```
 
@@ -44,6 +45,11 @@ Thunderbolt-first like maccluster: addresses inside an active Thunderbolt Bridge
 ARP neighbours that answer `hostname -s` with a configured peer's name. Thunderbolt
 addresses whose link is down are skipped without waiting for ping timeouts. The report
 header says which transport was used (`via Thunderbolt`, `via LAN`, …).
+
+`docsync tb` shows the Thunderbolt picture: every port with receptacle, link state and
+negotiated speed (from `system_profiler`), the attached device, the bridge interfaces with
+their IPv4 addresses, ARP neighbours on the bridge and whether each peer answers over it.
+When a sync runs over Thunderbolt the report header carries the speed (`via Thunderbolt 40 Gb/s`).
 
 ## Report
 
