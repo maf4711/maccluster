@@ -77,3 +77,50 @@ def test_complete_bootstrap_shell_syntax():
         ["/bin/bash", "-n"], input=REMOTE_INSTALL_SH, text=True, capture_output=True, timeout=5
     )
     assert result.returncode == 0, result.stderr
+
+
+def _install_with_peer_status(tmp_path, status_rc: int):
+    """Run the real peer install script with a stub `maccluster` whose `status` exits status_rc."""
+    import hashlib
+
+    bin_ = tmp_path / ".local/bin"
+    bin_.mkdir(parents=True)
+    (bin_ / "maccluster").write_text(
+        "#!/bin/bash\n"
+        'case "$1" in\n'
+        '  --version) echo "maccluster 9.9.9";;\n'
+        f'  status) echo "overall=degraded 1/2 peers up"; exit {status_rc};;\n'
+        "  *) exit 0;;\n"
+        "esac\n"
+    )
+    (bin_ / "pipx").write_text("#!/bin/bash\nexit 0\n")
+    for f in bin_.iterdir():
+        f.chmod(0o755)
+    wheel = tmp_path / "maccluster-9.9.9-py3-none-any.whl"
+    wheel.write_bytes(b"stub")
+    pub = tmp_path / "cluster.pub"
+    pub.write_text("ssh-ed25519 AAAAstub test\n")
+    digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+    return subprocess.run(
+        ["/bin/bash", "-c", REMOTE_INSTALL_SH, "test", str(wheel), "-", str(pub), digest, "1"],
+        env={
+            "HOME": str(tmp_path),
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "MACCLUSTER_INSTALL_LOCK_WAIT": "1",
+        },
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+
+def test_degraded_cluster_does_not_fail_a_successful_install(tmp_path):
+    """node-b 2026-11-07: `status` exited 3 (one peer briefly down) and the old script turned a
+    successful install into rc=1 without a reason. Cluster health is a warning, not the result."""
+    result = _install_with_peer_status(tmp_path, 3)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (
+        "warning: cluster not fully healthy after install (doctor rc=0, status rc=3)"
+        in result.stdout
+    )
+    assert "status=0" in result.stdout
