@@ -20,15 +20,18 @@ SERVER_PY = r'''
 import os, socket, sys, time
 port, secs = int(sys.argv[1]), float(sys.argv[2])
 s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-s.bind(("", port)); s.listen(1); s.settimeout(25)
+s.bind(("", port)); s.listen(2); s.settimeout(25)
 sys.stdout.write("READY\n"); sys.stdout.flush()
+# connection 1: sink (client uploads until it shuts down its write side)
 c, _ = s.accept(); c.settimeout(60)
-c.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 8 << 20); c.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8 << 20)
 buf = bytearray(4 << 20); n = 0
 while True:
     r = c.recv_into(buf)
     if not r: break
     n += r
+c.close()
+# connection 2: source for `secs` seconds (fresh TCP state, macOS window auto-tuning untouched)
+c, _ = s.accept(); c.settimeout(60)
 data = os.urandom(4 << 20); t0 = time.time()
 try:
     while time.time() - t0 < secs: c.sendall(data)
@@ -88,13 +91,16 @@ def tcp_test(ssh_cmd: list[str], userhost: str, host: str, secs: float) -> tuple
         err = proc.stderr.read()
         proc.kill()
         raise RuntimeError(f"peer server did not start: {err.strip()[-200:] or line.strip()}")
-    try:
-        c = socket.create_connection((host, port), timeout=10)
-    except OSError as e:
-        proc.kill()
-        raise RuntimeError(f"tcp connect {host}:{port} failed ({e}) — firewall on the peer?") from e
-    c.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 8 << 20)
-    c.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8 << 20)
+    def connect():
+        try:
+            return socket.create_connection((host, port), timeout=10)
+        except OSError as e:
+            proc.kill()
+            raise RuntimeError(f"tcp connect {host}:{port} failed ({e}) — firewall on the peer?") from e
+
+    # No SO_SNDBUF/SO_RCVBUF: fixed buffers switch off macOS' receive-window auto-tuning and
+    # collapsed a bridged two-hop Thunderbolt path to ~25 MB/s while the raw link does 8 GB/s.
+    c = connect()
     c.settimeout(60)
     block = _random_block()
     sent, t0 = 0, time.monotonic()
@@ -103,6 +109,10 @@ def tcp_test(ssh_cmd: list[str], userhost: str, host: str, secs: float) -> tuple
         sent += len(block)
     up = sent / (time.monotonic() - t0)
     c.shutdown(socket.SHUT_WR)
+    c.close()
+
+    c = connect()
+    c.settimeout(60)
     buf = bytearray(CHUNK)
     got, t1, first = 0, time.monotonic(), None
     while True:
