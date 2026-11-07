@@ -94,15 +94,18 @@ def _sync_docsync(
     includes, dropped = sync_docsync.drop_git_trees(includes)
     if dropped:
         prog.note(
-            "docsync engine skips git trees: "
+            "docsync engine skips git trees and machine state: "
             + ", ".join(dropped)
             + "  (sync repos with git, or `maccluster sync dev --engine ditto`)"
         )
     if kw.get("full_home"):
-        excludes = excludes + tuple(f"{t}/" for t in sync_docsync.GIT_TREES)
+        excludes = excludes + tuple(
+            f"{t}/" for t in (*sync_docsync.GIT_TREES, *sync_docsync.MACHINE_STATE)
+        )
     if target == "home" and not includes and not kw.get("full_home"):
         raise CliError(
-            "nothing to sync with the docsync engine after leaving out git trees", exit_code=2
+            "nothing to sync with the docsync engine after leaving out git trees and machine state",
+            exit_code=2,
         )
 
     peers = _resolve_peers(

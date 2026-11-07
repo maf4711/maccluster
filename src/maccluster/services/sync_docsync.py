@@ -104,14 +104,24 @@ def resolve_engine(requested: str | None, reasons: list[str]) -> tuple[str, str]
 # Trees of git working copies: a three-way file sync would write conflict copies into .git
 # (dry run 2026-11-07: 8,459 conflicts in ~/Developer between two Macs). Git syncs these.
 GIT_TREES = ("Developer",)
+# Per-machine state: keys, known_hosts, cluster.toml, app credentials and caches. Syncing it
+# overwrites one Mac's identity with another's (dry run: 723 conflicts in ~/.config with node-a,
+# authorized_keys/known_hosts in ~/.ssh). Explicit sub-folders (`--include .config/fish/`) stay allowed.
+MACHINE_STATE = (".ssh", ".config")
 
 
 def drop_git_trees(includes: tuple[str, ...]) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """(includes the docsync engine syncs, includes left out because they are git trees)."""
+    """(includes the docsync engine syncs, includes it leaves out): git trees at any depth,
+    machine-state folders as a whole (.ssh always, .config unless a sub-folder is named)."""
     kept, dropped = [], []
     for inc in includes:
-        top = inc.strip("/").split("/", 1)[0]
-        (dropped if top in GIT_TREES else kept).append(inc)
+        parts = inc.strip("/").split("/")
+        top = parts[0]
+        whole = len(parts) == 1
+        if top in GIT_TREES or top == ".ssh" or (top in MACHINE_STATE and whole):
+            dropped.append(inc)
+        else:
+            kept.append(inc)
     return tuple(kept), tuple(dropped)
 
 
