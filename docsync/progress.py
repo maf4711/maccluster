@@ -67,3 +67,59 @@ class Bar:
         rate = fmt_bytes(int(nbytes / secs)) + "/s" if secs > 0 else "-"
         self.stream.write(f"\r   {self.label:<7} [{'█' * self.width}] 100%  {nbytes // 1024:,} KB  {rate:>10}  {nfiles:,} files  {secs:.1f}s\033[K\n")
         self.stream.flush()
+
+
+class MultiDisplay:
+    """One terminal line per peer, redrawn together (parallel sync). Thread-safe."""
+
+    def __init__(self, names: list[str], stream=None):
+        import threading
+        self.stream = stream or sys.stderr
+        self.enabled = self.stream.isatty()
+        self.names = list(names)
+        self.lines = {n: "" for n in names}
+        self.lock = threading.Lock()
+        self.drawn = 0
+
+    def slot(self, name: str):
+        return _SlotStream(self, name)
+
+    def update(self, name: str, text: str) -> None:
+        with self.lock:
+            self.lines[name] = text
+            self._redraw()
+
+    def _redraw(self) -> None:
+        if not self.enabled:
+            return
+        cols = shutil.get_terminal_size((120, 20)).columns - 1
+        out = ""
+        if self.drawn:
+            out += f"\033[{self.drawn}A"
+        for n in self.names:
+            out += "\r\033[K" + (self.lines[n] or f"   {n:<10} …")[:cols] + "\n"
+        self.drawn = len(self.names)
+        self.stream.write(out)
+        self.stream.flush()
+
+    def close(self) -> None:
+        pass
+
+
+class _SlotStream:
+    """File-like target for Bar: collects the last \\r-line and pushes it into the display."""
+
+    def __init__(self, display: MultiDisplay, name: str):
+        self.display, self.name, self.buf = display, name, ""
+
+    def isatty(self) -> bool:
+        return True
+
+    def write(self, text: str) -> None:
+        text = text.replace("\033[K", "")
+        if "\r" in text:
+            text = text.rsplit("\r", 1)[1]
+        self.buf = text.rstrip("\n")
+
+    def flush(self) -> None:
+        self.display.update(self.name, f"   {self.name:<10}" + self.buf.lstrip())

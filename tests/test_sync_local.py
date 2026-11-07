@@ -158,3 +158,25 @@ class LocalSyncTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ParallelTests(unittest.TestCase):
+    def test_two_peers_in_parallel(self):
+        import io
+        from docsync.session import run_many
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            a, b, c = base / "A", base / "B", base / "C"
+            for x in (a, b, c):
+                x.mkdir()
+            now = int(time.time()) - 100
+            touch(a / "from-a.txt", "a", now)
+            touch(b / "from-b.txt", "b", now)
+            touch(c / "from-c.txt", "c", now)
+            cfg = Config(path=str(a), trash=False)
+            reps = run_many(cfg, [("b", LocalTransport(b)), ("c", LocalTransport(c))], parallel=True,
+                            state_dir=base / "state", log=lambda *x: None)
+            self.assertEqual([r.peer for r in reps], ["b", "c"])
+            self.assertTrue(all(r.ok for r in reps), [r.error for r in reps])
+            self.assertTrue((b / "from-a.txt").exists() and (c / "from-a.txt").exists())
+            self.assertTrue((a / "from-b.txt").exists() and (a / "from-c.txt").exists())

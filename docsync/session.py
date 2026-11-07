@@ -33,7 +33,7 @@ def _fold(cfg: Config):
 
 def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbose: bool = False,
              state_dir: Path = STATE_DIR, log=print, progress: bool = False,
-             force_deletes: bool = False) -> PeerReport:
+             force_deletes: bool = False, progress_stream=None) -> PeerReport:
     rep = PeerReport(peer=peer_name, dry=dry)
     local_root = cfg.local_root
     local_root.mkdir(parents=True, exist_ok=True)
@@ -112,7 +112,7 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
         rep.phase("conflicts", t0)
 
         t0 = time.monotonic()
-        bar = _bar(progress and not dry, "push →", plan.push, local)
+        bar = _bar(progress and not dry, "push →", plan.push, local, progress_stream)
         st = transport.push(local_root, sorted(plan.push), dry, verbose, bar.feed if bar else None)
         if bar:
             bar.finish(st["bytes"], st["files"])
@@ -124,7 +124,7 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
         rep.phase("push", t0)
 
         t0 = time.monotonic()
-        bar = _bar(progress and not dry, "pull ←", plan.pull, remote)
+        bar = _bar(progress and not dry, "pull ←", plan.pull, remote, progress_stream)
         st = transport.pull(local_root, sorted(plan.pull), dry, verbose, bar.feed if bar else None)
         if bar:
             bar.finish(st["bytes"], st["files"])
@@ -156,10 +156,36 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
     return rep
 
 
-def _bar(enabled: bool, label: str, paths: list[str], m: manifest.Manifest):
+def _bar(enabled: bool, label: str, paths: list[str], m: manifest.Manifest, stream=None):
     if not enabled or not paths:
         return None
-    return Bar(label, len(paths), _bytes_of(m, paths))
+    return Bar(label, len(paths), _bytes_of(m, paths), stream=stream, enabled=True if stream else None)
+
+
+def run_many(cfg: Config, jobs: list[tuple[str, object]], *, parallel: bool = True, max_workers: int = 0,
+             state_dir: Path = STATE_DIR, log=print, progress: bool = False, **kw) -> list[PeerReport]:
+    """Sync several peers. jobs = [(peer_name, transport-or-callable-returning-transport)].
+    Parallel: one thread per peer, one progress line per peer. Reports come back in job order."""
+    from concurrent.futures import ThreadPoolExecutor
+    from docsync.progress import MultiDisplay
+
+    names = [n for n, _ in jobs]
+    display = MultiDisplay(names) if (parallel and progress and len(jobs) > 1) else None
+
+    def one(name, tr):
+        transport = tr() if callable(tr) and not hasattr(tr, "check") else tr
+        plog = (lambda *a: log(f"[{name}]", *a)) if display is None else (lambda *a: display.update(name, f"   {name:<10}" + " ".join(str(x) for x in a)))
+        return run_peer(cfg, name, transport, state_dir=state_dir, log=plog, progress=progress,
+                        progress_stream=display.slot(name) if display else None, **kw)
+
+    if not parallel or len(jobs) == 1:
+        return [one(n, t) for n, t in jobs]
+    with ThreadPoolExecutor(max_workers=max_workers or len(jobs)) as ex:
+        futs = [ex.submit(one, n, t) for n, t in jobs]
+        reps = [f.result() for f in futs]
+    if display:
+        display.close()
+    return reps
 
 
 def _skipped(rep: PeerReport, st: dict, phase: str) -> None:

@@ -290,3 +290,21 @@ class RemotePathTests(unittest.TestCase):
         self.assertEqual(remote_path("~"), '"$HOME"')
         out = subprocess.run(["sh", "-c", f"echo {remote_path('~/Documents')}"], env={"HOME": "/h"}, capture_output=True, text=True).stdout.strip()
         self.assertEqual(out, "/h/Documents")
+
+
+class SpeedtestTests(unittest.TestCase):
+    def test_tcp_loopback_roundtrip(self):
+        """Run the peer server locally (sh -c python3 - instead of ssh) and measure over loopback."""
+        from docsync import speedtest
+        fake_ssh = ["sh", "-c", "exec $2", "sh"]  # argv: sh python3(userhost) "python3 - PORT SECS"(cmd) → word-split and exec
+        up, down = speedtest.tcp_test(fake_ssh, "local", "127.0.0.1", 0.5)
+        self.assertGreater(up, 50 * 2**20)
+        self.assertGreater(down, 50 * 2**20)
+
+    def test_render_and_summary(self):
+        from docsync import speedtest
+        r = speedtest.Result("node-a", "10.42.0.1", "Thunderbolt 80 Gb/s", 0.8, 1e9, 1.2e9, 5e8, 6e8)
+        txt = r.render() + speedtest.summary([r])
+        self.assertIn("TCP raw", txt)
+        self.assertIn("Gb/s", txt)
+        self.assertIn("fastest: node-a", txt)

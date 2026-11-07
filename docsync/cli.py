@@ -11,12 +11,12 @@ import sys
 import time
 from pathlib import Path
 
-from docsync import __version__, agent, discover, tbsketch, thunderbolt
+from docsync import __version__, agent, discover, speedtest, tbsketch, thunderbolt
 from docsync.config import (CONFIG_FILE, MACCLUSTER_CONFIG, STATE_DIR, Config, Peer, load_config,
                             local_hostnames, peers_from_maccluster, save_config)
 from docsync.manifest import scan
 from docsync.report import RunReport, fmt_bytes
-from docsync.session import base_file, run_peer
+from docsync.session import base_file, run_many, run_peer
 from docsync.transport import LocalTransport, RemoteTransport, rsync_bin
 
 
@@ -161,6 +161,39 @@ def cmd_tb(a) -> int:
     return 0 if st.link_up else 1
 
 
+def cmd_speedtest(a) -> int:
+    cfg = load_config()
+    peers = _select_peers(cfg, a.peers, a.all)
+    results: list[speedtest.Result] = []
+    tb_speed = thunderbolt.state().best_speed
+    for p in peers:
+        if a.all_hosts:
+            targets = [(h, via) for h, via in discover.order_hosts(p.hosts) if discover.ping(h) is not None]
+            if not targets:
+                print(f"── {p.name}: no host answers a ping")
+                continue
+        else:
+            host, via = _resolve(p, lambda *x: None)
+            if not host:
+                print(f"── {p.name}: unreachable")
+                continue
+            targets = [(host, via)]
+        for host, via in targets:
+            if via == "Thunderbolt" and tb_speed:
+                via = f"Thunderbolt {tb_speed} Gb/s"
+            pings = [m for m in (discover.ping(host) for _ in range(3)) if m is not None]
+            ping_ms = sum(pings) / len(pings) if pings else None
+            print(f"── {p.name}  {host} via {via}  … testing {a.seconds:.0f}s per direction", flush=True)
+            t = RemoteTransport(p.userhost(host), p.path)
+            r = speedtest.run(p.name, host, via, p.userhost(host), t.ssh_cmd, a.seconds, ping_ms,
+                              skip_tcp=a.ssh_only, skip_ssh=a.tcp_only)
+            results.append(r)
+            print(r.render())
+    print()
+    print(speedtest.summary(results))
+    return 0 if results and not any(r.errors for r in results) else 1
+
+
 def cmd_discover(a) -> int:
     names = discover.bonjour_ssh_hosts(a.seconds)
     if not names:
@@ -189,19 +222,27 @@ def cmd_sync(a, dry: bool) -> int:
     log = (lambda *x: None) if a.quiet else print
     lock = _lock(STATE_DIR)
     run = RunReport()
+    tb_speed = thunderbolt.state().best_speed if peers else 0
     try:
-        for p in peers:
+        jobs = []
+        vias: dict[str, str] = {}
+        for p in peers:  # resolve hosts first (quick, sequential, readable output)
             log(f"── {p.name}")
             host, via = _resolve(p, log)
             if host is None:
-                rep = run_peer(cfg, p.name, _Unreachable(p), dry=dry)
-            else:
-                if via == "Thunderbolt":
-                    speed = thunderbolt.state().best_speed
-                    via = f"Thunderbolt {speed} Gb/s" if speed else via
-                rep = run_peer(cfg, p.name, _transport(p, host), dry=dry, verbose=a.verbose, log=log,
-                               progress=not a.quiet and sys.stderr.isatty(), force_deletes=a.force_deletes)
-                rep.via = via
+                jobs.append((p.name, _Unreachable(p)))
+                continue
+            if via == "Thunderbolt" and tb_speed:
+                via = f"Thunderbolt {tb_speed} Gb/s"
+            vias[p.name] = via
+            jobs.append((p.name, _transport(p, host)))
+        parallel = not a.sequential and len(jobs) > 1
+        if parallel:
+            log(f"syncing {len(jobs)} peers in parallel")
+        reps = run_many(cfg, jobs, parallel=parallel, max_workers=a.jobs, log=log, dry=dry, verbose=a.verbose,
+                        progress=not a.quiet and sys.stderr.isatty(), force_deletes=a.force_deletes)
+        for rep in reps:
+            rep.via = vias.get(rep.peer, "")
             run.peers.append(rep)
     finally:
         lock.close()
@@ -336,12 +377,22 @@ def build_parser() -> argparse.ArgumentParser:
         s.add_argument("-v", "--verbose", action="store_true", help="list every file")
         s.add_argument("-q", "--quiet", action="store_true", help="only the final report")
         s.add_argument("--force-deletes", action="store_true", help="override the max_delete guard")
+        s.add_argument("--sequential", action="store_true", help="one peer after another (default: all peers in parallel)")
+        s.add_argument("-j", "--jobs", type=int, default=0, help="max parallel peers (default: all)")
         s.set_defaults(fn=lambda a, d=dry: cmd_sync(a, dry=d))
 
     s = sub.add_parser("watch", help="sync all peers every N minutes (foreground)")
     s.add_argument("--interval", type=int, default=10, metavar="MIN")
-    s.set_defaults(fn=cmd_watch, peers=[], all=True, verbose=False, quiet=False, force_deletes=False)
+    s.set_defaults(fn=cmd_watch, peers=[], all=True, verbose=False, quiet=False, force_deletes=False, sequential=False, jobs=0)
 
+    s = sub.add_parser("speedtest", help="throughput to each peer: raw TCP and the ssh path rsync uses")
+    s.add_argument("peers", nargs="*", help="peer names (default: all)")
+    s.add_argument("--all", action="store_true")
+    s.add_argument("--all-hosts", action="store_true", help="test every reachable host of a peer (Thunderbolt vs LAN)")
+    s.add_argument("--seconds", type=float, default=5.0, help="seconds per direction (default 5)")
+    s.add_argument("--tcp-only", action="store_true")
+    s.add_argument("--ssh-only", action="store_true")
+    s.set_defaults(fn=cmd_speedtest)
     sub.add_parser("conflicts", help="list *.conflict-* copies").set_defaults(fn=cmd_conflicts)
     s = sub.add_parser("history", help="past reports")
     s.add_argument("-n", "--lines", type=int, default=40)

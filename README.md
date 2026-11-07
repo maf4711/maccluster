@@ -8,7 +8,8 @@ docsync init --from-maccluster      # peers from ~/.config/maccluster/cluster.to
 docsync doctor                      # rsync, ssh keys, peer reachability
 docsync plan                        # dry run: what would move
 docsync sync                        # do it, then print the report
-docsync tb                          # Thunderbolt ports, link, speed, peers over TB
+docsync tb                          # Thunderbolt ports, link, speed, cabling sketch
+docsync speedtest --all-hosts       # raw TCP + ssh throughput per peer and host (TB vs LAN)
 docsync install-agent --interval 15 # launchd: every 15 min in the background
 ```
 
@@ -45,6 +46,22 @@ looks like "deleted on the peer" and would wipe the folder locally.
 and reported; review with `docsync plan -v` and rerun with `docsync sync --force-deletes`
 if they are intended. A peer mid-reboot, a renamed folder or an unmounted volume must never
 turn into a mass delete.
+
+## Parallel peers
+
+`docsync sync` with several peers runs them **in parallel**, one thread per peer, each with
+its own connection, manifest and base. The terminal shows one progress line per peer; the
+reports are printed together at the end. `--sequential` restores one-after-another,
+`-j N` caps the number of concurrent peers. Two peers pulling the same new file at the same
+moment is harmless (rsync writes a temp file and renames), the per-peer base keeps them apart.
+
+## Speedtest
+
+`docsync speedtest [peer] [--all-hosts] [--seconds N]` measures, per peer and host, the ping
+latency, raw TCP throughput (a tiny sink/source server is started on the peer over ssh, no
+iperf needed) and the throughput of the ssh path, which is what rsync is capped by. Upload and
+download are timed separately. `--all-hosts` tests every reachable address of a peer, so you
+can see Thunderbolt against Wi-Fi side by side.
 
 ## Progress and transport
 
