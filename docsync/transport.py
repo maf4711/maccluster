@@ -17,7 +17,7 @@ from pathlib import Path
 from docsync.manifest import LISTER_PY, LISTER_SH, Manifest, parse_lines, scan
 
 SSH_OPTS = [
-    "-o", "BatchMode=yes", "-o", "ConnectTimeout=6", "-o", "StrictHostKeyChecking=accept-new",
+    "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "-o", "StrictHostKeyChecking=accept-new",
     "-o", "Compression=no", "-o", "IPQoS=throughput",
 ]
 
@@ -68,6 +68,19 @@ def parse_rsync_stats(text: str) -> dict[str, int]:
 
 def _run_rsync(src: str, dst: str, paths: list[str], ssh_cmd: list[str] | None,
                dry: bool, verbose: bool, progress=None) -> dict[str, int]:
+    """rsync with one retry when the ssh transport itself fails (rc 255: banner timeout,
+    peer still booting, link flap). Files already transferred are not redone (rsync delta)."""
+    try:
+        return _run_rsync_once(src, dst, paths, ssh_cmd, dry, verbose, progress)
+    except TransportError as e:
+        if "rc=255" not in str(e):
+            raise
+        time.sleep(5)
+        return _run_rsync_once(src, dst, paths, ssh_cmd, dry, verbose, progress)
+
+
+def _run_rsync_once(src: str, dst: str, paths: list[str], ssh_cmd: list[str] | None,
+                    dry: bool, verbose: bool, progress=None) -> dict[str, int]:
     """rsync the given relative paths from src/ to dst/. Returns parsed --stats.
     `progress` is a callable fed with every rsync stdout line (for the progress bar)."""
     if not paths:

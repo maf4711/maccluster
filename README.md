@@ -36,6 +36,16 @@ on the affected machine (`trash = false` to unlink instead).
 The first sync with a peer has no base: both trees are merged (union, newest
 wins), nothing is deleted.
 
+**Case-insensitive paths.** APFS treats `Gesundheit/Befunde` and `Gesundheit/befunde` as the
+same folder, so docsync compares paths ignoring case (`case_insensitive = true`) while using
+each side's own spelling for rsync. Without this, a case-only difference between two Macs
+looks like "deleted on the peer" and would wipe the folder locally.
+
+**Deletion guard.** More than `max_delete` deletions in one run (default 25) are held back
+and reported; review with `docsync plan -v` and rerun with `docsync sync --force-deletes`
+if they are intended. A peer mid-reboot, a renamed folder or an unmounted volume must never
+turn into a mass delete.
+
 ## Progress and transport
 
 While files move, a progress bar on stderr shows percent, KB done/total, current speed,

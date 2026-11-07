@@ -200,7 +200,7 @@ def cmd_sync(a, dry: bool) -> int:
                     speed = thunderbolt.state().best_speed
                     via = f"Thunderbolt {speed} Gb/s" if speed else via
                 rep = run_peer(cfg, p.name, _transport(p, host), dry=dry, verbose=a.verbose, log=log,
-                               progress=not a.quiet and sys.stderr.isatty())
+                               progress=not a.quiet and sys.stderr.isatty(), force_deletes=a.force_deletes)
                 rep.via = via
             run.peers.append(rep)
     finally:
@@ -335,11 +335,12 @@ def build_parser() -> argparse.ArgumentParser:
         s.add_argument("--all", action="store_true")
         s.add_argument("-v", "--verbose", action="store_true", help="list every file")
         s.add_argument("-q", "--quiet", action="store_true", help="only the final report")
+        s.add_argument("--force-deletes", action="store_true", help="override the max_delete guard")
         s.set_defaults(fn=lambda a, d=dry: cmd_sync(a, dry=d))
 
     s = sub.add_parser("watch", help="sync all peers every N minutes (foreground)")
     s.add_argument("--interval", type=int, default=10, metavar="MIN")
-    s.set_defaults(fn=cmd_watch, peers=[], all=True, verbose=False, quiet=False)
+    s.set_defaults(fn=cmd_watch, peers=[], all=True, verbose=False, quiet=False, force_deletes=False)
 
     sub.add_parser("conflicts", help="list *.conflict-* copies").set_defaults(fn=cmd_conflicts)
     s = sub.add_parser("history", help="past reports")

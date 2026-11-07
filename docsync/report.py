@@ -67,6 +67,7 @@ class PeerReport:
     cloud_only_local: int = 0
     cloud_only_remote: int = 0
     skipped: int = 0
+    deletes_skipped: int = 0
     warnings: list[str] = field(default_factory=list)
 
     def phase(self, name: str, t0: float) -> None:
@@ -93,7 +94,8 @@ class PeerReport:
             ("remote tree", f"{self.remote_files:,} files  {fmt_bytes(self.remote_bytes)}"),
             ("pushed →", f"{self.pushed_files:,} files  {fmt_bytes(self.pushed_bytes)}"),
             ("pulled ←", f"{self.pulled_files:,} files  {fmt_bytes(self.pulled_bytes)}"),
-            ("deleted", f"local {self.deleted_local:,}  remote {self.deleted_remote:,}"),
+            ("deleted", f"local {self.deleted_local:,}  remote {self.deleted_remote:,}"
+                        + (f"  (⚠ {self.deletes_skipped:,} held back by deletion guard)" if self.deletes_skipped else "")),
             ("conflicts", f"{len(self.conflicts):,}"),
             ("unchanged", f"{self.unchanged:,} files"),
             ("cloud-only", f"local {self.cloud_only_local:,}  remote {self.cloud_only_remote:,}  (iCloud-evicted, not touched)"),

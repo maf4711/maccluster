@@ -111,6 +111,34 @@ class LocalSyncTests(unittest.TestCase):
         from docsync import manifest as mf
         self.assertIn("keep.txt", mf.load(base_file("b", self.state)))  # base entry survived
 
+    def test_case_only_difference_is_not_a_deletion(self):
+        touch(self.a / "Gesundheit/befunde/x.md", "x", self.now)
+        self.sync()  # base knows befunde/x.md
+        orig = self.t.manifest
+        self.t.manifest = lambda ex, dl=None: {"Gesundheit/Befunde/x.md": (self.now, 1)}
+        try:
+            rep = self.sync(dry=True)
+        finally:
+            self.t.manifest = orig
+        self.assertTrue(rep.ok, rep.error)
+        self.assertEqual((rep.deleted_local, rep.deleted_remote, rep.pushed_files, rep.pulled_files), (0, 0, 0, 0))
+        self.assertEqual(rep.unchanged, 1)
+
+    def test_deletion_guard_holds_back_mass_deletes(self):
+        for i in range(30):
+            touch(self.a / f"f{i}.txt", "x", self.now)
+        self.sync()
+        for i in range(30):
+            (self.b / f"f{i}.txt").unlink()
+        rep = self.sync()
+        self.assertEqual(rep.deleted_local, 0)
+        self.assertEqual(rep.deletes_skipped, 30)
+        self.assertTrue(any("deletion guard" in w for w in rep.warnings))
+        self.assertTrue((self.a / "f0.txt").exists())
+        rep = run_peer(self.cfg, "b", self.t, state_dir=self.state, log=lambda *a: None, force_deletes=True)
+        self.assertEqual(rep.deleted_local, 30)
+        self.assertFalse((self.a / "f0.txt").exists())
+
     def test_trash_instead_of_unlink(self):
         home = Path(self.tmp.name) / "A"
         self.cfg.trash = True
