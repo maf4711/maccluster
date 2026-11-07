@@ -378,3 +378,64 @@ class PerformanceTests(unittest.TestCase):
         b.feed("  52,428,800  50%   100.00MB/s    0:00:01 (xfr#10, to-chk=40/50)", 1)
         self.assertIn("50%", out.getvalue())       # 100 MB of 200 MB aggregated
         self.assertIn("200.00MB/s", out.getvalue())
+
+
+class AdvisorTests(unittest.TestCase):
+    HIST = """=== 2026-11-07 18:37:16
+── node-b @ CM-KWFVR7JGW3 via Thunderbolt 80 Gb/s
+   pushed →     1 files  5.91 GB
+   deleted      local 0  remote 0  (⚠ 28 held back by deletion guard)
+   ⚠ deletion guard: 28 deletions exceed max_delete=25 — skipped all deletions
+══ TOTAL
+   peers        1 ok, 0 failed
+"""
+
+    def test_build_prompt_contains_inputs(self):
+        from docsync import advisor
+        block = advisor.last_run_block(self.HIST + "\n=== 2026-11-07 18:40:00 watch: unexpected error\n")
+        self.assertTrue(block.startswith("=== 2026-11-07 18:37:16"))
+        p = advisor.build_prompt(block, ["a/x.conflict-T-h.gz", "a/y.conflict-T-h.conflict-U-h.gz"],
+                                 ["⚠ deletion guard: 28 deletions exceed max_delete=25"], (63284, 5829))
+        for needle in ("x.conflict-T-h.gz", "y.conflict-T-h.conflict-U-h.gz", "deletion guard", "63,284"):
+            self.assertIn(needle, p)
+
+    def test_rule_based_fallback_judges_by_size(self):
+        from docsync import advisor
+        sizes = {"a/doc.gz": 7_000, "a/doc.conflict-T-h.gz": 2_500, "a/doc.conflict-T-h.conflict-U-h.gz": 6_300}
+        out = advisor.rule_based(["a/doc.conflict-T-h.gz", "a/doc.conflict-T-h.conflict-U-h.gz"],
+                                 ["deletion guard: 28 deletions exceed max_delete=25"], sizes=sizes)
+        text = "\n".join(out)
+        self.assertIn("größte ist doc.gz (7,000 Bytes), behalten", text)
+        self.assertIn("abgeschnitten: doc.conflict-T-h.gz (2,500 Bytes)", text)
+        self.assertNotIn("doc.conflict-T-h.conflict-U-h.gz (6,300 Bytes)", text.split("abgeschnitten")[1] if "abgeschnitten" in text else "")
+        self.assertIn("nach Größe entscheiden, nicht nach Name", text)
+        self.assertIn("Umbenennung/Groß-Kleinschreibung", text)
+        self.assertLessEqual(len(out), 8)
+
+    def test_prompt_lists_sizes_and_originals(self):
+        from docsync import advisor
+        tree = {"a/doc.gz": (1_700_000_000, 7_000), "a/doc.conflict-T-h.gz": (1_700_000_100, 2_500)}
+        p = advisor.build_prompt("", ["a/doc.conflict-T-h.gz"], [], None, tree=tree)
+        self.assertIn("- a/doc.gz  (7,000 Bytes", p)
+        self.assertIn("- a/doc.conflict-T-h.gz  (2,500 Bytes", p)
+
+    def test_cli_falls_back_when_model_unavailable(self):
+        import io, contextlib, os
+        from docsync import advisor, cli
+        orig = (advisor.availability, cli.load_config, cli.STATE_DIR)
+        advisor.availability = lambda: (False, "device not eligible")
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "docs").mkdir()
+            (Path(d) / "docs" / "f.conflict-T-h.txt").write_text("x")
+            cli.load_config = lambda: config.Config(path=f"{d}/docs")
+            cli.STATE_DIR = Path(d) / "state"
+            buf = io.StringIO()
+            try:
+                with contextlib.redirect_stdout(buf):
+                    rc = cli.main(["advise"])
+            finally:
+                advisor.availability, cli.load_config, cli.STATE_DIR = orig
+        self.assertEqual(rc, 1)
+        self.assertIn("rule-based fallback", buf.getvalue())
+        self.assertIn("device not eligible", buf.getvalue())
+        self.assertIn("f.conflict-T-h.txt", buf.getvalue())

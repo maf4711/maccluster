@@ -10,6 +10,7 @@ docsync plan                        # dry run: what would move
 docsync sync                        # do it, then print the report
 docsync tb                          # Thunderbolt ports, link, speed, cabling sketch
 docsync speedtest --all-hosts       # raw TCP + ssh throughput per peer and host (TB vs LAN)
+docsync advise                      # on-device Apple Foundation Model: what to do about conflicts etc.
 docsync install-agent --interval 15 # launchd: every 15 min in the background
 ```
 
@@ -46,6 +47,19 @@ looks like "deleted on the peer" and would wipe the folder locally.
 and reported; review with `docsync plan -v` and rerun with `docsync sync --force-deletes`
 if they are intended. A peer mid-reboot, a renamed folder or an unmounted volume must never
 turn into a mass delete.
+
+## Advisor (Apple Foundation Models, on device)
+
+`docsync advise [peer]` hands the last report from `history.log`, every conflict copy with
+its original (size, modification time), the warnings and the iCloud counts to the on-device
+Apple Foundation Model and prints up to eight recommendations in German: which version to keep
+(by size and time, never by guessing content), whether held-back deletions look like a rename or
+case change, and which peer to sync first. The model runs locally through a small Swift helper
+(`bin/docsync-advisor.swift`, compiled once with `swiftc` into `~/.local/state/docsync/bin/`);
+nothing leaves the Mac. `docsync advise --check` prints the model availability. When the model
+is unavailable (device not eligible, Apple Intelligence off, model downloading, no swiftc) the
+same inputs go through a deterministic rule set instead and the command exits 1 with the reason.
+The advisor never executes anything; it only suggests docsync commands and file decisions.
 
 ## Performance
 
