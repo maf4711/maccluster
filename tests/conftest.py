@@ -22,6 +22,12 @@ def _isolated_user_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
 
 
 @pytest.fixture(autouse=True)
+def _ditto_engine_by_default(monkeypatch):
+    """Existing sync tests describe the ditto engine; docsync tests opt in explicitly."""
+    monkeypatch.setenv("MACCLUSTER_SYNC_ENGINE", "ditto")
+
+
+@pytest.fixture(autouse=True)
 def _no_real_arep(monkeypatch):
     """Unit tests never run the installed ``arep`` binary; rdma reads as unavailable."""
     for module in (

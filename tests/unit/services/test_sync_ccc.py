@@ -63,7 +63,7 @@ def test_prune_old_runs_keeps_only_the_newest(tmp_path: Path):
     for name in names:
         (sn_root / name).mkdir()
 
-    # count rule in isolation: the age/size limits (added 2026-11) are disabled here
+    # count rule in isolation: the age/size limits are disabled here
     removed = prune_old_runs(sn_root, keep=5, max_age_days=None, max_bytes=None)
 
     assert removed == 2
@@ -78,7 +78,8 @@ def test_prune_old_runs_ignores_non_run_entries(tmp_path: Path):
     (sn_root / "not-a-run-dir").mkdir()
     (sn_root / "stray-file.txt").write_text("x", encoding="utf-8")
 
-    removed = prune_old_runs(sn_root, keep=5)
+    # count rule in isolation: the age/size limits are disabled here
+    removed = prune_old_runs(sn_root, keep=5, max_age_days=None, max_bytes=None)
 
     assert removed == 0
     assert (sn_root / "not-a-run-dir").is_dir()

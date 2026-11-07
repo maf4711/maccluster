@@ -218,7 +218,7 @@ def test_sync_cmd_runs_mcprt_before_ditto(fake_ctx, tmp_path: Path, monkeypatch,
         )
 
     monkeypatch.setattr("maccluster.commands.sync_cmd.run_mcprt", fake_run_mcprt)
-    monkeypatch.setattr("maccluster.commands.sync_cmd.sync_home", fake_sync_home)
+    monkeypatch.setattr("maccluster.commands.sync_cmd.sync_tree", fake_sync_home)
 
     tree = tmp_path / "Developer"
     repo = tree / "fresh"
