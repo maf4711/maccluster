@@ -5,10 +5,17 @@ from __future__ import annotations
 import fnmatch
 import json
 import os
+import unicodedata
 from pathlib import Path
 
 Entry = tuple[int, int]  # (mtime seconds, size bytes)
 Manifest = dict[str, Entry]
+
+
+def norm(path: str) -> str:
+    """Manifest keys are NFC so 'Köln' typed on one Mac equals 'Köln' decomposed on another.
+    APFS lookups are normalization-insensitive, so the NFC key is valid for rsync on both sides."""
+    return unicodedata.normalize("NFC", path)
 
 
 def excluded(relpath: str, patterns: list[str]) -> bool:
@@ -51,21 +58,23 @@ def scan(root: Path, patterns: list[str]) -> Manifest:
                 continue
             if not os.path.isfile(full) or os.path.islink(full):
                 continue
-            out[rel] = (int(st.st_mtime), int(st.st_size))
+            out[norm(rel)] = (int(st.st_mtime), int(st.st_size))
     return out
 
 
 def parse_lines(text: str, patterns: list[str]) -> Manifest:
-    """Parse 'mtime<TAB>size<TAB>relpath' lines (remote lister output)."""
+    """Parse 'mtime<TAB>size<TAB>relpath' records (remote lister output).
+    Records are NUL-separated (python lister) or newline-separated (stat fallback)."""
     out: Manifest = {}
-    for line in text.splitlines():
+    records = text.split("\0") if "\0" in text else text.splitlines()
+    for line in records:
         if not line.strip():
             continue
         try:
             mtime, size, rel = line.split("\t", 2)
         except ValueError:
             continue
-        rel = rel[2:] if rel.startswith("./") else rel
+        rel = norm(rel[2:] if rel.startswith("./") else rel)
         if excluded(rel, patterns):
             continue
         out[rel] = (int(float(mtime)), int(size))
@@ -87,7 +96,8 @@ def save(file: Path, manifest: Manifest, meta: dict | None = None) -> None:
     os.replace(tmp, file)
 
 
-# Remote lister: runs under `python3 -` on the peer; prints mtime\tsize\trelpath.
+# Remote lister: runs under `python3 -` on the peer; prints mtime\tsize\trelpath NUL-terminated
+# (file names may contain newlines).
 LISTER_PY = r'''
 import os, sys
 root = os.path.expanduser(sys.argv[1])
@@ -103,7 +113,7 @@ for dirpath, dirnames, filenames in os.walk(root):
         except OSError:
             continue
         rel = os.path.relpath(full, root)
-        out.write("%d\t%d\t%s\n" % (int(st.st_mtime), st.st_size, rel))
+        out.write("%d\t%d\t%s\0" % (int(st.st_mtime), st.st_size, rel))
 '''
 
 # Fallback when the peer has no python3: BSD stat (macOS), then GNU stat.

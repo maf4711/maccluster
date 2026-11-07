@@ -83,7 +83,7 @@ def _toml_str(s: str) -> str:
 
 def render_config(cfg: Config) -> str:
     lines = [
-        "# docsync configuration — https://github.com/marco/docsync",
+        "# docsync configuration",
         f"path = {_toml_str(cfg.path)}",
         f"conflict_policy = {_toml_str(cfg.conflict_policy)}  # newest | local | remote",
         f"trash = {'true' if cfg.trash else 'false'}  # deletions go to ~/.Trash/docsync-*/",

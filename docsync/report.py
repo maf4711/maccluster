@@ -93,7 +93,7 @@ class PeerReport:
             ("unchanged", f"{self.unchanged:,} files"),
             ("on the wire", f"sent {fmt_bytes(self.wire_sent)}  received {fmt_bytes(self.wire_received)}"),
             ("time", f"{fmt_secs(self.secs)}  ({', '.join(f'{p.name} {fmt_secs(p.secs)}' for p in self.phases)})"),
-            ("throughput", fmt_rate(self.transferred_bytes, self.secs)),
+            ("throughput", "n/a (dry run)" if self.dry else fmt_rate(self.transferred_bytes, self.secs)),
         ]
         if self.first_sync:
             rows.insert(2, ("mode", "first sync — union of both trees, newest wins, no deletions"))
@@ -115,13 +115,16 @@ class RunReport:
         dels = sum(p.deleted_local + p.deleted_remote for p in self.peers)
         confl = sum(len(p.conflicts) for p in self.peers)
         failed = [p.peer for p in self.peers if not p.ok]
+        dry = any(p.dry for p in self.peers)
+        verb = "planned" if dry else "transferred"
         lines = [p.render() for p in self.peers]
-        lines.append("══ TOTAL")
-        lines.append(f"   peers        {len(self.peers)} synced, {len(failed)} failed"
+        lines.append("══ TOTAL" + (" (DRY RUN)" if dry else ""))
+        lines.append(f"   peers        {len(self.peers) - len(failed)} ok, {len(failed)} failed"
                      + (f" ({', '.join(failed)})" if failed else ""))
-        lines.append(f"   files        {files:,} transferred  ({fmt_bytes(nbytes)}, {nbytes // 1024:,} KB)")
+        lines.append(f"   files        {files:,} {verb}  ({fmt_bytes(nbytes)}, {nbytes // 1024:,} KB)")
         lines.append(f"   deleted      {dels:,}    conflicts {confl:,}")
-        lines.append(f"   time         {fmt_secs(secs)}    throughput {fmt_rate(nbytes, secs)}")
+        lines.append(f"   time         {fmt_secs(secs)}    throughput "
+                     + ("n/a (dry run)" if dry else fmt_rate(nbytes, secs)))
         return "\n".join(lines)
 
     @property

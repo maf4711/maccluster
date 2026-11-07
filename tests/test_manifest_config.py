@@ -39,6 +39,22 @@ class ScanTests(unittest.TestCase):
             self.assertEqual(set(m), {"sub/a.txt"})
             self.assertEqual(m["sub/a.txt"][1], 5)
 
+    def test_parse_nul_records_with_newline_in_name(self):
+        txt = "1\t2\t./Business/Elon Musk mode \n\n You are coach.md\x001\t3\t.DS_Store\x00"
+        m = manifest.parse_lines(txt, config.DEFAULT_EXCLUDES)
+        self.assertEqual(list(m), ["Business/Elon Musk mode \n\n You are coach.md"])
+
+    def test_nfc_normalisation_unifies_both_spellings(self):
+        nfd = "Perso\u0308nlich/x.pdf"
+        nfc = "Pers\u00f6nlich/x.pdf"
+        m = manifest.parse_lines(f"1\t2\t{nfd}\n", [])
+        self.assertEqual(list(m), [nfc])
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / nfd
+            p.parent.mkdir()
+            p.write_text("x")
+            self.assertEqual(list(manifest.scan(Path(d), [])), [nfc])
+
     def test_parse_lines(self):
         m = manifest.parse_lines("1700000000\t12\t./a b/c.txt\n1\t2\t.DS_Store\nbad line\n", config.DEFAULT_EXCLUDES)
         self.assertEqual(m, {"a b/c.txt": (1700000000, 12)})
