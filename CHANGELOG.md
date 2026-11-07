@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+- SafetyNet retention: prune on every real sync (push-only included) and on each heal
+  tick, with age (14 d) and size (20 GB) limits next to the run count (5). node-a had
+  accumulated 274 GB in 36 run directories. `maccluster status` shows the usage and flags
+  it when over policy.
+
 ## 0.6.0 — 2026-09-21
 
 ### Added

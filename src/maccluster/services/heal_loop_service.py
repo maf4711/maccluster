@@ -55,6 +55,13 @@ def run_heal_loop(
             if ctx.verbose:
                 print(f"heal: unexpected {exc}", flush=True)
 
+        try:  # keep SafetyNet from growing while no sync runs; count/age only (no tree walk)
+            from maccluster.services.sync_safetynet import prune_old_runs
+
+            prune_old_runs(max_bytes=None)
+        except Exception:
+            pass
+
         try:
             write_heartbeat(
                 ok=(last_code == 0),
