@@ -180,3 +180,78 @@ class ParallelTests(unittest.TestCase):
             self.assertTrue(all(r.ok for r in reps), [r.error for r in reps])
             self.assertTrue((b / "from-a.txt").exists() and (c / "from-a.txt").exists())
             self.assertTrue((a / "from-b.txt").exists() and (a / "from-c.txt").exists())
+
+
+class ReliabilityTests(unittest.TestCase):
+    setUp, tearDown, sync = LocalSyncTests.setUp, LocalSyncTests.tearDown, LocalSyncTests.sync
+
+    def test_rsync_retries_twice_then_succeeds(self):
+        from docsync import transport
+        calls = {"n": 0}
+        def flaky(*a, **k):
+            calls["n"] += 1
+            if calls["n"] <= 2:
+                raise transport.TransportError("rsync rc=255: Connection timed out during banner exchange")
+            return {"files": 1, "bytes": 10, "sent": 10, "received": 0, "skipped": 0}
+        orig = (transport._run_rsync_once, transport._sleep)
+        transport._run_rsync_once, transport._sleep = flaky, lambda s: None
+        try:
+            st = transport._run_rsync("a/", "b/", ["x"], None, False, False)
+        finally:
+            transport._run_rsync_once, transport._sleep = orig
+        self.assertEqual((st["retries"], calls["n"]), (2, 3))
+
+    def test_rsync_gives_up_after_three_retries_and_not_on_other_rcs(self):
+        from docsync import transport
+        orig = (transport._run_rsync_once, transport._sleep)
+        transport._sleep = lambda s: None
+        try:
+            transport._run_rsync_once = lambda *a, **k: (_ for _ in ()).throw(transport.TransportError("rsync rc=255: x"))
+            with self.assertRaises(transport.TransportError):
+                transport._run_rsync("a/", "b/", ["x"], None, False, False)
+            n = {"c": 0}
+            def once(*a, **k):
+                n["c"] += 1
+                raise transport.TransportError("rsync rc=23: partial")
+            transport._run_rsync_once = once
+            with self.assertRaises(transport.TransportError):
+                transport._run_rsync("a/", "b/", ["x"], None, False, False)
+            self.assertEqual(n["c"], 1)
+        finally:
+            transport._run_rsync_once, transport._sleep = orig
+
+    def test_retries_reach_the_report(self):
+        from docsync import transport
+        touch(self.a / "r.txt", "r", self.now)
+        real = transport._run_rsync_once
+        calls = {"n": 0}
+        def flaky(*a, **k):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise transport.TransportError("rsync rc=30: timeout")
+            return real(*a, **k)
+        orig = (transport._run_rsync_once, transport._sleep)
+        transport._run_rsync_once, transport._sleep = flaky, lambda s: None
+        try:
+            rep = self.sync()
+        finally:
+            transport._run_rsync_once, transport._sleep = orig
+        self.assertTrue(rep.ok, rep.error)
+        self.assertEqual(rep.retries, 1)
+        self.assertIn("retries", rep.render())
+
+    def test_lock_wait(self):
+        import fcntl
+        from docsync import cli
+        with tempfile.TemporaryDirectory() as d:
+            state = Path(d)
+            holder = open(state / "run.lock", "w")
+            fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            t0 = time.monotonic()
+            with self.assertRaises(SystemExit) as cm:
+                cli._lock(state, wait=1)
+            self.assertEqual(cm.exception.code, 3)
+            self.assertGreaterEqual(time.monotonic() - t0, 1.0)
+            holder.close()  # releases the lock
+            fh = cli._lock(state, wait=1)
+            fh.close()

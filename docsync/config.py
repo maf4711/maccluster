@@ -41,6 +41,7 @@ class Config:
     trash: bool = True  # move deletions to ~/.Trash instead of unlinking
     case_insensitive: bool = True  # APFS default: 'Befunde' and 'befunde' are the same folder
     max_delete: int = 25  # deletion guard: more deletions per run need --force-deletes
+    skip_on_battery: bool = False  # launchd runs do nothing while on battery power
 
     @property
     def local_root(self) -> Path:
@@ -62,6 +63,7 @@ def parse_config(text: str) -> Config:
         trash=bool(data.get("trash", True)),
         case_insensitive=bool(data.get("case_insensitive", True)),
         max_delete=int(data.get("max_delete", 25)),
+        skip_on_battery=bool(data.get("skip_on_battery", False)),
     )
     if cfg.conflict_policy not in ("newest", "local", "remote"):
         raise ValueError(f"conflict_policy must be newest|local|remote, got {cfg.conflict_policy!r}")
@@ -93,6 +95,7 @@ def render_config(cfg: Config) -> str:
         f"trash = {'true' if cfg.trash else 'false'}  # deletions go to ~/.Trash/docsync-*/",
         f"case_insensitive = {'true' if cfg.case_insensitive else 'false'}  # APFS: compare paths ignoring case",
         f"max_delete = {cfg.max_delete}  # refuse more deletions per run unless --force-deletes",
+        f"skip_on_battery = {'true' if cfg.skip_on_battery else 'false'}  # launchd runs wait for AC power",
         "excludes = [",
         *[f"  {_toml_str(e)}," for e in cfg.excludes],
         "]",

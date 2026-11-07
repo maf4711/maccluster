@@ -47,6 +47,19 @@ and reported; review with `docsync plan -v` and rerun with `docsync sync --force
 if they are intended. A peer mid-reboot, a renamed folder or an unmounted volume must never
 turn into a mass delete.
 
+## Unattended runs
+
+- Transport failures (ssh banner timeout, peer rebooting, link flap, rsync timeout) are retried
+  up to three times with 5/15/45 s delays; the report shows `retries N`.
+- `docsync sync --wait SEC` waits for a running sync instead of exiting with code 3.
+- `docsync watch` backs off exponentially after a failed run (interval → 2× … 6×) and keeps
+  running on unexpected errors, which it writes to `history.log`.
+- After a run that failed, produced a conflict copy or held deletions back, a Notification
+  Center message appears (`--no-notify` to silence).
+- `docsync install-agent` adds a launchd `WatchPaths` trigger on the Documents folder next to the
+  interval (`--no-watch` for interval only). With `skip_on_battery = true` in the config the
+  agent's runs do nothing on battery power.
+
 ## Parallel peers
 
 `docsync sync` with several peers runs them **in parallel**, one thread per peer, each with

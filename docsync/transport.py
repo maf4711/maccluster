@@ -66,17 +66,27 @@ def parse_rsync_stats(text: str) -> dict[str, int]:
     return out
 
 
+RETRY_DELAYS = (5, 15, 45)      # seconds between attempts on transport failures
+RETRY_RCS = ("rc=255", "rc=30")  # 255: ssh/transport died, 30: timeout in data send/receive
+_sleep = time.sleep              # patched in tests
+
+
 def _run_rsync(src: str, dst: str, paths: list[str], ssh_cmd: list[str] | None,
                dry: bool, verbose: bool, progress=None) -> dict[str, int]:
-    """rsync with one retry when the ssh transport itself fails (rc 255: banner timeout,
-    peer still booting, link flap). Files already transferred are not redone (rsync delta)."""
-    try:
-        return _run_rsync_once(src, dst, paths, ssh_cmd, dry, verbose, progress)
-    except TransportError as e:
-        if "rc=255" not in str(e):
-            raise
-        time.sleep(5)
-        return _run_rsync_once(src, dst, paths, ssh_cmd, dry, verbose, progress)
+    """rsync with up to len(RETRY_DELAYS) retries when the transport itself fails (ssh banner
+    timeout, peer rebooting, link flap, rsync timeout). Already transferred files are not redone.
+    The returned stats carry "retries" = number of extra attempts."""
+    retries = 0
+    while True:
+        try:
+            st = _run_rsync_once(src, dst, paths, ssh_cmd, dry, verbose, progress)
+            st["retries"] = retries
+            return st
+        except TransportError as e:
+            if not any(rc in str(e) for rc in RETRY_RCS) or retries >= len(RETRY_DELAYS):
+                raise
+            _sleep(RETRY_DELAYS[retries])
+            retries += 1
 
 
 def _run_rsync_once(src: str, dst: str, paths: list[str], ssh_cmd: list[str] | None,
