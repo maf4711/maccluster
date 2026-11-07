@@ -330,6 +330,10 @@ class MacosTests(unittest.TestCase):
                 f.write_text(xml)
                 self.assertEqual(subprocess.run(["plutil", "-lint", str(f)], capture_output=True).returncode, 0)
 
+    def test_agent_plist_has_max_runtime(self):
+        from docsync.agent import plist_xml
+        self.assertIn("<string>--max-runtime</string><string>1800</string>", plist_xml(900, "/x/e.py", None))
+
     def test_run_report_notable(self):
         from docsync.report import PeerReport, RunReport
         r = RunReport()
