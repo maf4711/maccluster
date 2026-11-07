@@ -137,6 +137,7 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
         rep.wire_sent += st["sent"]
         rep.wire_received += st["received"]
         rep.retries += st.get("retries", 0)
+        rep.streams = max(rep.streams, st.get("streams", 1))
         _skipped(rep, st, "push")
         rep.phase("push", t0)
 

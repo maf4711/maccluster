@@ -11,7 +11,7 @@ import sys
 import time
 from pathlib import Path
 
-from docsync import __version__, agent, discover, macos, speedtest, tbsketch, thunderbolt
+from docsync import __version__, advisor, agent, discover, macos, speedtest, tbsketch, thunderbolt
 from docsync.config import (CONFIG_FILE, MACCLUSTER_CONFIG, STATE_DIR, Config, Peer, load_config,
                             local_hostnames, peers_from_maccluster, save_config)
 from docsync.manifest import scan
@@ -303,6 +303,40 @@ def cmd_conflicts(a) -> int:
     return 0
 
 
+def cmd_advise(a) -> int:
+    if a.check:
+        ok, text = advisor.availability()
+        print(f"Apple Foundation Model: {text}")
+        return 0 if ok else 1
+    cfg = load_config()
+    hist = STATE_DIR / "history.log"
+    report = advisor.last_run_block(hist.read_text()) if hist.exists() else ""
+    if a.peers:
+        blocks = [b for b in report.split("── ") if b.startswith(tuple(f"{p} " for p in a.peers)) or b.startswith("══") or b.startswith("===")]
+        report = "── ".join(blocks) if blocks else report
+    tree = scan(cfg.local_root, [], set())
+    conflicts = sorted(p for p in tree if ".conflict-" in p)
+    sizes = {p: v[1] for p, v in tree.items()}
+    warnings = [ln.strip() for ln in report.splitlines() if "⚠" in ln or "FAILED" in ln]
+    cloud: set[str] = set()
+    n_local = len(scan(cfg.local_root, cfg.excludes, cloud))
+    prompt = advisor.build_prompt(report, conflicts, warnings, (len(cloud), n_local), a.peers[0] if a.peers else None, tree)
+    if a.show_prompt:
+        print(prompt)
+        print()
+    ok, why = advisor.availability()
+    if ok:
+        rc, text = advisor.ask(prompt)
+        if rc == 0:
+            print("── advisor (on-device Apple Foundation Model)")
+            print(text)
+            return 0
+        why = text or f"helper exit {rc}"
+    print("── advisor (rule-based fallback — model not used: " + why + ")")
+    print("\n".join(advisor.rule_based(conflicts, warnings, sizes)))
+    return 1
+
+
 def cmd_history(a) -> int:
     f = STATE_DIR / "history.log"
     if not f.exists():
@@ -436,6 +470,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--tcp-only", action="store_true")
     s.add_argument("--ssh-only", action="store_true")
     s.set_defaults(fn=cmd_speedtest)
+    s = sub.add_parser("advise", help="on-device Apple Foundation Model: what to do about conflicts, held-back deletes, peers")
+    s.add_argument("peers", nargs="*", help="limit the report to these peers")
+    s.add_argument("--check", action="store_true", help="only print the model availability")
+    s.add_argument("--show-prompt", action="store_true")
+    s.set_defaults(fn=cmd_advise)
     sub.add_parser("conflicts", help="list *.conflict-* copies").set_defaults(fn=cmd_conflicts)
     s = sub.add_parser("history", help="past reports")
     s.add_argument("-n", "--lines", type=int, default=40)
