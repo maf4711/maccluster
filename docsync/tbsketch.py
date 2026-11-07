@@ -31,7 +31,7 @@ def layout(model: str) -> tuple[str, int, int, str]:
 
 def local_model() -> str:
     try:
-        return subprocess.run(["sysctl", "-n", "hw.model"], text=True, capture_output=True, timeout=5).stdout.strip()
+        return subprocess.run(["/usr/sbin/sysctl", "-n", "hw.model"], text=True, capture_output=True, timeout=5).stdout.strip()
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return ""
 

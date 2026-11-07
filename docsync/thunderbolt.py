@@ -68,7 +68,7 @@ def _speed(text: str) -> int:
 
 def _profiler_json() -> list[dict]:
     try:
-        out = subprocess.run(["system_profiler", "-json", "SPThunderboltDataType"],
+        out = subprocess.run(["/usr/sbin/system_profiler", "-json", "SPThunderboltDataType"],
                              text=True, capture_output=True, timeout=25).stdout
         return json.loads(out).get("SPThunderboltDataType", [])
     except (FileNotFoundError, subprocess.TimeoutExpired, json.JSONDecodeError, ValueError):
@@ -77,7 +77,7 @@ def _profiler_json() -> list[dict]:
 
 def _profiler_text() -> str:
     try:
-        return subprocess.run(["system_profiler", "SPThunderboltDataType"],
+        return subprocess.run(["/usr/sbin/system_profiler", "SPThunderboltDataType"],
                               text=True, capture_output=True, timeout=25).stdout
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return ""

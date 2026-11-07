@@ -561,3 +561,18 @@ class FidelityTests(unittest.TestCase):
         if best[0].startswith("/opt/homebrew") or best[0].startswith("/usr/local"):
             self.assertEqual(best[1], {"xattrs", "acls", "crtimes"})
         self.assertEqual(fidelity.choose(set(), [])[2][:25], "peer rsync not found in /")
+
+
+class LaunchdEnvironmentTests(unittest.TestCase):
+    def test_system_tools_are_called_with_absolute_paths(self):
+        """launchd's PATH lacks /sbin and /usr/sbin: bare 'ping' made every agent run report
+        'none answered a ping' (2026-11-07)."""
+        import re
+        root = Path(__file__).resolve().parent.parent / "docsync"
+        bare = re.compile(r'\[\s*"(ping|ifconfig|arp|networksetup|system_profiler|sysctl|dns-sd|pmset|osascript)"')
+        for f in root.glob("*.py"):
+            self.assertIsNone(bare.search(f.read_text()), f.name)
+
+    def test_plist_path_has_sbin(self):
+        from docsync.agent import plist_xml
+        self.assertIn(":/usr/sbin:/sbin<", plist_xml(60, "/x.py"))
