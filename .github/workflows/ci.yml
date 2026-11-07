@@ -4,6 +4,12 @@ on:
   push:
     branches: [main, master]
   pull_request:
+  schedule:
+    - cron: "23 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   test:
@@ -12,7 +18,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        python-version: ["3.11", "3.12"]
+        python-version: ["3.11", "3.12", "3.13"]
     env:
       MACCLUSTER_SKIP_PLATFORM_GUARD: "1"
     steps:
@@ -31,3 +37,30 @@ jobs:
           ruff format --check src tests
       - name: Pytest
         run: python -m pytest -q
+      - name: Build wheel and source distribution
+        run: |
+          python -m pip install build
+          python -m build
+      - name: Verify isolated artifact installation
+        shell: bash
+        run: |
+          for artifact in dist/*.whl dist/*.tar.gz; do
+            smoke_dir="$(mktemp -d)"
+            python -m venv "$smoke_dir/venv"
+            "$smoke_dir/venv/bin/python" -m pip install "$artifact"
+            (cd "$smoke_dir" && "$smoke_dir/venv/bin/python" -I -c 'import maccluster, sys; assert maccluster.__file__.startswith(sys.prefix), maccluster.__file__')
+            (cd "$smoke_dir" && "$smoke_dir/venv/bin/maccluster" --version)
+            (cd "$smoke_dir" && "$smoke_dir/venv/bin/maccluster" --help)
+          done
+
+  dependency-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Audit installed development and monitor dependencies
+        run: |
+          python -m pip install -e ".[dev,monitor]"
+          python -m pip_audit
