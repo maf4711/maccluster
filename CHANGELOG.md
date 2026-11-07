@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.7.6 — 2026-11-07
+
+### Added
+- docsync engine runs under a process deadline: `sync home|dev --timeout` (default 3600 s)
+  bounds the docsync run; on expiry maccluster ends its rsync/ssh children and exits 4, which
+  releases the docsync run lock (a launchd run slept 12 min holding it on 2026-11-07). Needs
+  docsync-lan >= 1.2 (`docsync.watchdog`); older engines run without a deadline and say so.
+  Under `maccluster automation` the deadline is the step timeout (default 600 s); on expiry
+  the automation process ends too and skips its remaining steps.
+
 ## 0.7.5 — 2026-11-07
 
 ### Fixed
