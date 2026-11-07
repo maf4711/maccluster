@@ -6,11 +6,12 @@ import argparse
 import fcntl
 import os
 import shutil
+import socket
 import sys
 import time
 from pathlib import Path
 
-from docsync import __version__, agent, discover, thunderbolt
+from docsync import __version__, agent, discover, tbsketch, thunderbolt
 from docsync.config import (CONFIG_FILE, MACCLUSTER_CONFIG, STATE_DIR, Config, Peer, load_config,
                             local_hostnames, peers_from_maccluster, save_config)
 from docsync.manifest import scan
@@ -115,13 +116,34 @@ def cmd_peers(a) -> int:
 
 def cmd_tb(a) -> int:
     st = thunderbolt.state()
+    me = socket.gethostname().split(".")[0]
+    model = tbsketch.local_model()
     print(thunderbolt.render(st))
+    print()
+    print("── cabling sketch (what sits in which receptacle)")
+    print(tbsketch.sketch_mac(me, model, st))
     cfg = None
     try:
         cfg = load_config()
     except FileNotFoundError:
         pass
+    peers_seen: list[tuple[str, str, thunderbolt.TBState]] = []
+    if cfg and not a.no_remote:
+        for p in cfg.peers:
+            host, via = resolve_peer(p)
+            if not host:
+                print(f"   {p.name}  —  unreachable, no remote view")
+                continue
+            try:
+                out = RemoteTransport(p.userhost(host), p.path).ssh(tbsketch.REMOTE_CMD, timeout=40).stdout
+                pmodel, pst = tbsketch.parse_remote(out)
+            except Exception as e:  # noqa: BLE001
+                print(f"   {p.name}  —  remote view failed: {e}")
+                continue
+            peers_seen.append((p.name, pmodel, pst))
+            print(tbsketch.sketch_mac(f"{p.name} ({host}, via {via})", pmodel, pst, highlight_free=not st.link_up))
     if cfg:
+        print()
         for p in cfg.peers:
             tb_hosts = [h for h, via in discover.order_hosts(p.hosts) if via.startswith("Thunderbolt")]
             if not tb_hosts:
@@ -129,6 +151,13 @@ def cmd_tb(a) -> int:
                 continue
             ms = discover.ping(tb_hosts[0]) if st.link_up else None
             print(f"   {p.name:<10} {tb_hosts[0]:<16} {'%.1f ms over Thunderbolt' % ms if ms is not None else 'not reachable over Thunderbolt'}")
+    if not st.link_up:
+        print()
+        print("── no Thunderbolt link on this Mac — how to plug it")
+        peer_name, peer_model = (peers_seen[0][0], peers_seen[0][1]) if peers_seen else ("peer", "")
+        if cfg and not peers_seen:
+            peer_name = cfg.peers[0].name if cfg.peers else "peer"
+        print(tbsketch.sketch_wrong_right(me, peer_name, peer_model))
     return 0 if st.link_up else 1
 
 
@@ -292,7 +321,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("peers", help="peers, reachability, last sync").set_defaults(fn=cmd_peers)
     sub.add_parser("status", help="local tree size + peers").set_defaults(fn=cmd_status)
-    sub.add_parser("tb", help="Thunderbolt ports, link state, speed, bridge IPs, peers over TB").set_defaults(fn=cmd_tb)
+    s = sub.add_parser("tb", help="Thunderbolt ports, link, speed, cabling sketch of this Mac and every peer")
+    s.add_argument("--no-remote", action="store_true", help="skip ssh to the peers")
+    s.set_defaults(fn=cmd_tb)
     s = sub.add_parser("discover", help="Bonjour scan for Macs with Remote Login")
     s.add_argument("--seconds", type=float, default=3.0)
     s.set_defaults(fn=cmd_discover)

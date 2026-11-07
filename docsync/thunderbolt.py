@@ -6,6 +6,7 @@ import json
 import re
 import subprocess
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from docsync import discover
 
@@ -17,8 +18,18 @@ class TBPort:
     status: str          # "No device connected" | device name
     link_status: str     # raw, e.g. 0x100 (no device) / 0x2 (link up)
     speed_gbps: int      # "Up to 40 Gb/s" -> 40 ; 0 if unknown
-    device: str = ""     # attached device name (other Mac's name, dock, …)
+    device: str = ""     # attached device block label ("Mac mini", "Studio Display", …)
     device_uid: str = ""
+    device_model: str = ""   # e.g. Mac16,11
+    device_domain: str = ""  # peer's Thunderbolt Domain UUID (maps to a maccluster node)
+
+    @property
+    def peer_label(self) -> str:
+        node = cluster_node_by_domain(self.device_domain)
+        base = self.device or "device"
+        if node:
+            return f"{node} ({base})"
+        return f"{base} {self.device_model}".strip()
 
     @property
     def connected(self) -> bool:
@@ -73,19 +84,21 @@ def _profiler_text() -> str:
 
 
 def parse_profiler_text(text: str) -> list[TBPort]:
-    """Parse the human-readable output; it exposes Port/Status/Speed which the JSON hides."""
+    """Parse the human-readable output; it exposes Port/Status/Speed which the JSON hides.
+    Layout:  'Thunderbolt/USB4 Bus 0:' → 'Port:' (Status/Link Status/Speed/Receptacle)
+             → optional attached device block '        Mac mini:' with its own 'Device Name'/'Domain UUID'."""
     ports: list[TBPort] = []
     bus = ""
-    receptacle = status = link = speed = ""
-    device = device_uid = ""
-    depth_device = False
+    cur: dict = {}
+    in_device = False
 
     def flush():
-        nonlocal receptacle, status, link, speed, device, device_uid
-        if bus and (receptacle or status):
-            ports.append(TBPort(bus, receptacle, status, link, _speed(speed), device, device_uid))
-        receptacle = status = link = speed = ""
-        device = device_uid = ""
+        nonlocal cur, in_device
+        if bus and cur:
+            ports.append(TBPort(bus, cur.get("receptacle", ""), cur.get("status", ""), cur.get("link", ""),
+                                _speed(cur.get("speed", "")), cur.get("device", ""), cur.get("device_uid", ""),
+                                cur.get("device_model", ""), cur.get("device_domain", "")))
+        cur, in_device = {}, False
 
     for raw in text.splitlines():
         line = raw.strip()
@@ -95,31 +108,50 @@ def parse_profiler_text(text: str) -> list[TBPort]:
         if re.match(r"Thunderbolt(/USB4)? Bus \d+:", line):
             flush()
             bus = line.rstrip(":")
-            depth_device = False
             continue
-        if indent == 6 and line.endswith(":") and not line.startswith("Port"):
-            # an attached device block, e.g. "Mac mini:" / "MacBook Pro:" below the bus
-            depth_device = True
-            device = line.rstrip(":")
+        if line == "Port:":
+            flush()
+            cur = {"status": ""}
+            continue
+        if line.endswith(":") and indent >= 8 and cur and not in_device and line not in ("Services:",):
+            in_device = True
+            cur["device"] = line.rstrip(":")
             continue
         key, _, val = line.partition(":")
         key, val = key.strip(), val.strip()
-        if key == "Port" and not depth_device:
-            depth_device = False
-        elif key == "Status":
-            status = val
-        elif key == "Link Status":
-            link = val
-        elif key == "Speed":
-            speed = val
-        elif key == "Receptacle":
-            receptacle = val
-        elif key == "Device Name" and depth_device:
-            device = val
-        elif key == "UID" and depth_device:
-            device_uid = val
+        if not in_device:
+            if key == "Status":
+                cur["status"] = val
+            elif key == "Link Status":
+                cur["link"] = val
+            elif key == "Speed":
+                cur["speed"] = val
+            elif key == "Receptacle":
+                cur["receptacle"] = val
+        else:
+            if key == "Device Name" and "device_model" not in cur:
+                cur["device_model"] = val
+            elif key == "UID" and "device_uid" not in cur:
+                cur["device_uid"] = val
+            elif key == "Domain UUID" and "device_domain" not in cur:
+                cur["device_domain"] = val
     flush()
     return ports
+
+
+def cluster_node_by_domain(domain_uuid: str) -> str:
+    """maccluster's cluster.toml lists each node's tb_domain_uuids — map a peer's domain to its node id."""
+    f = Path("~/.config/maccluster/cluster.toml").expanduser()
+    if not domain_uuid or not f.exists():
+        return ""
+    node = ""
+    for line in f.read_text().splitlines():
+        m = re.match(r'\s*id\s*=\s*"([^"]+)"', line)
+        if m:
+            node = m.group(1)
+        if domain_uuid.lower() in line.lower():
+            return node
+    return ""
 
 
 def state() -> TBState:
@@ -136,7 +168,7 @@ def state() -> TBState:
 def render(st: TBState) -> str:
     lines = [f"thunderbolt: {st.label()}"]
     for p in st.ports:
-        dev = f"  ← {p.device}" if p.connected else ""
+        dev = f"  ← {p.peer_label}" if p.connected else ""
         lines.append(f"   {p.bus:<24} receptacle {p.receptacle or '?':<2} {p.status:<22} "
                      f"{('%d Gb/s' % p.speed_gbps) if p.speed_gbps else '-':>9}{dev}")
     if st.interfaces:

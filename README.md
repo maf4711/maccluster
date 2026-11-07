@@ -50,6 +50,13 @@ header says which transport was used (`via Thunderbolt`, `via LAN`, …).
 negotiated speed (from `system_profiler`), the attached device, the bridge interfaces with
 their IPv4 addresses, ARP neighbours on the bridge and whether each peer answers over it.
 When a sync runs over Thunderbolt the report header carries the speed (`via Thunderbolt 40 Gb/s`).
+It also draws a cabling sketch: this Mac and (over ssh) every peer with each Thunderbolt
+receptacle, what is plugged there and at which speed, free receptacles marked `◀ plug here`,
+and for a Mac mini / Mac Studio the front ports flagged as USB-C only. Without a link it adds a
+wrong-vs-right sketch. Rule of thumb: on a Mac mini the cable goes into a **back** port, the two
+front ports are USB 3 without Thunderbolt and never form a bridge. Attached Macs are matched to
+maccluster nodes via their Thunderbolt Domain UUID (`tb_domain_uuids` in `cluster.toml`).
+`--no-remote` skips the ssh round trip.
 
 ## Report
 
