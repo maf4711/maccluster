@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.7.4 — 2026-11-07
+
+### Fixed
+- `remote-install` waits up to 60 s for the shared installation lock instead of 1 s
+  (`MACCLUSTER_INSTALL_LOCK_WAIT`), and a failed install now names the peer script's reason
+  instead of only `rc=1` (node-b failed once without a message; the retry succeeded).
+
 ## 0.7.3 — 2026-11-07
 
 ### Fixed
