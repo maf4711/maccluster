@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## 0.7.0 — 2026-11-07
+
+### Added
+- `sync home|dev --engine docsync|ditto|auto` (env `MACCLUSTER_SYNC_ENGINE`): the docsync
+  engine (docsync-lan >= 1.1) syncs every include root three-way with a per-peer base, so
+  deletions and renames propagate, conflicting edits keep both copies, more than 25 deletions
+  are held back (`--force-deletes`), overwritten files go to a SafetyNet with retention, and
+  peers run in parallel. Thunderbolt address first (bound to this Mac's bridge IP), `.local`
+  names as fallback, so `sync dev` no longer needs the extra Wi-Fi pass. `auto` uses docsync
+  when installed and falls back to ditto for options only ditto has (push/pull-only, rdma,
+  larger/skip-conflict policies, force-icloud/identical, quick/max-files/max-bytes).
+- `remote-install` ships the docsync-lan wheel next to maccluster's (digest-checked
+  `pipx inject`); `status` shows the active sync engine.
+
+### Why
+- ditto newest-wins over `~/Developer` overwrote a git working tree on this Mac with an older
+  peer copy during development (2026-11-07); it never deletes and cannot see conflicts.
+
 ### Fixed
 - SafetyNet retention: prune on every real sync (push-only included) and on each heal
   tick, with age (14 d) and size (20 GB) limits next to the run count (5). node-a had

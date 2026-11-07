@@ -28,7 +28,8 @@ from maccluster.services.package_update import (
 )
 from maccluster.services.remote_install_service import remote_install
 from maccluster.services.service_mgmt import install_service
-from maccluster.services.sync_service import exit_code_for_sync, sync_home
+from maccluster.services.sync_engine import sync_tree
+from maccluster.services.sync_service import exit_code_for_sync
 
 
 @dataclass(frozen=True)
@@ -259,7 +260,7 @@ def run_automation(
                     report,
                     "sync",
                     peer or "all peers",
-                    lambda: sync_home(
+                    lambda: sync_tree(
                         ctx,
                         peer=peer,
                         safetynet=True,

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from maccluster.domain.enums import NodeRole
 from maccluster.domain.models import (
     ClusterConfig,
@@ -166,6 +168,17 @@ def render_status(snap: HealthSnapshot) -> str:
                 f"safetynet: {n_runs} runs, {n_bytes / 1024**3:.1f} GB in ~/.maccluster-safetynet "
                 f"(policy: keep {DEFAULT_KEEP_RUNS}, {DEFAULT_MAX_AGE_DAYS} d, {DEFAULT_MAX_BYTES // 1024**3} GB){flag}"
             )
+    except Exception:
+        pass
+    try:
+        from maccluster.services.sync_docsync import ENGINE_ENV, docsync_version
+
+        ver = docsync_version()
+        mode = os.environ.get(ENGINE_ENV) or "auto"
+        engine = "ditto" if mode == "ditto" or ver is None else f"docsync {ver}"
+        lines.append(
+            f"sync engine: {engine}  (mode {mode}{'' if ver else ', docsync not installed'})"
+        )
     except Exception:
         pass
     for nh in snap.nodes:

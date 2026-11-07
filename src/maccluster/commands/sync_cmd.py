@@ -10,19 +10,27 @@ from maccluster.constants import SYNC_DEV_WIFI_TOP, TIMEOUT_SYNC
 from maccluster.errors import CliError
 from maccluster.render.json_out import dumps, to_jsonable
 from maccluster.render.progress import NullProgress, SyncProgress
+from maccluster.services import sync_docsync
+from maccluster.services.sync_engine import sync_tree
 from maccluster.services.sync_history import format_last_run, read_last_run
 from maccluster.services.sync_mcprt import run_mcprt
 from maccluster.services.sync_service import (
     exit_code_for_sync,
     normalize_sync_target,
     resolve_sync_tree,
-    sync_home,
 )
 from maccluster.services.sync_wifi import (
     intersect_repos_with_includes,
     list_recent_repos,
     merge_sync_results,
 )
+
+
+def _docsync_selected(engine: str | None) -> bool:
+    try:
+        return sync_docsync.resolve_engine(engine, [])[0] == "docsync"
+    except Exception:
+        return False
 
 
 def _render_plain(result) -> str:
@@ -195,8 +203,15 @@ def run(ctx: AppContext, args) -> int:
         allow_partial_inventory=bool(getattr(args, "allow_partial_inventory", False)),
     )
 
+    engine = getattr(args, "engine", None)
+    kwargs["engine"] = engine
+    kwargs["force_deletes"] = bool(getattr(args, "force_deletes", False))
     run_tb = not wifi_only
     run_wifi = action == "dev" and not no_wifi and wifi_top > 0 and transport is None
+    if run_wifi and run_tb and _docsync_selected(engine):
+        # docsync resolves Thunderbolt first and falls back to the .local names per peer,
+        # so the extra Wi-Fi top-N pass of the ditto engine is not needed.
+        run_wifi = False
     wifi_repos: tuple[str, ...] = ()
     if run_wifi:
         wifi_repos = list_recent_repos(tree, limit=wifi_top)
@@ -231,10 +246,10 @@ def run(ctx: AppContext, args) -> int:
 
     results = []
     if run_tb:
-        results.append(sync_home(ctx, **kwargs, via="tb"))
+        results.append(sync_tree(ctx, **kwargs, via="tb"))
     if run_wifi:
         results.append(
-            sync_home(
+            sync_tree(
                 ctx,
                 **{
                     **kwargs,

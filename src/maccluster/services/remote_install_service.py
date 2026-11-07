@@ -284,6 +284,11 @@ def remote_install(
                 pub_file: f"{remote_dir}/cluster.pub",
                 script: f"{remote_dir}/install.sh",
             }
+            from maccluster.services.sync_docsync import find_docsync_wheel, inject_script
+
+            docsync_wheel = find_docsync_wheel()
+            if docsync_wheel is not None:
+                files[docsync_wheel] = f"{remote_dir}/{docsync_wheel.name}"
             remote_cfg = "-"
             if copy_config:
                 remote_cfg = f"{remote_dir}/cluster.toml"
@@ -330,6 +335,37 @@ def remote_install(
                 timeout=timeout,
             )
             log = ((run.stdout or "") + "\n" + (run.stderr or "")).strip()
+            engine_note = "docsync wheel not found — peer keeps the ditto sync engine"
+            if run.returncode == 0 and docsync_wheel is not None:
+                with docsync_wheel.open("rb") as fh:
+                    dsum = hashlib.file_digest(fh, "sha256").hexdigest()
+                inj = ctx.runner.run(
+                    ssh_bind_argv(
+                        abs_ssh,
+                        bind_ip=self_ip,
+                        peer_ip=peer_ip,
+                        user=u,
+                        connect_timeout=15,
+                        remote=(
+                            shlex.join(
+                                [
+                                    "/bin/bash",
+                                    "-c",
+                                    inject_script(f"{remote_dir}/{docsync_wheel.name}", dsum),
+                                ]
+                            ),
+                        ),
+                    ),
+                    timeout=timeout,
+                )
+                out = ((inj.stdout or "") + "\n" + (inj.stderr or "")).strip()
+                log = (log + "\n" + out).strip()
+                ver = [ln for ln in out.splitlines() if ln.startswith("docsync ")]
+                engine_note = (
+                    f"engine {ver[-1]}"
+                    if inj.returncode == 0 and ver
+                    else f"docsync install failed rc={inj.returncode}"
+                )
             return RemoteInstallResult(
                 peer_id=peer_node.id,
                 peer_ip=peer_ip,
@@ -337,7 +373,7 @@ def remote_install(
                 ssh_target=target,
                 wheel=str(wheel),
                 ok=run.returncode == 0,
-                message="ok"
+                message=f"ok; {engine_note}"
                 if run.returncode == 0
                 else f"remote install failed rc={run.returncode}",
                 log=log[-4000:],

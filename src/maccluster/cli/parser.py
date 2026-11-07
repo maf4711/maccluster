@@ -30,6 +30,21 @@ def _add_sync_tree_flags(
 ) -> None:
     """Flags shared by `sync home` and `sync dev`."""
     parser.add_argument(
+        "--engine",
+        choices=("auto", "docsync", "ditto"),
+        default=None,
+        help=(
+            "Sync engine: docsync (three-way: deletions, conflict copies, deletion guard, "
+            "SafetyNet) or ditto (newest-wins copy, no deletions). Default auto = docsync "
+            "when installed; env MACCLUSTER_SYNC_ENGINE"
+        ),
+    )
+    parser.add_argument(
+        "--force-deletes",
+        action="store_true",
+        help="docsync engine: apply more deletions than its deletion guard allows",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Show what ditto would transfer (no writes)",

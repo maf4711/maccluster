@@ -56,7 +56,7 @@ def test_dry_run_has_no_mutations_subprocesses_or_receipt(maintenance, tmp_path,
     ctx.lock = SimpleNamespace(acquire=forbidden)
     monkeypatch.setattr(auto.tempfile, "TemporaryDirectory", forbidden)
     monkeypatch.setattr(auto, "remote_install", forbidden)
-    monkeypatch.setattr(auto, "sync_home", forbidden)
+    monkeypatch.setattr(auto, "sync_tree", forbidden)
     ctx.runner = SimpleNamespace(run=forbidden)
     report = auto.run_automation(ctx, dry_run=True, sync=True)
     assert report.ok and not events
@@ -108,7 +108,7 @@ def test_peer_failure_blocks_sync_and_local_update(maintenance, monkeypatch, fai
 
     monkeypatch.setattr(auto, "remote_install", remote)
     monkeypatch.setattr(
-        auto, "sync_home", lambda *a, **k: pytest.fail("sync after rollout failure")
+        auto, "sync_tree", lambda *a, **k: pytest.fail("sync after rollout failure")
     )
     report = auto.run_automation(ctx, sync=True)
     assert events == ["heal", "service", "build", "node-b", "doctor"]
@@ -211,7 +211,7 @@ def test_sync_is_opt_in_verified_and_before_update(maintenance, monkeypatch):
         assert kwargs["peer"] == "node-c"
         return SimpleNamespace(peers=())
 
-    monkeypatch.setattr(auto, "sync_home", sync)
+    monkeypatch.setattr(auto, "sync_tree", sync)
     monkeypatch.setattr(auto, "exit_code_for_sync", lambda result: 0)
     assert auto.run_automation(ctx, peer="node-c", sync=True).ok
     assert events[-3:] == ["sync", "doctor", "update"]
