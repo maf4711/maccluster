@@ -32,16 +32,21 @@ def runs(base):
     return sorted((n for n in os.listdir(base) if RUN.match(n) and os.path.isdir(os.path.join(base, n))), reverse=True)
 
 
-def dir_bytes(path):
+def dir_bytes(path, seen=None):
+    """Each inode once (hardlinked or repeated files are not double counted)."""
+    seen = set() if seen is None else seen
     total = 0
     for dirpath, _dirs, files in os.walk(path):
         for f in files:
             full = os.path.join(dirpath, f)
             try:
-                if not os.path.islink(full):
-                    total += os.lstat(full).st_size
+                st = os.lstat(full)
             except OSError:
-                pass
+                continue
+            if os.path.islink(full) or (st.st_dev, st.st_ino) in seen:
+                continue
+            seen.add((st.st_dev, st.st_ino))
+            total += st.st_size
     return total
 
 

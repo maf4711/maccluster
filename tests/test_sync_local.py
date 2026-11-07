@@ -418,3 +418,17 @@ class RootsFidelitySafetyNetTests(unittest.TestCase):
         self.assertFalse(rep.ok)
         self.assertEqual(called["n"], 0)
         self.assertEqual((self.a / "doc.txt").read_text(), "old")
+
+
+class PlanOutputTests(unittest.TestCase):
+    def test_dry_run_output_is_capped_unless_verbose(self):
+        from docsync import engine
+        from docsync.session import _print_plan
+        plan = engine.Plan(pull=[f"f{i}" for i in range(50)], push=["a"])
+        lines = []
+        _print_plan(plan, lines.append, limit=20)
+        self.assertEqual(sum(1 for ln in lines if ln.strip().startswith("pull ←") and "more" not in ln), 20)
+        self.assertTrue(any("30 more" in ln for ln in lines))
+        lines.clear()
+        _print_plan(plan, lines.append, limit=None)
+        self.assertEqual(len(lines), 51)
