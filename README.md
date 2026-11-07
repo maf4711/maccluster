@@ -124,7 +124,15 @@ The advisor never executes anything; it only suggests docsync commands and file 
 
 - Transport failures (ssh banner timeout, peer rebooting, link flap, rsync timeout) are retried
   up to three times with 5/15/45 s delays; the report shows `retries N`.
-- `docsync sync --wait SEC` waits for a running sync instead of exiting with code 3.
+- `docsync sync --wait SEC` waits for a running sync instead of exiting with code 3. The
+  exit-3 message names the run that holds the lock: `another run is in progress (pid N,
+  running M min, command)`; `~/.local/state/docsync/run.lock` holds the same three lines.
+- Every `docsync sync` / `plan` has a wall-clock deadline, `--max-runtime SEC` (default 1800,
+  `0` = no limit). When it passes, docsync writes `deadline of N s exceeded` to `history.log`
+  and stderr, kills its own rsync/ssh child processes and exits with code 4, which releases
+  the lock. No base is written for an unfinished peer, so the next run resumes the work.
+  `docsync watch` applies the deadline to each run; the loop keeps going. The launchd agent
+  passes `--max-runtime 1800`.
 - `docsync watch` backs off exponentially after a failed run (interval → 2× … 6×) and keeps
   running on unexpected errors, which it writes to `history.log`.
 - After a run that failed, produced a conflict copy or held deletions back, a Notification
