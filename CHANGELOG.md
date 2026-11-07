@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.7.3 — 2026-11-07
+
+### Fixed
+- docsync engine leaves machine state alone: `.ssh` (authorized_keys, known_hosts) and the
+  whole `.config` (cluster.toml, docsync config, app credentials) are no longer synced
+  three-way; named sub-folders such as `--include .config/fish/` still are. A dry run had
+  planned 723 conflict copies in ~/.config and overwriting authorized_keys between Macs.
+
 ## 0.7.2 — 2026-11-07
 
 ### Fixed

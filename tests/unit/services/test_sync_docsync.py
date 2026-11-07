@@ -347,9 +347,19 @@ def test_inject_script_checks_digest_before_installing():
 
 
 def test_git_trees_are_left_out():
-    assert sd.drop_git_trees(("Documents/", "Developer/", "Developer/x/", ".ssh/")) == (
-        ("Documents/", ".ssh/"),
-        ("Developer/", "Developer/x/"),
+    assert sd.drop_git_trees(
+        (
+            "Documents/",
+            "Developer/",
+            "Developer/x/",
+            ".ssh/",
+            ".config/",
+            ".config/fish/",
+            ".ssh/keys/",
+        )
+    ) == (
+        ("Documents/", ".config/fish/"),
+        ("Developer/", "Developer/x/", ".ssh/", ".config/", ".ssh/keys/"),
     )
 
 
