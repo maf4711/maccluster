@@ -67,14 +67,17 @@ def parse_rsync_stats(text: str) -> dict[str, int]:
 
 
 def _run_rsync(src: str, dst: str, paths: list[str], ssh_cmd: list[str] | None,
-               dry: bool, verbose: bool) -> dict[str, int]:
-    """rsync the given relative paths from src/ to dst/. Returns parsed --stats."""
+               dry: bool, verbose: bool, progress=None) -> dict[str, int]:
+    """rsync the given relative paths from src/ to dst/. Returns parsed --stats.
+    `progress` is a callable fed with every rsync stdout line (for the progress bar)."""
     if not paths:
         return {"files": 0, "bytes": 0, "sent": 0, "received": 0, "skipped": 0}
     lst = _files_from(paths)
     try:
         cmd = [rsync_bin(), "-a", "--from0", f"--files-from={lst}", "--partial",
                "--no-human-readable", "--stats"]
+        if progress is not None and not dry:
+            cmd.append("--info=progress2")
         if verbose:
             cmd.append("-v")
         if dry:
@@ -82,15 +85,36 @@ def _run_rsync(src: str, dst: str, paths: list[str], ssh_cmd: list[str] | None,
         if ssh_cmd:
             cmd += ["-e", " ".join(shlex.quote(c) for c in ssh_cmd)]
         cmd += [src, dst]
-        res = subprocess.run(cmd, text=True, capture_output=True)
-        if verbose and res.stdout:
-            print(res.stdout.rstrip())
+        proc = subprocess.Popen(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                errors="replace", bufsize=1)
+        out_lines: list[str] = []
+        buf = ""
+        while True:  # progress2 lines end in \r, stats lines in \n
+            chunk = proc.stdout.read(512)
+            if not chunk:
+                break
+            buf += chunk
+            while True:
+                i = min([j for j in (buf.find("\r"), buf.find("\n")) if j >= 0], default=-1)
+                if i < 0:
+                    break
+                line, buf = buf[:i], buf[i + 1:]
+                if progress is not None:
+                    progress(line)
+                if verbose and line and "%" not in line:
+                    print(line)
+                out_lines.append(line)
+        if buf:
+            out_lines.append(buf)
+        stderr = proc.stderr.read()
+        rc = proc.wait()
+        stdout = "\n".join(out_lines)
         # 23/24: some files vanished or could not be read (iCloud/other sync in flight) — report, don't abort
-        if res.returncode not in (0, 23, 24):
-            raise TransportError(f"rsync rc={res.returncode}: {res.stderr.strip()[-800:]}")
-        stats = parse_rsync_stats(res.stdout)
-        if res.returncode in (23, 24):
-            errs = [l for l in res.stderr.splitlines() if "error:" in l or "failed:" in l]
+        if rc not in (0, 23, 24):
+            raise TransportError(f"rsync rc={rc}: {stderr.strip()[-800:]}")
+        stats = parse_rsync_stats(stdout)
+        if rc in (23, 24):
+            errs = [l for l in stderr.splitlines() if "error:" in l or "failed:" in l]
             stats["skipped"] = max(len(errs), 1)
             stats["errors"] = errs[:5]
         return stats
@@ -114,11 +138,11 @@ class LocalTransport:
     def manifest(self, excludes: list[str], dataless: set[str] | None = None) -> Manifest:
         return scan(self.root, excludes, dataless)
 
-    def push(self, local_root: Path, paths: list[str], dry: bool, verbose: bool) -> dict[str, int]:
-        return _run_rsync(f"{local_root}/", f"{self.root}/", paths, None, dry, verbose)
+    def push(self, local_root: Path, paths: list[str], dry: bool, verbose: bool, progress=None) -> dict[str, int]:
+        return _run_rsync(f"{local_root}/", f"{self.root}/", paths, None, dry, verbose, progress)
 
-    def pull(self, local_root: Path, paths: list[str], dry: bool, verbose: bool) -> dict[str, int]:
-        return _run_rsync(f"{self.root}/", f"{local_root}/", paths, None, dry, verbose)
+    def pull(self, local_root: Path, paths: list[str], dry: bool, verbose: bool, progress=None) -> dict[str, int]:
+        return _run_rsync(f"{self.root}/", f"{local_root}/", paths, None, dry, verbose, progress)
 
     def remove(self, paths: list[str], stamp: str, use_trash: bool, dry: bool) -> None:
         remove_local(self.root, self.home, paths, stamp, use_trash, dry)
@@ -184,11 +208,11 @@ class RemoteTransport:
                 raise TransportError(f"remote listing failed: {res.stderr.strip()[-400:]}")
         return parse_lines(res.stdout, excludes, dataless)
 
-    def push(self, local_root: Path, paths: list[str], dry: bool, verbose: bool) -> dict[str, int]:
-        return _run_rsync(f"{local_root}/", self.rsync_path, paths, self.ssh_cmd, dry, verbose)
+    def push(self, local_root: Path, paths: list[str], dry: bool, verbose: bool, progress=None) -> dict[str, int]:
+        return _run_rsync(f"{local_root}/", self.rsync_path, paths, self.ssh_cmd, dry, verbose, progress)
 
-    def pull(self, local_root: Path, paths: list[str], dry: bool, verbose: bool) -> dict[str, int]:
-        return _run_rsync(self.rsync_path, f"{local_root}/", paths, self.ssh_cmd, dry, verbose)
+    def pull(self, local_root: Path, paths: list[str], dry: bool, verbose: bool, progress=None) -> dict[str, int]:
+        return _run_rsync(self.rsync_path, f"{local_root}/", paths, self.ssh_cmd, dry, verbose, progress)
 
     def remove(self, paths: list[str], stamp: str, use_trash: bool, dry: bool) -> None:
         if dry or not paths:

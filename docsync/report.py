@@ -42,6 +42,7 @@ class Phase:
 class PeerReport:
     peer: str
     host: str = ""
+    via: str = ""  # Thunderbolt | LAN | LAN (Bonjour) | Thunderbolt (ARP)
     ok: bool = True
     error: str = ""
     dry: bool = False
@@ -84,7 +85,7 @@ class PeerReport:
 
     def render(self) -> str:
         tag = " (DRY RUN — nothing written)" if self.dry else ""
-        head = f"── {self.peer} @ {self.host or '?'}{tag}"
+        head = f"── {self.peer} @ {self.host or '?'}{' via ' + self.via if self.via else ''}{tag}"
         if not self.ok:
             return f"{head}\n   FAILED after {fmt_secs(self.secs)}: {self.error}"
         rows = [

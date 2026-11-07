@@ -10,6 +10,7 @@ from pathlib import Path
 
 from docsync import engine, manifest
 from docsync.config import STATE_DIR, Config
+from docsync.progress import Bar
 from docsync.report import PeerReport
 from docsync.transport import TransportError, remove_local
 
@@ -27,7 +28,7 @@ def _stamp() -> str:
 
 
 def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbose: bool = False,
-             state_dir: Path = STATE_DIR, log=print) -> PeerReport:
+             state_dir: Path = STATE_DIR, log=print, progress: bool = False) -> PeerReport:
     rep = PeerReport(peer=peer_name, dry=dry)
     local_root = cfg.local_root
     local_root.mkdir(parents=True, exist_ok=True)
@@ -39,7 +40,9 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
         t0 = time.monotonic()
         cloud_local: set[str] = set()
         cloud_remote: set[str] = set()
+        log(f"[{peer_name}] listing local tree…")
         local = manifest.scan(local_root, cfg.excludes, cloud_local)
+        log(f"[{peer_name}] listing remote tree…")
         remote = transport.manifest(cfg.excludes, cloud_remote)
         rep.phase("list", t0)
         rep.local_files, rep.local_bytes = len(local), _bytes_of(local, local)
@@ -84,7 +87,10 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
         rep.phase("conflicts", t0)
 
         t0 = time.monotonic()
-        st = transport.push(local_root, sorted(plan.push), dry, verbose)
+        bar = _bar(progress and not dry, "push →", plan.push, local)
+        st = transport.push(local_root, sorted(plan.push), dry, verbose, bar.feed if bar else None)
+        if bar:
+            bar.finish(st["bytes"], st["files"])
         rep.pushed_files = len(plan.push) if dry else st["files"]
         rep.pushed_bytes = _bytes_of(local, [p for p in plan.push if p in local]) if dry else st["bytes"]
         rep.wire_sent += st["sent"]
@@ -93,7 +99,10 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
         rep.phase("push", t0)
 
         t0 = time.monotonic()
-        st = transport.pull(local_root, sorted(plan.pull), dry, verbose)
+        bar = _bar(progress and not dry, "pull ←", plan.pull, remote)
+        st = transport.pull(local_root, sorted(plan.pull), dry, verbose, bar.feed if bar else None)
+        if bar:
+            bar.finish(st["bytes"], st["files"])
         rep.pulled_files = len(plan.pull) if dry else st["files"]
         rep.pulled_bytes = _bytes_of(remote, [p for p in plan.pull if p in remote]) if dry else st["bytes"]
         rep.wire_sent += st["sent"]
@@ -119,6 +128,12 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
         rep.ok, rep.error = False, str(e)
     rep.finish()
     return rep
+
+
+def _bar(enabled: bool, label: str, paths: list[str], m: manifest.Manifest):
+    if not enabled or not paths:
+        return None
+    return Bar(label, len(paths), _bytes_of(m, paths))
 
 
 def _skipped(rep: PeerReport, st: dict, phase: str) -> None:

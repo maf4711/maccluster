@@ -35,6 +35,16 @@ on the affected machine (`trash = false` to unlink instead).
 The first sync with a peer has no base: both trees are merged (union, newest
 wins), nothing is deleted.
 
+## Progress and transport
+
+While files move, a progress bar on stderr shows percent, KB done/total, current speed,
+files done/total and rsync's ETA (`-q` or a non-TTY disables it). Hosts are probed
+Thunderbolt-first like maccluster: addresses inside an active Thunderbolt Bridge subnet
+(`bridge0`, `en1`, …) come first, then LAN names, then a Bonjour lookup, then Thunderbolt
+ARP neighbours that answer `hostname -s` with a configured peer's name. Thunderbolt
+addresses whose link is down are skipped without waiting for ping timeouts. The report
+header says which transport was used (`via Thunderbolt`, `via LAN`, …).
+
 ## Report
 
 Every `sync`/`plan` ends with a report per peer and in total: files and bytes

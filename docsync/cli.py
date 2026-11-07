@@ -25,15 +25,36 @@ def _transport(peer: Peer, host: str):
     return RemoteTransport(peer.userhost(host), peer.path)
 
 
-def _resolve(peer: Peer, log) -> str | None:
-    host, probes = discover.first_reachable(peer.hosts)
-    for h, ms in probes.items():
-        log(f"   {h:<28} {'%.1f ms' % ms if ms is not None else 'unreachable'}")
-    if host is None:
-        host = discover.bonjour_fallback(peer.hosts)
-        if host:
-            log(f"   {host:<28} found via Bonjour (name suffix changed)")
-    return host
+def _resolve(peer: Peer, log) -> tuple[str | None, str]:
+    """Pick the first reachable host: Thunderbolt first (like maccluster), then LAN, then Bonjour,
+    then unconfigured Thunderbolt neighbours from the ARP table. Returns (host, transport)."""
+    for h, via in discover.order_hosts(peer.hosts):
+        if via.endswith("(link down)"):
+            log(f"   {h:<28} skipped — {via}")
+            continue
+        ms = discover.ping(h)
+        log(f"   {h:<28} {'%.1f ms  via %s' % (ms, via) if ms is not None else 'unreachable'}")
+        if ms is not None:
+            return h, via
+    host = discover.bonjour_fallback(peer.hosts)
+    if host:
+        log(f"   {host:<28} found via Bonjour (name suffix changed)")
+        return host, "LAN (Bonjour)"
+    for ip in discover.tb_neighbours():
+        if ip in peer.hosts:
+            continue
+        try:
+            name = RemoteTransport(peer.userhost(ip), peer.path).ssh("hostname -s", timeout=10).stdout.strip()
+        except Exception:  # noqa: BLE001
+            continue
+        if name and discover.base_name(name) in {discover.base_name(h) for h in peer.hosts}:
+            log(f"   {ip:<28} Thunderbolt neighbour answering as {name}")
+            return ip, "Thunderbolt (ARP)"
+    return None, ""
+
+
+def resolve_peer(peer: Peer) -> tuple[str | None, str]:
+    return _resolve(peer, lambda *a: None)
 
 
 def _lock(state_dir: Path):
@@ -81,15 +102,15 @@ def cmd_init(a) -> int:
 def cmd_peers(a) -> int:
     cfg = load_config()
     print(f"local: {cfg.local_root}   excludes: {len(cfg.excludes)}   policy: {cfg.conflict_policy}")
+    nets = discover.tb_networks()
+    print(f"thunderbolt: {', '.join(str(n) for n in nets) if nets else 'no active link'}   "
+          f"(ifaces: {', '.join(discover.tb_interfaces()) or '-'})")
     for p in cfg.peers:
-        host, probes = discover.first_reachable(p.hosts)
-        host = host or discover.bonjour_fallback(p.hosts)
-        state = f"→ {host}" if host else "unreachable"
+        host, via = resolve_peer(p)
+        state = f"→ {host} via {via}" if host else "unreachable"
         b = base_file(p.name)
         last = time.strftime("%Y-%m-%d %H:%M", time.localtime(b.stat().st_mtime)) if b.exists() else "never"
-        print(f"   {p.name:<10} user={p.user or os.environ.get('USER', '?'):<8} {state:<30} last sync: {last}")
-        for h, ms in probes.items():
-            print(f"      {h:<28} {'%.1f ms' % ms if ms is not None else '-'}")
+        print(f"   {p.name:<10} user={p.user or os.environ.get('USER', '?'):<8} {state:<48} last sync: {last}")
     print(agent.status())
     return 0
 
@@ -125,11 +146,13 @@ def cmd_sync(a, dry: bool) -> int:
     try:
         for p in peers:
             log(f"── {p.name}")
-            host = _resolve(p, log)
+            host, via = _resolve(p, log)
             if host is None:
                 rep = run_peer(cfg, p.name, _Unreachable(p), dry=dry)
             else:
-                rep = run_peer(cfg, p.name, _transport(p, host), dry=dry, verbose=a.verbose, log=log)
+                rep = run_peer(cfg, p.name, _transport(p, host), dry=dry, verbose=a.verbose, log=log,
+                               progress=not a.quiet and sys.stderr.isatty())
+                rep.via = via
             run.peers.append(rep)
     finally:
         lock.close()
@@ -200,15 +223,16 @@ def cmd_doctor(a) -> int:
     if icloud_managed(cfg.local_root):
         print("           ⚠ this folder is iCloud 'Desktop & Documents' — Macs on the same Apple ID are already")
         print("             synced by iCloud; docsync skips evicted files and is meant for peers on OTHER accounts")
+    nets = discover.tb_networks()
+    print(f"thunderbolt {', '.join(str(n) for n in nets) if nets else 'no active link'} (ifaces: {', '.join(discover.tb_interfaces()) or '-'})")
     for p in cfg.peers:
-        host, _ = discover.first_reachable(p.hosts)
-        host = host or discover.bonjour_fallback(p.hosts)
+        host, via = resolve_peer(p)
         if not host:
-            print(f"peer {p.name:<6} unreachable (ping + Bonjour)")
+            print(f"peer {p.name:<6} unreachable (ping + Bonjour + TB neighbours)")
             ok = False
             continue
         try:
-            print(f"peer {p.name:<6} {host} → ssh ok: {_transport(p, host).check()}")
+            print(f"peer {p.name:<6} {host} via {via} → ssh ok: {_transport(p, host).check()}")
         except Exception as e:  # noqa: BLE001
             print(f"peer {p.name:<6} {host} → ssh FAILED: {e}")
             print(f"            fix: ssh-copy-id {p.userhost(host)}   (and enable Remote Login there)")

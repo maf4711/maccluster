@@ -131,3 +131,55 @@ class DiscoverTests(unittest.TestCase):
         for h in ("CM-KWFVR7JGW3-3000.local", "CM-KWFVR7JGW3 (891)", "cm-kwfvr7jgw3.local", "CM-KWFVR7JGW3"):
             self.assertEqual(base_name(h), "cm-kwfvr7jgw3", h)
         self.assertEqual(base_name("mbpM5MaxMF-2.local"), "mbpm5maxmf")
+
+
+class ProgressTests(unittest.TestCase):
+    def test_parse_progress2_line(self):
+        from docsync.progress import parse_progress
+        p = parse_progress("  1,234,567  45%   12.34MB/s    0:00:12 (xfr#3, to-chk=100/370)")
+        self.assertEqual((p["bytes"], p["pct"], p["speed"], p["eta"], p["xfr"], p["left"], p["total"]),
+                         (1234567, 45, "12.34MB/s", "0:00:12", 3, 100, 370))
+        self.assertIsNone(parse_progress("Number of files: 3"))
+        self.assertEqual(parse_progress("999 100%  1.00kB/s 0:00:00")["xfr"], None)
+
+    def test_bar_writes_to_stream_and_finishes(self):
+        import io
+        from docsync.progress import Bar
+        out = io.StringIO()
+        b = Bar("pull ←", 370, 11_000_000, stream=out, enabled=True)
+        b.last_draw = 0
+        b.feed("  5,500,000  50%   12.34MB/s    0:00:12 (xfr#3, to-chk=185/370)")
+        b.finish(11_000_000, 370)
+        text = out.getvalue()
+        self.assertIn("50%", text)
+        self.assertIn("185/370 files", text)
+        self.assertIn("5,371/10,742 KB", text)
+        self.assertIn("12.34MB/s", text)
+        self.assertIn("100%", text)
+        self.assertTrue(text.endswith("\n"))
+
+
+class ThunderboltTests(unittest.TestCase):
+    def test_is_tb_host(self):
+        import ipaddress
+        from docsync.discover import is_tb_host
+        active = [ipaddress.IPv4Network("10.42.0.0/24")]
+        conf = ipaddress.IPv4Network("10.42.0.0/24")
+        self.assertEqual(is_tb_host("10.42.0.1", active, conf), "active")
+        self.assertEqual(is_tb_host("10.42.0.1", [], conf), "down")
+        self.assertEqual(is_tb_host("169.254.31.43", [], None), "down")
+        self.assertEqual(is_tb_host("192.168.178.94", active, conf), "")
+        self.assertEqual(is_tb_host("mini.local", active, conf), "")
+
+    def test_order_hosts_tb_first_dead_last(self):
+        import ipaddress
+        from docsync import discover
+        orig = (discover.tb_networks, discover.cluster_tb_subnet)
+        discover.tb_networks = lambda: [ipaddress.IPv4Network("10.42.0.0/24")]
+        discover.cluster_tb_subnet = lambda: ipaddress.IPv4Network("10.42.0.0/24")
+        try:
+            got = discover.order_hosts(["mini.local", "169.254.9.9", "10.42.0.1"])
+        finally:
+            discover.tb_networks, discover.cluster_tb_subnet = orig
+        self.assertEqual(got, [("10.42.0.1", "Thunderbolt"), ("mini.local", "LAN"),
+                               ("169.254.9.9", "Thunderbolt (link down)")])
