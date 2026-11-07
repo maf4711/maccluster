@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.7.1 — 2026-11-07
+
+### Fixed
+- The docsync adapter no longer imports docsync when an engine api is injected, so the
+  test suite passes on machines without docsync-lan (CI).
+
 ## 0.7.0 — 2026-11-07
 
 ### Added
