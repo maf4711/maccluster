@@ -116,7 +116,7 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
             plan.delete_local, plan.delete_remote = [], []
         log(f"[{peer_name}] plan: {plan.summary}")
         if verbose or dry:
-            _print_plan(plan, log)
+            _print_plan(plan, log, limit=None if verbose else 20)
 
         t0 = time.monotonic()
         stamp = _stamp()
@@ -320,10 +320,17 @@ def _skipped(rep: PeerReport, st: dict, phase: str) -> None:
             rep.warnings.append(f"{phase}: {e.strip()}")
 
 
-def _print_plan(plan: engine.Plan, log) -> None:
+def _print_plan(plan: engine.Plan, log, limit: int | None = None) -> None:
+    """Every planned path with -v; otherwise the first `limit` per category and a count."""
     for label, items in (("push →", plan.push), ("pull ←", plan.pull),
                          ("delete local", plan.delete_local), ("delete remote", plan.delete_remote)):
-        for p in items:
+        shown = items if limit is None else items[:limit]
+        for p in shown:
             log(f"   {label:<14} {p}")
-    for path, winner in plan.conflicts:
+        if len(items) > len(shown):
+            log(f"   {label:<14} … {len(items) - len(shown):,} more (docsync plan -v lists all)")
+    conflicts = plan.conflicts if limit is None else plan.conflicts[:limit]
+    for path, winner in conflicts:
         log(f"   {'conflict':<14} {path}  (winner: {winner})")
+    if len(plan.conflicts) > len(conflicts):
+        log(f"   {'conflict':<14} … {len(plan.conflicts) - len(conflicts):,} more")
