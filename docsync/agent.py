@@ -31,7 +31,7 @@ def plist_xml(interval_s: int, entry: str | list[str], watch_path: str | list[st
   <key>StandardOutPath</key><string>{LOG_DIR}/agent.log</string>
   <key>StandardErrorPath</key><string>{LOG_DIR}/agent.err</string>
   <key>EnvironmentVariables</key><dict>
-    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>HOME</key><string>{Path.home()}</string>
   </dict>
 </dict></plist>

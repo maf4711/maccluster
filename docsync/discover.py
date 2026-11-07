@@ -12,7 +12,7 @@ from pathlib import Path
 def bonjour_ssh_hosts(seconds: float = 3.0) -> list[str]:
     """Browse _ssh._tcp for a few seconds, return instance names (e.g. 'CM-KWFVR7JGW3')."""
     try:
-        proc = subprocess.Popen(["dns-sd", "-B", "_ssh._tcp", "local"], text=True,
+        proc = subprocess.Popen(["/usr/bin/dns-sd", "-B", "_ssh._tcp", "local"], text=True,
                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     except FileNotFoundError:
         return []
@@ -44,7 +44,7 @@ def to_local_hostname(instance: str) -> str:
 def resolve_instance(instance: str, seconds: float = 3.0) -> str | None:
     """dns-sd -L: Bonjour instance -> the host name it can be reached at ('CM-X-3000.local')."""
     try:
-        proc = subprocess.Popen(["dns-sd", "-L", instance, "_ssh._tcp", "local"], text=True,
+        proc = subprocess.Popen(["/usr/bin/dns-sd", "-L", instance, "_ssh._tcp", "local"], text=True,
                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     except FileNotFoundError:
         return None
@@ -84,7 +84,7 @@ def bonjour_fallback(hosts: list[str], seconds: float = 3.0) -> str | None:
 def ping(host: str, timeout_ms: int = 800) -> float | None:
     """Round-trip ms or None."""
     try:
-        res = subprocess.run(["ping", "-c", "1", "-W", str(timeout_ms), host],
+        res = subprocess.run(["/sbin/ping", "-c", "1", "-W", str(timeout_ms), host],
                              text=True, capture_output=True, timeout=timeout_ms / 1000 + 2)
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return None
@@ -106,7 +106,7 @@ def first_reachable(hosts: list[str]) -> tuple[str | None, dict[str, float | Non
 def tb_interfaces() -> list[str]:
     """Devices whose hardware port is Thunderbolt (en1, en6, …) plus the Thunderbolt Bridge (bridge0)."""
     try:
-        out = subprocess.run(["networksetup", "-listallhardwareports"], text=True, capture_output=True, timeout=5).stdout
+        out = subprocess.run(["/usr/sbin/networksetup", "-listallhardwareports"], text=True, capture_output=True, timeout=5).stdout
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return []
     devs, port = [], ""
@@ -121,7 +121,7 @@ def tb_interfaces() -> list[str]:
 def iface_ipv4(dev: str) -> list[ipaddress.IPv4Interface]:
     """Active IPv4 addresses of an interface (empty when down / no address)."""
     try:
-        out = subprocess.run(["ifconfig", dev], text=True, capture_output=True, timeout=5).stdout
+        out = subprocess.run(["/sbin/ifconfig", dev], text=True, capture_output=True, timeout=5).stdout
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return []
     if re.search(r"status: inactive", out):
@@ -174,7 +174,7 @@ def tb_neighbours() -> list[str]:
     if not devs:
         return []
     try:
-        out = subprocess.run(["arp", "-an"], text=True, capture_output=True, timeout=5).stdout
+        out = subprocess.run(["/usr/sbin/arp", "-an"], text=True, capture_output=True, timeout=5).stdout
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return []
     ips = []

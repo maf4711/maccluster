@@ -19,7 +19,7 @@ def notify(title: str, text: str, subtitle: str = "") -> bool:
     if subtitle:
         script += f' subtitle "{esc(subtitle)}"'
     try:
-        res = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=10)
+        res = subprocess.run(["/usr/bin/osascript", "-e", script], capture_output=True, text=True, timeout=10)
         return res.returncode == 0
     except (OSError, subprocess.TimeoutExpired):
         return False
@@ -40,7 +40,7 @@ def on_battery() -> bool:
     if not is_macos():
         return False
     try:
-        out = subprocess.run(["pmset", "-g", "batt"], capture_output=True, text=True, timeout=5).stdout
+        out = subprocess.run(["/usr/bin/pmset", "-g", "batt"], capture_output=True, text=True, timeout=5).stdout
     except (OSError, subprocess.TimeoutExpired):
         return False
     return parse_pmset_batt(out) is True
