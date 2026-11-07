@@ -78,6 +78,19 @@ class PeerReport:
     def phase(self, name: str, t0: float) -> None:
         self.phases.append(Phase(name, time.monotonic() - t0))
 
+    def to_dict(self) -> dict:
+        keys = ("peer", "root", "host", "via", "ok", "error", "dry", "secs", "first_sync", "local_files", "local_bytes",
+                "remote_files", "remote_bytes", "pushed_files", "pushed_bytes", "pulled_files", "pulled_bytes",
+                "wire_sent", "wire_received", "deleted_local", "deleted_remote", "unchanged", "cloud_only_local",
+                "cloud_only_remote", "skipped", "deletes_skipped", "retries", "streams", "safetynet_files",
+                "safetynet_bytes", "warnings")
+        d = {k: getattr(self, k) for k in keys}
+        d["warnings"] = list(self.warnings)
+        d["phases"] = [{"name": p.name, "secs": round(p.secs, 3)} for p in self.phases]
+        d["conflicts"] = [{"path": p, "winner": w, "copy": c} for p, w, c in self.conflicts]
+        d["secs"] = round(self.secs, 3)
+        return d
+
     def finish(self) -> None:
         self.secs = time.monotonic() - self.started
 
@@ -150,6 +163,15 @@ class RunReport:
     @property
     def ok(self) -> bool:
         return all(p.ok for p in self.peers)
+
+    def to_dict(self) -> dict:
+        return {
+            "ok": self.ok,
+            "secs": round(time.monotonic() - self.started, 3),
+            "transferred_files": sum(p.transferred_files for p in self.peers),
+            "transferred_bytes": sum(p.transferred_bytes for p in self.peers),
+            "peers": [p.to_dict() for p in self.peers],
+        }
 
     def notable(self) -> str:
         """One line for a notification: failures, conflicts, held-back deletions. Empty if boring."""

@@ -12,7 +12,8 @@ PLIST = Path(f"~/Library/LaunchAgents/{LABEL}.plist").expanduser()
 LOG_DIR = Path("~/Library/Logs/docsync").expanduser()
 
 
-def plist_xml(interval_s: int, entry: str, watch_path: str | list[str] | None = None) -> str:
+def plist_xml(interval_s: int, entry: str | list[str], watch_path: str | list[str] | None = None) -> str:
+    argv = [sys.executable, entry] if isinstance(entry, str) else list(entry)
     paths = [watch_path] if isinstance(watch_path, str) else list(watch_path or [])
     watch = (f"\n  <key>WatchPaths</key><array>{''.join(f'<string>{p}</string>' for p in paths)}</array>"
              f"\n  <key>ThrottleInterval</key><integer>60</integer>") if paths else ""
@@ -21,7 +22,7 @@ def plist_xml(interval_s: int, entry: str, watch_path: str | list[str] | None = 
 <plist version="1.0"><dict>
   <key>Label</key><string>{LABEL}</string>
   <key>ProgramArguments</key><array>
-    <string>{sys.executable}</string><string>{entry}</string><string>sync</string><string>--all</string><string>--quiet</string><string>--from-agent</string>
+    {''.join(f"<string>{x}</string>" for x in argv)}<string>sync</string><string>--all</string><string>--quiet</string><string>--from-agent</string>
   </array>
   <key>StartInterval</key><integer>{interval_s}</integer>{watch}
   <key>RunAtLoad</key><true/>
@@ -37,9 +38,10 @@ def plist_xml(interval_s: int, entry: str, watch_path: str | list[str] | None = 
 """
 
 
-def entry_point() -> str:
-    """Path of the docsync package parent, run as `python3 -m docsync`? launchd needs a file → use bin shim."""
-    return str(Path(__file__).resolve().parent.parent / "bin" / "docsync-launchd.py")
+def entry_point() -> list[str]:
+    """argv prefix launchd runs: the repo shim in a checkout, `python -m docsync` when installed."""
+    shim = Path(__file__).resolve().parent.parent / "bin" / "docsync-launchd.py"
+    return [sys.executable, str(shim)] if shim.exists() else [sys.executable, "-m", "docsync"]
 
 
 def install(interval_min: int, watch_path: str | list[str] | None = None) -> str:

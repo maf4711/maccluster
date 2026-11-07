@@ -214,6 +214,8 @@ class LocalTransport:
         return safetynet.prune(str(self.root / safetynet.SN_DIR), *policy)
 
     def check(self) -> str:
+        if self.root.resolve() == Path("/"):
+            raise TransportError("refusing to use / as a peer folder")
         if not self.root.is_dir():
             raise TransportError(f"not a directory: {self.root}")
         return self.label

@@ -12,7 +12,9 @@ from docsync.transport import LocalTransport, RemoteTransport, TransportError
 
 def transport_for(peer: Peer, host: str, path: str | None = None, bind: str | None = None):
     """Transport to `peer` at `host` for the peer-side folder `path` (default: the peer's own path)."""
-    if host.startswith("/"):
+    if host == "/":  # "this machine": the peer folder is the given path
+        return LocalTransport(Path(path or peer.path).expanduser())
+    if host.startswith("/"):  # a directory on this machine (mounted volume, test tree)
         return LocalTransport(Path(host))
     return RemoteTransport(peer.userhost(host), path or peer.path, bind=bind)
 

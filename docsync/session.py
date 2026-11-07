@@ -50,7 +50,7 @@ def scan_local(cfg: Config):
 def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbose: bool = False,
              state_dir: Path = STATE_DIR, log=print, progress: bool = False,
              force_deletes: bool = False, progress_stream=None, local_source=None,
-             root_name: str = "documents") -> PeerReport:
+             root_name: str = "documents", on_progress=None) -> PeerReport:
     """local_source: callable returning (manifest, cloud_set); when given, the remote listing is
     requested first and the local scan result fetched afterwards (they overlap in run_many)."""
     rep = PeerReport(peer=peer_name, dry=dry, root=root_name)
@@ -159,7 +159,8 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
         streams = cfg.transfer_streams
         t0 = time.monotonic()
         bar = _bar(progress and not dry, "push →", plan.push, local, progress_stream, multi=streams > 1)
-        st = transport.push(local_root, sorted(plan.push), dry, verbose, bar.feed if bar else None,
+        st = transport.push(local_root, sorted(plan.push), dry, verbose,
+                            _feeder(bar, on_progress, peer_name, root_name, "push", _bytes_of(local, map(fold, plan.push))),
                             sizes=sizes_local, streams=streams)
         if bar:
             bar.finish(st["bytes"], st["files"])
@@ -174,7 +175,8 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
 
         t0 = time.monotonic()
         bar = _bar(progress and not dry, "pull ←", plan.pull, remote, progress_stream, multi=streams > 1)
-        st = transport.pull(local_root, sorted(plan.pull), dry, verbose, bar.feed if bar else None,
+        st = transport.pull(local_root, sorted(plan.pull), dry, verbose,
+                            _feeder(bar, on_progress, peer_name, root_name, "pull", _bytes_of(remote, map(fold, plan.pull))),
                             sizes=sizes_remote, streams=streams)
         rep.streams = max(rep.streams, st.get("streams", 1))
         if bar:
@@ -209,7 +211,33 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
     except (TransportError, OSError) as e:
         rep.ok, rep.error = False, str(e)
     rep.finish()
+    if on_progress:
+        try:
+            on_progress(peer_name, root_name, "done", rep.transferred_bytes, rep.transferred_bytes)
+        except Exception:  # noqa: BLE001 — a caller's callback must not break the sync
+            pass
     return rep
+
+
+def _feeder(bar, cb, peer: str, root: str, phase: str, total: int):
+    """rsync progress-line sink feeding the terminal bar and/or an API callback (summed over streams)."""
+    if bar is None and cb is None:
+        return None
+    from docsync.progress import parse_progress
+    done: dict[int, int] = {}
+
+    def feed(line: str, stream: int = 0) -> None:
+        if bar is not None:
+            bar.feed(line, stream)
+        if cb is not None:
+            p = parse_progress(line)
+            if p:
+                done[stream] = p["bytes"]
+                try:
+                    cb(peer, root, phase, sum(done.values()), total)
+                except Exception:  # noqa: BLE001
+                    pass
+    return feed
 
 
 def _bar(enabled: bool, label: str, paths: list[str], m: manifest.Manifest, stream=None, multi: bool = False):

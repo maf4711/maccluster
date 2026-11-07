@@ -212,8 +212,35 @@ Apple ID are already synced by iCloud and docsync only moves what iCloud has not
 
 ```
 make test
-make install        # symlink ~/.local/bin/docsync → this checkout
+make install        # symlink ~/.local/bin/docsync → this checkout (development)
+make wheel          # dist/docsync_lan-<version>-py3-none-any.whl
+pipx install dist/docsync_lan-*.whl   # or: pipx inject maccluster dist/docsync_lan-*.whl
 ```
+
+The distribution is called **docsync-lan** because `docsync` on PyPI is an unrelated project;
+the command and the import name are `docsync`. It ships as a wheel on the GitHub release, not
+on PyPI — never `pip install docsync`.
+
+## Engine API
+
+Programs that already know their peers (maccluster) call the engine directly:
+
+```python
+from docsync import api
+
+res = api.sync(api.SyncRequest(
+    roots=[api.RootSpec("documents", "~/Documents")],
+    peers=[api.PeerSpec("node-b", "10.42.0.2", user="a321", bind_ip="10.42.0.3", via="Thunderbolt")],
+    progress=lambda peer, root, phase, done, total: ...,
+))
+res.ok, res.exit_code, res.to_dict()   # exit_code: 0 ok, 2 a peer failed, 3 another run holds the lock
+```
+
+`api.resolve_peer(hosts, user)` exposes the Thunderbolt-first host detection. The engine never
+prints and never exits the process; invalid requests raise `ValueError` before any network
+access. `docsync sync --json` / `docsync plan --json` print the same `to_dict()` as the last
+line. A host of `"/"` means "this machine" (the root's peer path is used); `/` itself is refused
+as a peer folder.
 
 ## Files
 
