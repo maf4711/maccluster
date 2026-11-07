@@ -44,6 +44,7 @@ class ApiSyncTests(unittest.TestCase):
         d = res.to_dict()
         self.assertEqual(json.loads(json.dumps(d)), d)
         self.assertEqual(d["api_version"], api.API_VERSION)
+        self.assertGreater(d["secs"], 0)  # the run's wall time, not the time since the report object
         self.assertEqual([p["peer"] for p in d["peers"]], ["b", "c"])
         pb = d["peers"][0]
         self.assertEqual((pb["root"], pb["via"], pb["pushed_files"], pb["pulled_files"]), ("documents", "LAN", 1, 1))

@@ -10,6 +10,7 @@ users and bind addresses in; a structured result out. No argparse, no printing, 
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -112,6 +113,7 @@ def sync(req: SyncRequest) -> SyncResult:
         raise ValueError("no peers")
     if req.conflict_policy not in ("newest", "local", "remote"):
         raise ValueError(f"conflict_policy must be newest|local|remote, got {req.conflict_policy!r}")
+    started = time.monotonic()
     cfg = _config(req)
     state_dir = req.state_dir or STATE_DIR
     fh = None
@@ -140,7 +142,7 @@ def sync(req: SyncRequest) -> SyncResult:
     finally:
         if fh is not None:
             fh.close()
-    run = RunReport()
+    run = RunReport(started=started)
     vias = {p.name: p.via for p in req.peers}
     for rep in reps:
         rep.via = rep.via or vias.get(rep.peer, "")
