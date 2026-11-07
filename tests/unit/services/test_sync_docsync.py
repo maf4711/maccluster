@@ -344,3 +344,29 @@ def test_inject_script_checks_digest_before_installing():
     assert script.index("shasum -a 256") < script.index("pipx inject --force maccluster")
     assert "deadbeef" in script and "digest mismatch" in script
     assert "import docsync" in script
+
+
+def test_git_trees_are_left_out():
+    assert sd.drop_git_trees(("Documents/", "Developer/", "Developer/x/", ".ssh/")) == (
+        ("Documents/", ".ssh/"),
+        ("Developer/", "Developer/x/"),
+    )
+
+
+def test_sync_dev_defaults_to_ditto(monkeypatch):
+    monkeypatch.setattr(sd, "docsync_version", lambda: "1.1.2")
+    base = dict(
+        push_only=False,
+        pull_only=False,
+        transport=None,
+        conflict_policy="newer",
+        force_icloud=False,
+        identical=False,
+        quick=False,
+        max_files=None,
+        max_bytes=None,
+    )
+    reasons = sd.ditto_only_reasons(**base, target="dev")
+    assert reasons and "git" in reasons[0]
+    assert sd.resolve_engine("auto", reasons)[0] == "ditto"
+    assert sd.ditto_only_reasons(**base, target="home") == []

@@ -58,9 +58,12 @@ def ditto_only_reasons(
     quick: bool,
     max_files: int | None,
     max_bytes: int | None,
+    target: str = "home",
 ) -> list[str]:
     """Options only the ditto engine implements."""
     why: list[str] = []
+    if target == "dev":
+        why.append("~/Developer holds git working trees (sync repos with git)")
     if push_only or pull_only:
         why.append("--push-only/--pull-only (docsync is always bidirectional)")
     if transport == "rdma":
@@ -96,6 +99,20 @@ def resolve_engine(requested: str | None, reasons: list[str]) -> tuple[str, str]
     if reasons:
         return "ditto", "engine ditto: " + "; ".join(reasons)
     return "docsync", ""
+
+
+# Trees of git working copies: a three-way file sync would write conflict copies into .git
+# (dry run 2026-11-07: 8,459 conflicts in ~/Developer between two Macs). Git syncs these.
+GIT_TREES = ("Developer",)
+
+
+def drop_git_trees(includes: tuple[str, ...]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """(includes the docsync engine syncs, includes left out because they are git trees)."""
+    kept, dropped = [], []
+    for inc in includes:
+        top = inc.strip("/").split("/", 1)[0]
+        (dropped if top in GIT_TREES else kept).append(inc)
+    return tuple(kept), tuple(dropped)
 
 
 def root_name(rel: str) -> str:
