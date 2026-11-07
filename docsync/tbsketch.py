@@ -70,7 +70,7 @@ def sketch_mac(name: str, model: str, st: TBState, highlight_free: bool = False)
     lines = [f"   {name}  —  {label} ({model or '?'})",
              f"     {side}: {tb_line}"]
     if n_usb:
-        lines.append(f"     front: " + "  ".join("(USB-C ✗ no TB)" for _ in range(n_usb)) + f"   ← {note}")
+        lines.append("     front: " + "  ".join("(USB-C ✗ no TB)" for _ in range(n_usb)) + f"   ← {note}")
     ip = ", ".join(a for addrs in st.active_ifaces.values() for a in addrs)
     lines.append(f"     bridge0: {ip if ip else 'no IPv4 (no Thunderbolt link)'}")
     return "\n".join(lines)
@@ -78,7 +78,7 @@ def sketch_mac(name: str, model: str, st: TBState, highlight_free: bool = False)
 
 def sketch_wrong_right(local_name: str, peer_name: str, peer_model: str) -> str:
     _, _, n_usb, _ = layout(peer_model)
-    front = f"{peer_name} FRONT port" if n_usb else f"a USB-only port / cable"
+    front = f"{peer_name} FRONT port" if n_usb else "a USB-only port / cable"
     return "\n".join([
         "   ✗ wrong                                              ✓ right",
         f"   {local_name:<10} ──cable──▶ {front:<26}   {local_name:<10} ──cable──▶ {peer_name} BACK port (TB1-3)",

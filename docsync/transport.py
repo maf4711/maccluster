@@ -7,6 +7,7 @@ RemoteTransport = ssh + rsync.  LocalTransport = a directory on this machine
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -14,6 +15,7 @@ import tempfile
 import time
 from pathlib import Path
 
+from docsync.transport_base import rsync_bin  # noqa: F401 — re-exported
 from docsync.manifest import LISTER_PY, LISTER_SH, Manifest, parse_lines, scan
 
 SSH_OPTS = [  # control channel: listing, trash, rename — may ride on the user's ControlMaster
@@ -29,13 +31,6 @@ BULK_SSH_OPTS = SSH_OPTS + [
 ]
 STREAM_MIN_FILES = 16          # below this a single rsync stream is used
 STREAM_MIN_BYTES = 64 << 20
-
-
-def rsync_bin() -> str:
-    for cand in ("/opt/homebrew/bin/rsync", "/usr/local/bin/rsync"):
-        if os.access(cand, os.X_OK):
-            return cand
-    return shutil.which("rsync") or "rsync"
 
 
 def trash_dir(home: Path, stamp: str) -> Path:
@@ -96,17 +91,17 @@ def split_streams(paths: list[str], sizes: dict[str, int], n: int) -> list[list[
 
 
 def run_rsync_streams(src: str, dst: str, paths: list[str], sizes: dict[str, int], ssh_cmd: list[str] | None,
-                      dry: bool, verbose: bool, progress=None, streams: int = 1) -> dict[str, int]:
+                      dry: bool, verbose: bool, progress=None, streams: int = 1, extra=None) -> dict[str, int]:
     """Transfer `paths` with up to `streams` concurrent rsync processes (each its own ssh
     connection). Stats are summed; `progress(line, stream_idx)` gets every rsync progress line."""
     total_bytes = sum(sizes.get(p, 0) for p in paths)
     if streams <= 1 or dry or len(paths) < STREAM_MIN_FILES or total_bytes < STREAM_MIN_BYTES:
-        return _run_rsync(src, dst, paths, ssh_cmd, dry, verbose, (lambda ln: progress(ln, 0)) if progress else None)
+        return _run_rsync(src, dst, paths, ssh_cmd, dry, verbose, (lambda ln: progress(ln, 0)) if progress else None, extra)
     from concurrent.futures import ThreadPoolExecutor
     chunks = split_streams(paths, sizes, streams)
     def one(i: int):
         cb = (lambda ln, _i=i: progress(ln, _i)) if progress else None
-        return _run_rsync(src, dst, chunks[i], ssh_cmd, dry, verbose, cb)
+        return _run_rsync(src, dst, chunks[i], ssh_cmd, dry, verbose, cb, extra)
     with ThreadPoolExecutor(max_workers=len(chunks)) as ex:
         results = list(ex.map(one, range(len(chunks))))
     total = {"files": 0, "bytes": 0, "sent": 0, "received": 0, "skipped": 0, "retries": 0, "errors": [], "streams": len(chunks)}
@@ -118,14 +113,14 @@ def run_rsync_streams(src: str, dst: str, paths: list[str], sizes: dict[str, int
 
 
 def _run_rsync(src: str, dst: str, paths: list[str], ssh_cmd: list[str] | None,
-               dry: bool, verbose: bool, progress=None) -> dict[str, int]:
+               dry: bool, verbose: bool, progress=None, extra=None) -> dict[str, int]:
     """rsync with up to len(RETRY_DELAYS) retries when the transport itself fails (ssh banner
     timeout, peer rebooting, link flap, rsync timeout). Already transferred files are not redone.
     The returned stats carry "retries" = number of extra attempts."""
     retries = 0
     while True:
         try:
-            st = _run_rsync_once(src, dst, paths, ssh_cmd, dry, verbose, progress)
+            st = _run_rsync_once(src, dst, paths, ssh_cmd, dry, verbose, progress, extra)
             st["retries"] = retries
             return st
         except TransportError as e:
@@ -136,7 +131,7 @@ def _run_rsync(src: str, dst: str, paths: list[str], ssh_cmd: list[str] | None,
 
 
 def _run_rsync_once(src: str, dst: str, paths: list[str], ssh_cmd: list[str] | None,
-                    dry: bool, verbose: bool, progress=None) -> dict[str, int]:
+                    dry: bool, verbose: bool, progress=None, extra=None) -> dict[str, int]:
     """rsync the given relative paths from src/ to dst/. Returns parsed --stats.
     `progress` is a callable fed with every rsync stdout line (for the progress bar)."""
     if not paths:
@@ -146,7 +141,7 @@ def _run_rsync_once(src: str, dst: str, paths: list[str], ssh_cmd: list[str] | N
         # --partial-dir: an interrupted transfer never leaves a truncated file under its final
         # name (the next run would then see a "conflict"); .docsync-partial is in the default excludes.
         cmd = [rsync_bin(), "-a", "--from0", f"--files-from={lst}", "--partial-dir=.docsync-partial",
-               "--no-human-readable", "--stats"]
+               "--no-human-readable", "--stats", *(extra or [])]
         if progress is not None and not dry:
             cmd.append("--info=progress2")
         if verbose:
@@ -200,6 +195,23 @@ class LocalTransport:
         self.root = Path(root).expanduser()
         self.home = home or self.root.parent
         self.label = str(self.root)
+        self.rsync_extra: list[str] = []
+
+    def prepare(self) -> list[str]:
+        """Both ends use this Mac's rsync: enable every fidelity flag it supports."""
+        from docsync import fidelity
+        caps = fidelity.local_caps()
+        self.rsync_extra = fidelity.flags_for(caps)
+        missing = sorted({"xattrs", "acls", "crtimes"} - caps)
+        return [f"rsync lacks {'/'.join(missing)} here — synced without them"] if missing else []
+
+    def backup(self, paths: list[str], stamp: str) -> tuple[int, int]:
+        from docsync import safetynet
+        return safetynet.backup_local(self.root, paths, stamp)
+
+    def prune_safetynet(self, policy: tuple) -> int:
+        from docsync import safetynet
+        return safetynet.prune(str(self.root / safetynet.SN_DIR), *policy)
 
     def check(self) -> str:
         if not self.root.is_dir():
@@ -211,11 +223,11 @@ class LocalTransport:
 
     def push(self, local_root: Path, paths: list[str], dry: bool, verbose: bool, progress=None,
              sizes: dict[str, int] | None = None, streams: int = 1) -> dict[str, int]:
-        return run_rsync_streams(f"{local_root}/", f"{self.root}/", paths, sizes or {}, None, dry, verbose, progress, streams)
+        return run_rsync_streams(f"{local_root}/", f"{self.root}/", paths, sizes or {}, None, dry, verbose, progress, streams, self.rsync_extra)
 
     def pull(self, local_root: Path, paths: list[str], dry: bool, verbose: bool, progress=None,
              sizes: dict[str, int] | None = None, streams: int = 1) -> dict[str, int]:
-        return run_rsync_streams(f"{self.root}/", f"{local_root}/", paths, sizes or {}, None, dry, verbose, progress, streams)
+        return run_rsync_streams(f"{self.root}/", f"{local_root}/", paths, sizes or {}, None, dry, verbose, progress, streams, self.rsync_extra)
 
     def remove(self, paths: list[str], stamp: str, use_trash: bool, dry: bool) -> None:
         remove_local(self.root, self.home, paths, stamp, use_trash, dry)
@@ -278,6 +290,37 @@ class RemoteTransport:
         self.ssh_cmd = ["ssh", *SSH_OPTS] + (["-b", bind] if bind else [])
         self.bulk_ssh_cmd = ["ssh", *BULK_SSH_OPTS] + (["-b", bind] if bind else [])
         self.label = f"{userhost}:{path}"
+        self.rsync_extra: list[str] = []
+
+    def prepare(self) -> list[str]:
+        """Find the most capable rsync on the peer and the fidelity flags both sides support."""
+        from docsync import fidelity
+        res = self.ssh(fidelity.PROBE_SH, timeout=20)
+        path, flags, warn = fidelity.choose(fidelity.local_caps(), fidelity.parse_probe(res.stdout))
+        self.rsync_extra = ([f"--rsync-path={path}"] if path else []) + flags
+        return [warn] if warn else []
+
+    def backup(self, paths: list[str], stamp: str) -> tuple[int, int]:
+        """Copy peer files about to be overwritten into <root>/.docsync-safetynet/<stamp>/ on the peer."""
+        if not paths:
+            return 0, 0
+        from docsync import safetynet
+        res = self.ssh("sh -s", stdin=safetynet.remote_backup_script(remote_path(self.path), paths, stamp), timeout=900)
+        if res.returncode != 0:
+            raise TransportError(f"remote safetynet backup failed: {res.stderr.strip()[-400:]}")
+        return safetynet.parse_backup_output(res.stdout)
+
+    def prune_safetynet(self, policy: tuple) -> int:
+        from docsync import safetynet
+        keep, age, nbytes = policy
+        base = remote_path(self.path) + "/" + safetynet.SN_DIR
+        res = self.ssh(f"command -v python3 >/dev/null 2>&1 && python3 - {base} {keep} "
+                       f"{-1 if age is None else age} {-1 if nbytes is None else nbytes} {int(time.time())}",
+                       stdin=safetynet.PRUNE_PY, timeout=300)
+        if res.returncode != 0:
+            raise TransportError(f"remote safetynet prune failed: {res.stderr.strip()[-200:] or 'no python3'}")
+        m = re.search(r"REMOVED (\d+)", res.stdout)
+        return int(m.group(1)) if m else 0
 
     # rsync wants "host:Documents/" (relative to the login home) or "host:/abs/".
     @property
@@ -312,11 +355,11 @@ class RemoteTransport:
 
     def push(self, local_root: Path, paths: list[str], dry: bool, verbose: bool, progress=None,
              sizes: dict[str, int] | None = None, streams: int = 1) -> dict[str, int]:
-        return run_rsync_streams(f"{local_root}/", self.rsync_path, paths, sizes or {}, self.bulk_ssh_cmd, dry, verbose, progress, streams)
+        return run_rsync_streams(f"{local_root}/", self.rsync_path, paths, sizes or {}, self.bulk_ssh_cmd, dry, verbose, progress, streams, self.rsync_extra)
 
     def pull(self, local_root: Path, paths: list[str], dry: bool, verbose: bool, progress=None,
              sizes: dict[str, int] | None = None, streams: int = 1) -> dict[str, int]:
-        return run_rsync_streams(self.rsync_path, f"{local_root}/", paths, sizes or {}, self.bulk_ssh_cmd, dry, verbose, progress, streams)
+        return run_rsync_streams(self.rsync_path, f"{local_root}/", paths, sizes or {}, self.bulk_ssh_cmd, dry, verbose, progress, streams, self.rsync_extra)
 
     def remove(self, paths: list[str], stamp: str, use_trash: bool, dry: bool) -> None:
         if dry or not paths:

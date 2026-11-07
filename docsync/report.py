@@ -70,6 +70,9 @@ class PeerReport:
     deletes_skipped: int = 0
     retries: int = 0
     streams: int = 1
+    root: str = ""
+    safetynet_files: int = 0
+    safetynet_bytes: int = 0
     warnings: list[str] = field(default_factory=list)
 
     def phase(self, name: str, t0: float) -> None:
@@ -88,7 +91,7 @@ class PeerReport:
 
     def render(self) -> str:
         tag = " (DRY RUN — nothing written)" if self.dry else ""
-        head = f"── {self.peer} @ {self.host or '?'}{' via ' + self.via if self.via else ''}{tag}"
+        head = f"── {self.peer}{f' [{self.root}]' if self.root else ''} @ {self.host or '?'}{' via ' + self.via if self.via else ''}{tag}"
         if not self.ok:
             return f"{head}\n   FAILED after {fmt_secs(self.secs)}: {self.error}"
         rows = [
@@ -104,6 +107,8 @@ class PeerReport:
             ("skipped", f"{self.skipped:,} (vanished during transfer)"),
             *([("retries", f"{self.retries:,} transport retries")] if self.retries else []),
             *([("streams", f"{self.streams} parallel rsync streams")] if self.streams > 1 else []),
+            *([("safetynet", f"{self.safetynet_files:,} files  {fmt_bytes(self.safetynet_bytes)} backed up before overwrite")]
+              if self.safetynet_files else []),
             ("on the wire", f"sent {fmt_bytes(self.wire_sent)}  received {fmt_bytes(self.wire_received)}"),
             ("time", f"{fmt_secs(self.secs)}  ({', '.join(f'{p.name} {fmt_secs(p.secs)}' for p in self.phases)})"),
             ("throughput", "n/a (dry run)" if self.dry else fmt_rate(self.transferred_bytes, self.secs)),

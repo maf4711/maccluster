@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import os
+import re
 import socket
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 CONFIG_DIR = Path(os.environ.get("DOCSYNC_CONFIG_DIR", "~/.config/docsync")).expanduser()
@@ -33,6 +34,20 @@ class Peer:
 
 
 @dataclass
+class Root:
+    """One synced folder. `peer_path` defaults to `path`; the legacy top-level `path` becomes the
+    root "documents" and keeps using each peer's own `path` for backwards compatibility."""
+    name: str
+    path: str
+    peer_path: str = ""
+    excludes: list[str] | None = None
+    legacy: bool = False
+
+
+ROOT_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+@dataclass
 class Config:
     path: str = "~/Documents"
     excludes: list[str] = field(default_factory=lambda: list(DEFAULT_EXCLUDES))
@@ -43,6 +58,33 @@ class Config:
     max_delete: int = 25  # deletion guard: more deletions per run need --force-deletes
     skip_on_battery: bool = False  # launchd runs do nothing while on battery power
     transfer_streams: int = 4  # parallel rsync/ssh streams per peer for large transfers
+    roots: list[Root] = field(default_factory=list)  # empty → the legacy `path` as root "documents"
+    safetynet: bool = True  # back up files before they are overwritten
+    safetynet_keep: int = 5
+    safetynet_max_age_days: float = 14.0
+    safetynet_max_gb: float = 20.0
+
+    def effective_roots(self) -> list[Root]:
+        return list(self.roots) or [Root("documents", self.path, legacy=True)]
+
+    def root(self, name: str) -> Root:
+        for r in self.effective_roots():
+            if r.name == name:
+                return r
+        raise KeyError(f"unknown root '{name}' (known: {', '.join(r.name for r in self.effective_roots())})")
+
+    def for_root(self, root: Root) -> "Config":
+        """Config view for one root: its path and excludes (always excluding docsync's own dirs)."""
+        ex = list(root.excludes if root.excludes is not None else self.excludes)
+        if ".docsync*" not in ex:
+            ex.append(".docsync*")
+        return replace(self, path=root.path, excludes=ex)
+
+    def peer_path(self, peer: "Peer", root: Root) -> str:
+        return root.peer_path or (peer.path if root.legacy else root.path)
+
+    def safetynet_policy(self) -> tuple[int, float | None, int | None]:
+        return (self.safetynet_keep, self.safetynet_max_age_days, int(self.safetynet_max_gb * 1024**3))
 
     @property
     def local_root(self) -> Path:
@@ -66,7 +108,24 @@ def parse_config(text: str) -> Config:
         max_delete=int(data.get("max_delete", 25)),
         skip_on_battery=bool(data.get("skip_on_battery", False)),
         transfer_streams=max(1, int(data.get("transfer_streams", 4))),
+        safetynet=bool(data.get("safetynet", True)),
+        safetynet_keep=max(1, int(data.get("safetynet_keep", 5))),
+        safetynet_max_age_days=float(data.get("safetynet_max_age_days", 14)),
+        safetynet_max_gb=float(data.get("safetynet_max_gb", 20)),
     )
+    raw_roots = data.get("roots", [])
+    if raw_roots and "path" in data:  # explicit top-level path stays a root next to [[roots]]
+        cfg.roots.append(Root("documents", cfg.path, legacy=True))
+    for raw in raw_roots:
+        if "name" not in raw or "path" not in raw:
+            raise ValueError(f"root needs 'name' and 'path': {raw}")
+        if not ROOT_NAME.match(str(raw["name"])):
+            raise ValueError(f"root name must be letters, digits, - or _: {raw['name']!r}")
+        cfg.roots.append(Root(str(raw["name"]), str(raw["path"]), str(raw.get("peer_path", "")),
+                              [str(e) for e in raw["excludes"]] if "excludes" in raw else None))
+    names = [r.name for r in cfg.roots]
+    if len(names) != len(set(names)):
+        raise ValueError(f"duplicate root names: {names}")
     if cfg.conflict_policy not in ("newest", "local", "remote"):
         raise ValueError(f"conflict_policy must be newest|local|remote, got {cfg.conflict_policy!r}")
     for raw in data.get("peers", []):
@@ -99,10 +158,22 @@ def render_config(cfg: Config) -> str:
         f"max_delete = {cfg.max_delete}  # refuse more deletions per run unless --force-deletes",
         f"skip_on_battery = {'true' if cfg.skip_on_battery else 'false'}  # launchd runs wait for AC power",
         f"transfer_streams = {cfg.transfer_streams}  # parallel rsync streams per peer (each its own ssh connection)",
+        f"safetynet = {'true' if cfg.safetynet else 'false'}  # back up files before overwrite into <root>/.docsync-safetynet/",
+        f"safetynet_keep = {cfg.safetynet_keep}",
+        f"safetynet_max_age_days = {cfg.safetynet_max_age_days:g}",
+        f"safetynet_max_gb = {cfg.safetynet_max_gb:g}",
         "excludes = [",
         *[f"  {_toml_str(e)}," for e in cfg.excludes],
         "]",
     ]
+    for r in cfg.roots:
+        if r.legacy:
+            continue
+        lines += ["", "[[roots]]", f"name = {_toml_str(r.name)}", f"path = {_toml_str(r.path)}"]
+        if r.peer_path:
+            lines.append(f"peer_path = {_toml_str(r.peer_path)}")
+        if r.excludes is not None:
+            lines.append("excludes = [" + ", ".join(_toml_str(e) for e in r.excludes) + "]")
     for p in cfg.peers:
         lines += [
             "",

@@ -14,6 +14,50 @@ docsync advise                      # on-device Apple Foundation Model: what to 
 docsync install-agent --interval 15 # launchd: every 15 min in the background
 ```
 
+## Roots
+
+By default docsync syncs `~/Documents` (the top-level `path`, shown as root `documents`).
+More folders are added as roots; each keeps its own base per peer
+(`~/.local/state/docsync/base-<root>-<peer>.json`):
+
+```toml
+path = "~/Documents"          # root "documents" (optional once [[roots]] exist)
+
+[[roots]]
+name = "desktop"
+path = "~/Desktop"
+
+[[roots]]
+name = "fonts"
+path = "~/Library/Fonts"
+peer_path = "~/Library/Fonts" # default: same as path
+excludes = [".DS_Store"]      # default: the global excludes
+```
+
+`docsync sync --root desktop` limits a run to some roots. Roots run one after another, peers
+in parallel within each root. A root whose folder does not exist fails with `root missing`
+and is never created.
+
+## Fidelity
+
+rsync runs with `-X -A --crtimes` whenever both Macs have an rsync that supports them
+(Homebrew rsync 3.x; macOS' `/usr/bin/rsync` is openrsync and does not). docsync probes the
+peer once per run, uses its best rsync via `--rsync-path`, and warns in the report otherwise.
+Kernel-protected attributes (`com.apple.provenance`, `com.apple.macl`, `com.apple.rootless`)
+are skipped. Not preserved: BSD file flags (`chflags`), and files whose own ACL denies
+`delete` (rsync cannot rename its temp file onto them; such files are reported as skipped).
+
+## SafetyNet
+
+Before a pull or push overwrites an existing file, that file is cloned into
+`<root>/.docsync-safetynet/<UTC stamp>/<path>` on the side being overwritten (APFS clone:
+instant, no extra space until a side changes). If a backup cannot be written, the peer's
+transfer is aborted before anything is overwritten. Retention runs at the start of every real
+sync on both sides: at most `safetynet_keep` (5) runs, none older than
+`safetynet_max_age_days` (14), at most `safetynet_max_gb` (20) per root; the newest run is
+always kept. `docsync safetynet` shows the usage, `docsync safetynet prune` applies the policy
+now, `safetynet = false` turns backups off.
+
 ## How a sync works
 
 For every peer docsync lists both trees (`mtime`, `size` per file) and compares

@@ -12,9 +12,10 @@ PLIST = Path(f"~/Library/LaunchAgents/{LABEL}.plist").expanduser()
 LOG_DIR = Path("~/Library/Logs/docsync").expanduser()
 
 
-def plist_xml(interval_s: int, entry: str, watch_path: str | None = None) -> str:
-    watch = (f"\n  <key>WatchPaths</key><array><string>{watch_path}</string></array>"
-             f"\n  <key>ThrottleInterval</key><integer>60</integer>") if watch_path else ""
+def plist_xml(interval_s: int, entry: str, watch_path: str | list[str] | None = None) -> str:
+    paths = [watch_path] if isinstance(watch_path, str) else list(watch_path or [])
+    watch = (f"\n  <key>WatchPaths</key><array>{''.join(f'<string>{p}</string>' for p in paths)}</array>"
+             f"\n  <key>ThrottleInterval</key><integer>60</integer>") if paths else ""
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
@@ -41,7 +42,7 @@ def entry_point() -> str:
     return str(Path(__file__).resolve().parent.parent / "bin" / "docsync-launchd.py")
 
 
-def install(interval_min: int, watch_path: str | None = None) -> str:
+def install(interval_min: int, watch_path: str | list[str] | None = None) -> str:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     PLIST.parent.mkdir(parents=True, exist_ok=True)
     PLIST.write_text(plist_xml(interval_min * 60, entry_point(), watch_path))
@@ -53,7 +54,8 @@ def install(interval_min: int, watch_path: str | None = None) -> str:
     res = subprocess.run(["launchctl", "bootstrap", f"gui/{uid}", str(PLIST)], text=True, capture_output=True)
     if res.returncode != 0:
         raise RuntimeError(f"launchctl bootstrap failed: {res.stderr.strip()}")
-    trigger = f" + on changes in {watch_path}" if watch_path else ""
+    shown = ", ".join([watch_path] if isinstance(watch_path, str) else (watch_path or []))
+    trigger = f" + on changes in {shown}" if shown else ""
     return f"installed {PLIST} — every {interval_min} min{trigger}, log {LOG_DIR}/agent.log"
 
 
