@@ -47,6 +47,21 @@ and reported; review with `docsync plan -v` and rerun with `docsync sync --force
 if they are intended. A peer mid-reboot, a renamed folder or an unmounted volume must never
 turn into a mass delete.
 
+## Performance
+
+- **Bulk ssh is separate from control ssh.** rsync runs over its own connections with
+  `aes128-gcm`, no compression and no ControlMaster multiplexing. Measured on Thunderbolt
+  80 Gb/s: the default ssh (mux + compression + chacha20) uploads at 40 MB/s, one plain
+  aes128-gcm connection at 1.7 GB/s, four of them at 4 GB/s. Listing, trash and rename still use
+  the normal ssh (and your ControlMaster, which saves the handshake).
+- **Parallel streams.** Transfers above 16 files / 64 MB are split size-balanced into
+  `transfer_streams` (default 4) rsync processes; the progress bar aggregates them and the report
+  shows `streams N`.
+- **One local walk per run.** `sync` scans the local tree once, shared by all peers, while the
+  remote listings run concurrently; after the transfer only touched paths are re-stated instead
+  of walking the tree again. Exclude matching uses one compiled regex.
+- Typical no-change run with two peers over Thunderbolt: 3.5 s (was 14.5 s).
+
 ## Unattended runs
 
 - Transport failures (ssh banner timeout, peer rebooting, link flap, rsync timeout) are retried

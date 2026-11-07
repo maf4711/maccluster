@@ -338,3 +338,43 @@ class MacosTests(unittest.TestCase):
         q = PeerReport(peer="y"); q.ok = False
         r.peers += [p, q]
         self.assertEqual(r.notable(), "failed: y; 1 conflict; 30 deletions held back")
+
+
+class PerformanceTests(unittest.TestCase):
+    def test_fast_exclude_matches_reference(self):
+        from docsync.manifest import _excluded_slow, excluded
+        pats = config.DEFAULT_EXCLUDES + ["Archive/"]
+        for rel in ("a/.DS_Store", "x/y.icloud", "~$b.xlsx", "ok/file.pdf", "Archive/2020/x", "Other/Archive/x",
+                    ".docsync-partial/x", "deep/a/b/c/d.tmp", "Thumbs.db", "n.sparsebundle/bands/1"):
+            self.assertEqual(excluded(rel, pats), _excluded_slow(rel, pats), rel)
+
+    def test_split_streams_balanced(self):
+        from docsync.transport import split_streams
+        sizes = {f"f{i}": (10 - i) * 100 for i in range(10)}
+        chunks = split_streams(list(sizes), sizes, 4)
+        self.assertEqual(len(chunks), 4)
+        self.assertEqual(sorted(p for c in chunks for p in c), sorted(sizes))
+        loads = [sum(sizes[p] for p in c) for c in chunks]
+        self.assertLess(max(loads) - min(loads), 400)
+        self.assertEqual(split_streams(["a"], {"a": 1}, 4), [["a"]])
+
+    def test_bulk_ssh_opts(self):
+        from docsync.transport import BULK_SSH_OPTS, RemoteTransport
+        self.assertIn("ControlPath=none", BULK_SSH_OPTS)
+        self.assertTrue(any("aes128-gcm" in o for o in BULK_SSH_OPTS))
+        t = RemoteTransport("u@h", "~/Documents")
+        self.assertIn("ControlPath=none", t.bulk_ssh_cmd)
+        self.assertNotIn("ControlPath=none", t.ssh_cmd)
+
+    def test_bar_aggregates_streams(self):
+        import io
+        from docsync.progress import Bar, _sum_speed
+        self.assertEqual(_sum_speed(["500.00MB/s", "0.60GB/s"]), "1.10GB/s")
+        out = io.StringIO()
+        b = Bar("pull ←", 100, 200 * 2**20, stream=out, enabled=True, multi=True)
+        b.last_draw = 0
+        b.feed("  52,428,800  50%   100.00MB/s    0:00:01 (xfr#10, to-chk=40/50)", 0)
+        b.last_draw = 0
+        b.feed("  52,428,800  50%   100.00MB/s    0:00:01 (xfr#10, to-chk=40/50)", 1)
+        self.assertIn("50%", out.getvalue())       # 100 MB of 200 MB aggregated
+        self.assertIn("200.00MB/s", out.getvalue())

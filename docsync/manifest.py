@@ -19,8 +19,37 @@ def norm(path: str) -> str:
     return unicodedata.normalize("NFC", path)
 
 
+_MATCHER_CACHE: dict[tuple, object] = {}
+
+
+def _matcher(patterns: list[str]):
+    """Compile the component patterns into one regex; '/'-patterns stay prefix checks."""
+    key = tuple(patterns)
+    hit = _MATCHER_CACHE.get(key)
+    if hit is None:
+        import re
+        comp = [fnmatch.translate(p) for p in patterns if "/" not in p]
+        rx = re.compile("|".join(f"(?:{c})" for c in comp)) if comp else None
+        prefixes = [p.strip("/") for p in patterns if "/" in p]
+        hit = (rx, prefixes)
+        _MATCHER_CACHE[key] = hit
+    return hit
+
+
 def excluded(relpath: str, patterns: list[str]) -> bool:
     """True if any path component (or the full relpath) matches a pattern."""
+    rx, prefixes = _matcher(patterns)
+    if rx is not None:
+        for part in relpath.split("/"):
+            if rx.match(part):
+                return True
+    for pre in prefixes:
+        if fnmatch.fnmatch(relpath, pre) or relpath.startswith(pre + "/"):
+            return True
+    return False
+
+
+def _excluded_slow(relpath: str, patterns: list[str]) -> bool:  # reference implementation (tests)
     parts = relpath.split("/")
     for pat in patterns:
         if "/" in pat:

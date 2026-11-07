@@ -69,6 +69,7 @@ class PeerReport:
     skipped: int = 0
     deletes_skipped: int = 0
     retries: int = 0
+    streams: int = 1
     warnings: list[str] = field(default_factory=list)
 
     def phase(self, name: str, t0: float) -> None:
@@ -102,6 +103,7 @@ class PeerReport:
             ("cloud-only", f"local {self.cloud_only_local:,}  remote {self.cloud_only_remote:,}  (iCloud-evicted, not touched)"),
             ("skipped", f"{self.skipped:,} (vanished during transfer)"),
             *([("retries", f"{self.retries:,} transport retries")] if self.retries else []),
+            *([("streams", f"{self.streams} parallel rsync streams")] if self.streams > 1 else []),
             ("on the wire", f"sent {fmt_bytes(self.wire_sent)}  received {fmt_bytes(self.wire_received)}"),
             ("time", f"{fmt_secs(self.secs)}  ({', '.join(f'{p.name} {fmt_secs(p.secs)}' for p in self.phases)})"),
             ("throughput", "n/a (dry run)" if self.dry else fmt_rate(self.transferred_bytes, self.secs)),

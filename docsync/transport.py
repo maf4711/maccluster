@@ -16,10 +16,19 @@ from pathlib import Path
 
 from docsync.manifest import LISTER_PY, LISTER_SH, Manifest, parse_lines, scan
 
-SSH_OPTS = [
+SSH_OPTS = [  # control channel: listing, trash, rename — may ride on the user's ControlMaster
     "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "-o", "StrictHostKeyChecking=accept-new",
     "-o", "Compression=no", "-o", "IPQoS=throughput",
 ]
+# Bulk channel for rsync. Measured on Thunderbolt 80 Gb/s (2026-11-07): the user's default ssh
+# (ControlMaster mux + Compression + chacha20) uploads at 40 MB/s; one plain aes128-gcm
+# connection does 1,700 MB/s and four of them 4,000 MB/s. Never multiplex bulk transfers.
+BULK_SSH_OPTS = SSH_OPTS + [
+    "-o", "ControlMaster=no", "-o", "ControlPath=none",
+    "-o", "Ciphers=aes128-gcm@openssh.com,aes256-gcm@openssh.com,chacha20-poly1305@openssh.com",
+]
+STREAM_MIN_FILES = 16          # below this a single rsync stream is used
+STREAM_MIN_BYTES = 64 << 20
 
 
 def rsync_bin() -> str:
@@ -69,6 +78,43 @@ def parse_rsync_stats(text: str) -> dict[str, int]:
 RETRY_DELAYS = (5, 15, 45)      # seconds between attempts on transport failures
 RETRY_RCS = ("rc=255", "rc=30")  # 255: ssh/transport died, 30: timeout in data send/receive
 _sleep = time.sleep              # patched in tests
+
+
+def split_streams(paths: list[str], sizes: dict[str, int], n: int) -> list[list[str]]:
+    """Greedy size-balanced split into up to n non-empty chunks (largest files first)."""
+    n = max(1, min(n, len(paths)))
+    if n == 1:
+        return [list(paths)]
+    order = sorted(paths, key=lambda p: -sizes.get(p, 0))
+    chunks: list[list[str]] = [[] for _ in range(n)]
+    load = [0] * n
+    for p in order:
+        i = load.index(min(load))
+        chunks[i].append(p)
+        load[i] += max(sizes.get(p, 0), 1)
+    return [c for c in chunks if c]
+
+
+def run_rsync_streams(src: str, dst: str, paths: list[str], sizes: dict[str, int], ssh_cmd: list[str] | None,
+                      dry: bool, verbose: bool, progress=None, streams: int = 1) -> dict[str, int]:
+    """Transfer `paths` with up to `streams` concurrent rsync processes (each its own ssh
+    connection). Stats are summed; `progress(line, stream_idx)` gets every rsync progress line."""
+    total_bytes = sum(sizes.get(p, 0) for p in paths)
+    if streams <= 1 or dry or len(paths) < STREAM_MIN_FILES or total_bytes < STREAM_MIN_BYTES:
+        return _run_rsync(src, dst, paths, ssh_cmd, dry, verbose, (lambda ln: progress(ln, 0)) if progress else None)
+    from concurrent.futures import ThreadPoolExecutor
+    chunks = split_streams(paths, sizes, streams)
+    def one(i: int):
+        cb = (lambda ln, _i=i: progress(ln, _i)) if progress else None
+        return _run_rsync(src, dst, chunks[i], ssh_cmd, dry, verbose, cb)
+    with ThreadPoolExecutor(max_workers=len(chunks)) as ex:
+        results = list(ex.map(one, range(len(chunks))))
+    total = {"files": 0, "bytes": 0, "sent": 0, "received": 0, "skipped": 0, "retries": 0, "errors": [], "streams": len(chunks)}
+    for st in results:
+        for k in ("files", "bytes", "sent", "received", "skipped", "retries"):
+            total[k] += st.get(k, 0)
+        total["errors"] += st.get("errors", [])
+    return total
 
 
 def _run_rsync(src: str, dst: str, paths: list[str], ssh_cmd: list[str] | None,
@@ -163,11 +209,13 @@ class LocalTransport:
     def manifest(self, excludes: list[str], dataless: set[str] | None = None) -> Manifest:
         return scan(self.root, excludes, dataless)
 
-    def push(self, local_root: Path, paths: list[str], dry: bool, verbose: bool, progress=None) -> dict[str, int]:
-        return _run_rsync(f"{local_root}/", f"{self.root}/", paths, None, dry, verbose, progress)
+    def push(self, local_root: Path, paths: list[str], dry: bool, verbose: bool, progress=None,
+             sizes: dict[str, int] | None = None, streams: int = 1) -> dict[str, int]:
+        return run_rsync_streams(f"{local_root}/", f"{self.root}/", paths, sizes or {}, None, dry, verbose, progress, streams)
 
-    def pull(self, local_root: Path, paths: list[str], dry: bool, verbose: bool, progress=None) -> dict[str, int]:
-        return _run_rsync(f"{self.root}/", f"{local_root}/", paths, None, dry, verbose, progress)
+    def pull(self, local_root: Path, paths: list[str], dry: bool, verbose: bool, progress=None,
+             sizes: dict[str, int] | None = None, streams: int = 1) -> dict[str, int]:
+        return run_rsync_streams(f"{self.root}/", f"{local_root}/", paths, sizes or {}, None, dry, verbose, progress, streams)
 
     def remove(self, paths: list[str], stamp: str, use_trash: bool, dry: bool) -> None:
         remove_local(self.root, self.home, paths, stamp, use_trash, dry)
@@ -228,6 +276,7 @@ class RemoteTransport:
         self.userhost = userhost
         self.path = path  # "~/Documents" or absolute
         self.ssh_cmd = ["ssh", *SSH_OPTS] + (["-b", bind] if bind else [])
+        self.bulk_ssh_cmd = ["ssh", *BULK_SSH_OPTS] + (["-b", bind] if bind else [])
         self.label = f"{userhost}:{path}"
 
     # rsync wants "host:Documents/" (relative to the login home) or "host:/abs/".
@@ -261,11 +310,13 @@ class RemoteTransport:
                 raise TransportError(f"remote listing failed: {res.stderr.strip()[-400:]}")
         return parse_lines(res.stdout, excludes, dataless)
 
-    def push(self, local_root: Path, paths: list[str], dry: bool, verbose: bool, progress=None) -> dict[str, int]:
-        return _run_rsync(f"{local_root}/", self.rsync_path, paths, self.ssh_cmd, dry, verbose, progress)
+    def push(self, local_root: Path, paths: list[str], dry: bool, verbose: bool, progress=None,
+             sizes: dict[str, int] | None = None, streams: int = 1) -> dict[str, int]:
+        return run_rsync_streams(f"{local_root}/", self.rsync_path, paths, sizes or {}, self.bulk_ssh_cmd, dry, verbose, progress, streams)
 
-    def pull(self, local_root: Path, paths: list[str], dry: bool, verbose: bool, progress=None) -> dict[str, int]:
-        return _run_rsync(self.rsync_path, f"{local_root}/", paths, self.ssh_cmd, dry, verbose, progress)
+    def pull(self, local_root: Path, paths: list[str], dry: bool, verbose: bool, progress=None,
+             sizes: dict[str, int] | None = None, streams: int = 1) -> dict[str, int]:
+        return run_rsync_streams(self.rsync_path, f"{local_root}/", paths, sizes or {}, self.bulk_ssh_cmd, dry, verbose, progress, streams)
 
     def remove(self, paths: list[str], stamp: str, use_trash: bool, dry: bool) -> None:
         if dry or not paths:

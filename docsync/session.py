@@ -31,9 +31,18 @@ def _fold(cfg: Config):
     return (lambda k: k.casefold()) if cfg.case_insensitive else (lambda k: k)
 
 
+def scan_local(cfg: Config):
+    """(manifest, cloud-only set) of the local tree — shared between peers in run_many."""
+    cloud: set[str] = set()
+    m = manifest.scan(cfg.local_root, cfg.excludes, cloud)
+    return m, cloud
+
+
 def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbose: bool = False,
              state_dir: Path = STATE_DIR, log=print, progress: bool = False,
-             force_deletes: bool = False, progress_stream=None) -> PeerReport:
+             force_deletes: bool = False, progress_stream=None, local_source=None) -> PeerReport:
+    """local_source: callable returning (manifest, cloud_set); when given, the remote listing is
+    requested first and the local scan result fetched afterwards (they overlap in run_many)."""
     rep = PeerReport(peer=peer_name, dry=dry)
     local_root = cfg.local_root
     local_root.mkdir(parents=True, exist_ok=True)
@@ -43,12 +52,15 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
         rep.phase("connect", t0)
 
         t0 = time.monotonic()
-        cloud_local: set[str] = set()
         cloud_remote: set[str] = set()
-        log(f"[{peer_name}] listing local tree…")
-        local = manifest.scan(local_root, cfg.excludes, cloud_local)
         log(f"[{peer_name}] listing remote tree…")
         remote = transport.manifest(cfg.excludes, cloud_remote)
+        if local_source is None:
+            log(f"[{peer_name}] listing local tree…")
+            local_pre, cloud_local = scan_local(cfg)
+        else:
+            local_pre, cloud_local = local_source()
+        local = dict(local_pre)
         rep.phase("list", t0)
         rep.local_files, rep.local_bytes = len(local), _bytes_of(local, local)
         rep.remote_files, rep.remote_bytes = len(remote), _bytes_of(remote, remote)
@@ -111,9 +123,13 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
             rep.conflicts.append((path, winner, copy))
         rep.phase("conflicts", t0)
 
+        sizes_local = {local_name.get(k, k): v[1] for k, v in local.items()}
+        sizes_remote = {remote_name.get(k, k): v[1] for k, v in remote.items()}
+        streams = cfg.transfer_streams
         t0 = time.monotonic()
-        bar = _bar(progress and not dry, "push →", plan.push, local, progress_stream)
-        st = transport.push(local_root, sorted(plan.push), dry, verbose, bar.feed if bar else None)
+        bar = _bar(progress and not dry, "push →", plan.push, local, progress_stream, multi=streams > 1)
+        st = transport.push(local_root, sorted(plan.push), dry, verbose, bar.feed if bar else None,
+                            sizes=sizes_local, streams=streams)
         if bar:
             bar.finish(st["bytes"], st["files"])
         rep.pushed_files = len(plan.push) if dry else st["files"]
@@ -125,8 +141,10 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
         rep.phase("push", t0)
 
         t0 = time.monotonic()
-        bar = _bar(progress and not dry, "pull ←", plan.pull, remote, progress_stream)
-        st = transport.pull(local_root, sorted(plan.pull), dry, verbose, bar.feed if bar else None)
+        bar = _bar(progress and not dry, "pull ←", plan.pull, remote, progress_stream, multi=streams > 1)
+        st = transport.pull(local_root, sorted(plan.pull), dry, verbose, bar.feed if bar else None,
+                            sizes=sizes_remote, streams=streams)
+        rep.streams = max(rep.streams, st.get("streams", 1))
         if bar:
             bar.finish(st["bytes"], st["files"])
         rep.pulled_files = len(plan.pull) if dry else st["files"]
@@ -144,7 +162,11 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
         rep.phase("delete", t0)
 
         if not dry:
-            after = manifest.scan(local_root, cfg.excludes, set())
+            # No second full walk: start from the pre-scan and re-stat only the paths this run
+            # touched (pushed, pulled, renamed, deleted). Other peers' concurrent changes stay
+            # out of this peer's base on purpose — they must still flow to this peer next time.
+            after = _refresh(local_root, local_pre,
+                             set(plan.push) | set(plan.pull) | set(plan.delete_local) | {c for _, _, c in rep.conflicts})
             new_base = engine.merged_base({k: v for k, v in after.items() if fold(k) not in hidden})
             if old_base_raw:  # keep what we knew about cloud-only files
                 for k, v in old_base_raw.items():
@@ -158,10 +180,26 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
     return rep
 
 
-def _bar(enabled: bool, label: str, paths: list[str], m: manifest.Manifest, stream=None):
+def _bar(enabled: bool, label: str, paths: list[str], m: manifest.Manifest, stream=None, multi: bool = False):
     if not enabled or not paths:
         return None
-    return Bar(label, len(paths), _bytes_of(m, paths), stream=stream, enabled=True if stream else None)
+    return Bar(label, len(paths), _bytes_of(m, paths), stream=stream, enabled=True if stream else None, multi=multi)
+
+
+def _refresh(root: Path, pre: manifest.Manifest, touched: set[str]) -> manifest.Manifest:
+    """pre-scan manifest with `touched` paths re-stated (dropped when gone)."""
+    out = dict(pre)
+    for rel in touched:
+        key = manifest.norm(rel)
+        try:
+            st = os.lstat(root / rel)
+            if os.path.isfile(root / rel) and not os.path.islink(root / rel) and not (getattr(st, "st_flags", 0) & manifest.SF_DATALESS):
+                out[key] = (int(st.st_mtime), int(st.st_size))
+                continue
+        except OSError:
+            pass
+        out.pop(key, None)
+    return out
 
 
 def run_many(cfg: Config, jobs: list[tuple[str, object]], *, parallel: bool = True, max_workers: int = 0,
@@ -173,6 +211,9 @@ def run_many(cfg: Config, jobs: list[tuple[str, object]], *, parallel: bool = Tr
 
     names = [n for n, _ in jobs]
     display = MultiDisplay(names) if (parallel and progress and len(jobs) > 1) else None
+    scan_pool = ThreadPoolExecutor(max_workers=1)
+    local_future = scan_pool.submit(scan_local, cfg)  # one local walk, overlapping the remote listings
+    local_source = local_future.result
 
     def one(name, tr):
         transport = tr() if callable(tr) and not hasattr(tr, "check") else tr
@@ -183,13 +224,16 @@ def run_many(cfg: Config, jobs: list[tuple[str, object]], *, parallel: bool = Tr
             else:
                 display.update(_name, f"   {_name:<10}" + msg.replace(f"[{_name}] ", ""))
         return run_peer(cfg, name, transport, state_dir=state_dir, log=plog, progress=progress,
-                        progress_stream=display.slot(name) if display else None, **kw)
+                        progress_stream=display.slot(name) if display else None, local_source=local_source, **kw)
 
-    if not parallel or len(jobs) == 1:
-        return [one(n, t) for n, t in jobs]
-    with ThreadPoolExecutor(max_workers=max_workers or len(jobs)) as ex:
-        futs = [ex.submit(one, n, t) for n, t in jobs]
-        reps = [f.result() for f in futs]
+    try:
+        if not parallel or len(jobs) == 1:
+            return [one(n, t) for n, t in jobs]
+        with ThreadPoolExecutor(max_workers=max_workers or len(jobs)) as ex:
+            futs = [ex.submit(one, n, t) for n, t in jobs]
+            reps = [f.result() for f in futs]
+    finally:
+        scan_pool.shutdown(wait=False)
     if display:
         display.close()
     return reps
