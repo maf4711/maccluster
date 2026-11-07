@@ -27,14 +27,23 @@ def _run_dirs(base: Path) -> list[Path]:
     )
 
 
-def _dir_bytes(path: Path) -> int:
+def _dir_bytes(path: Path, seen: set[tuple[int, int]] | None = None) -> int:
+    """Bytes on disk-ish: each inode once. SafetyNet runs share files via hardlinks
+    (staging), so summing st_size per path counted node-a's 274 GB as 1.6 TB."""
+    seen = set() if seen is None else seen
     total = 0
     for p in path.rglob("*"):
         try:
-            if p.is_file() and not p.is_symlink():
-                total += p.stat().st_size
+            st = p.lstat()
         except OSError:
             continue
+        if not p.is_file() or p.is_symlink():
+            continue
+        key = (st.st_dev, st.st_ino)
+        if key in seen:
+            continue
+        seen.add(key)
+        total += st.st_size
     return total
 
 
@@ -52,7 +61,8 @@ def safetynet_usage(root: Path | None = None) -> tuple[int, int]:
     if not base.is_dir():
         return 0, 0
     runs = _run_dirs(base)
-    return len(runs), sum(_dir_bytes(r) for r in runs)
+    seen: set[tuple[int, int]] = set()
+    return len(runs), sum(_dir_bytes(r, seen) for r in runs)
 
 
 def new_run_dir(root: Path | None = None) -> Path:

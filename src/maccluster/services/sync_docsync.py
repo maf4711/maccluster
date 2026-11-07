@@ -22,6 +22,11 @@ ENGINES = ("auto", "docsync", "ditto")
 MIN_DOCSYNC = (1, 1)
 INSTALL_HINT = "pipx inject maccluster <docsync_lan-*.whl> (GitHub release of maf4711/docsync)"
 
+# Never synced by the docsync engine: application bundles are signed, machine-bound and huge
+# (a first sync on 2026-11-07 planned 297,000 files from three Xcode.app copies in Downloads).
+# Install apps per Mac (App Store, Homebrew casks, xip) instead.
+ENGINE_EXCLUDES = ("*.app", "*.xcarchive")
+
 # maccluster policy → docsync policy; the others have no docsync equivalent.
 POLICY_MAP = {"newer": "newest", "prefer-local": "local", "prefer-remote": "remote"}
 
@@ -245,7 +250,9 @@ def run(
     if not roots:
         raise CliError("no include root exists on this Mac: " + ", ".join(missing), exit_code=1)
     specs = peer_specs(api, peers, self_ip=self_ip, via=via, default_user=default_user, log=log)
-    defaults = list(api.SyncRequest.__dataclass_fields__["excludes"].default_factory())
+    defaults = list(api.SyncRequest.__dataclass_fields__["excludes"].default_factory()) + list(
+        ENGINE_EXCLUDES
+    )
     req = api.SyncRequest(
         roots=[
             api.RootSpec(name, str(lp), rp, defaults + translate_excludes(excludes, rel))

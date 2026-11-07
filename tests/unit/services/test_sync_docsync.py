@@ -231,7 +231,13 @@ def test_run_maps_request_and_result(tmp_path: Path, monkeypatch):
     assert [r.name for r in req.roots] == ["documents", "desktop"]  # Missing/ skipped with a note
     assert any("skip root" in n for n in prog.notes)
     assert req.roots[0].peer_path == "/Users/a321/Documents"
-    assert req.roots[0].excludes == [".DS_Store", "Backups/", "node_modules"]
+    assert req.roots[0].excludes == [
+        ".DS_Store",
+        "*.app",
+        "*.xcarchive",
+        "Backups/",
+        "node_modules",
+    ]
     assert (req.conflict_policy, req.force_deletes, req.state_dir) == (
         "remote",
         True,

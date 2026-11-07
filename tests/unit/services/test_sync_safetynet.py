@@ -72,3 +72,14 @@ def test_heal_tick_prunes_by_count(tmp_path: Path, monkeypatch, fake_ctx) -> Non
     monkeypatch.setattr(sn, "default_safetynet_root", lambda: tmp_path)
     heal_loop_service.run_heal_loop(fake_ctx, interval=0.01, max_iterations=1)
     assert len(sn._run_dirs(tmp_path)) == 5
+
+
+def test_usage_counts_hardlinked_files_once(tmp_path: Path) -> None:
+    import os
+
+    now = datetime.now(UTC)
+    a = _mk(tmp_path, _stamp(now, 1), 1000)
+    b = tmp_path / _stamp(now, 0) / "Documents"
+    b.mkdir(parents=True)
+    os.link(a / "Documents" / "f.bin", b / "f.bin")  # same inode in two runs
+    assert sn.safetynet_usage(tmp_path) == (2, 1000)
