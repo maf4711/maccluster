@@ -469,3 +469,41 @@ def test_deadline_subprocess_exits_4(tmp_path):
     assert r.returncode == 4, r.stdout + r.stderr
     assert "deadline of 2 s exceeded" in r.stderr
     assert time.monotonic() - t0 < 15
+
+
+def test_sync_tree_passes_timeout_into_the_deadline(tmp_path, monkeypatch):
+    """Wiring: the --timeout that sync_cmd/automation pass in reaches run_with_deadline."""
+    from types import SimpleNamespace
+
+    from maccluster.services import config_service, keychain_service, sync_engine, sync_service
+
+    (tmp_path / "Documents").mkdir()
+    self_node = _node("node-c", "10.42.0.3", "me.local")
+    monkeypatch.setattr(sd, "resolve_engine", lambda engine, reasons: ("docsync", ""))
+    monkeypatch.setattr(
+        config_service,
+        "load_and_bind_self",
+        lambda ctx: (SimpleNamespace(nodes=(self_node,)), self_node),
+    )
+    monkeypatch.setattr(keychain_service, "resolve_ssh_user", lambda ctx, explicit=None: "a321")
+    monkeypatch.setattr(sync_service, "_resolve_peers", lambda *a, **k: [])
+    seen = {}
+
+    def fake_deadline(prog, timeout, fn):
+        seen["timeout"] = timeout
+        return sync_engine.SyncHomeResult(
+            local_home=str(tmp_path), dry_run=True, strategy="docsync", peers=()
+        )
+
+    monkeypatch.setattr(sync_engine, "run_with_deadline", fake_deadline)
+    sync_engine.sync_tree(
+        object(),
+        engine="docsync",
+        home=tmp_path,
+        includes=("Documents/",),
+        timeout=77.0,
+        dry_run=True,
+        target="home",
+        write_log=False,
+    )
+    assert seen["timeout"] == 77.0
