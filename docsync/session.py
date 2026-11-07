@@ -120,6 +120,7 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
         rep.pushed_bytes = _bytes_of(local, [p for p in plan.push if p in local]) if dry else st["bytes"]
         rep.wire_sent += st["sent"]
         rep.wire_received += st["received"]
+        rep.retries += st.get("retries", 0)
         _skipped(rep, st, "push")
         rep.phase("push", t0)
 
@@ -132,6 +133,7 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
         rep.pulled_bytes = _bytes_of(remote, [p for p in plan.pull if p in remote]) if dry else st["bytes"]
         rep.wire_sent += st["sent"]
         rep.wire_received += st["received"]
+        rep.retries += st.get("retries", 0)
         _skipped(rep, st, "pull")
         rep.phase("pull", t0)
 

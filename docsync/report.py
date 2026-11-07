@@ -68,6 +68,7 @@ class PeerReport:
     cloud_only_remote: int = 0
     skipped: int = 0
     deletes_skipped: int = 0
+    retries: int = 0
     warnings: list[str] = field(default_factory=list)
 
     def phase(self, name: str, t0: float) -> None:
@@ -100,6 +101,7 @@ class PeerReport:
             ("unchanged", f"{self.unchanged:,} files"),
             ("cloud-only", f"local {self.cloud_only_local:,}  remote {self.cloud_only_remote:,}  (iCloud-evicted, not touched)"),
             ("skipped", f"{self.skipped:,} (vanished during transfer)"),
+            *([("retries", f"{self.retries:,} transport retries")] if self.retries else []),
             ("on the wire", f"sent {fmt_bytes(self.wire_sent)}  received {fmt_bytes(self.wire_received)}"),
             ("time", f"{fmt_secs(self.secs)}  ({', '.join(f'{p.name} {fmt_secs(p.secs)}' for p in self.phases)})"),
             ("throughput", "n/a (dry run)" if self.dry else fmt_rate(self.transferred_bytes, self.secs)),
@@ -141,3 +143,17 @@ class RunReport:
     @property
     def ok(self) -> bool:
         return all(p.ok for p in self.peers)
+
+    def notable(self) -> str:
+        """One line for a notification: failures, conflicts, held-back deletions. Empty if boring."""
+        bits = []
+        failed = [p.peer for p in self.peers if not p.ok]
+        if failed:
+            bits.append(f"failed: {', '.join(failed)}")
+        confl = sum(len(p.conflicts) for p in self.peers)
+        if confl:
+            bits.append(f"{confl} conflict{'s' if confl != 1 else ''}")
+        held = sum(p.deletes_skipped for p in self.peers)
+        if held:
+            bits.append(f"{held} deletions held back")
+        return "; ".join(bits)

@@ -11,7 +11,7 @@ import sys
 import time
 from pathlib import Path
 
-from docsync import __version__, agent, discover, speedtest, tbsketch, thunderbolt
+from docsync import __version__, agent, discover, macos, speedtest, tbsketch, thunderbolt
 from docsync.config import (CONFIG_FILE, MACCLUSTER_CONFIG, STATE_DIR, Config, Peer, load_config,
                             local_hostnames, peers_from_maccluster, save_config)
 from docsync.manifest import scan
@@ -58,15 +58,21 @@ def resolve_peer(peer: Peer) -> tuple[str | None, str]:
     return _resolve(peer, lambda *a: None)
 
 
-def _lock(state_dir: Path):
+def _lock(state_dir: Path, wait: float = 0.0):
+    """Exclusive run lock. With wait > 0, poll for up to `wait` seconds before giving up (exit 3)."""
     state_dir.mkdir(parents=True, exist_ok=True)
     fh = open(state_dir / "run.lock", "w")
-    try:
-        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        print("docsync: another run is in progress — exiting", file=sys.stderr)
-        sys.exit(3)
-    return fh
+    deadline = time.monotonic() + wait
+    while True:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return fh
+        except OSError:
+            if time.monotonic() >= deadline:
+                fh.close()
+                print("docsync: another run is in progress — exiting", file=sys.stderr)
+                sys.exit(3)
+            time.sleep(0.5)
 
 
 def _select_peers(cfg: Config, names: list[str], all_: bool) -> list[Peer]:
@@ -226,9 +232,12 @@ def cmd_status(a) -> int:
 
 def cmd_sync(a, dry: bool) -> int:
     cfg = load_config()
+    if getattr(a, "from_agent", False) and cfg.skip_on_battery and macos.on_battery():
+        print("docsync: on battery power and skip_on_battery is set — not syncing")
+        return 0
     peers = _select_peers(cfg, a.peers, a.all)
     log = (lambda *x: None) if a.quiet else print
-    lock = _lock(STATE_DIR)
+    lock = _lock(STATE_DIR, wait=getattr(a, "wait", 0) or 0)
     run = RunReport()
     tb_speed = thunderbolt.state().best_speed if peers else 0
     try:
@@ -257,6 +266,10 @@ def cmd_sync(a, dry: bool) -> int:
     print()
     print(run.render())
     _append_log(run)
+    if not dry and not getattr(a, "no_notify", False):
+        note = run.notable()
+        if note:
+            macos.notify("docsync", note, subtitle="sync needs a look — docsync history")
     return 0 if run.ok else 2
 
 
@@ -339,12 +352,30 @@ def cmd_doctor(a) -> int:
 
 
 def cmd_watch(a) -> int:
+    """Foreground loop with exponential backoff after failures (interval → 2× → … → 6× cap)."""
+    base = max(1, int(a.interval * 60))
+    delay = base
     while True:
         try:
-            cmd_sync(a, dry=False)
-        except SystemExit:
-            pass
-        time.sleep(a.interval * 60)
+            rc = cmd_sync(a, dry=False)
+        except SystemExit as e:
+            rc = int(e.code or 0)
+        except Exception as e:  # noqa: BLE001 — keep watching, leave a trace
+            rc = 1
+            _append_text(f"watch: unexpected error: {e!r}")
+        delay = base if rc == 0 else min(delay * 2, base * 6)
+        if rc != 0:
+            print(f"watch: last run rc={rc}, next try in {delay // 60} min", file=sys.stderr)
+        time.sleep(delay)
+
+
+def _append_text(text: str) -> None:
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        with open(STATE_DIR / "history.log", "a") as fh:
+            fh.write(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S')} {text}\n")
+    except OSError:
+        pass
 
 
 def icloud_managed(root: Path) -> bool:
@@ -386,12 +417,16 @@ def build_parser() -> argparse.ArgumentParser:
         s.add_argument("-q", "--quiet", action="store_true", help="only the final report")
         s.add_argument("--force-deletes", action="store_true", help="override the max_delete guard")
         s.add_argument("--sequential", action="store_true", help="one peer after another (default: all peers in parallel)")
+        s.add_argument("--wait", type=float, default=0, metavar="SEC", help="wait up to SEC seconds for a running sync to finish")
+        s.add_argument("--no-notify", action="store_true", help="no Notification Center message on failures/conflicts")
+        s.add_argument("--from-agent", action="store_true", help=argparse.SUPPRESS)
         s.add_argument("-j", "--jobs", type=int, default=0, help="max parallel peers (default: all)")
         s.set_defaults(fn=lambda a, d=dry: cmd_sync(a, dry=d))
 
     s = sub.add_parser("watch", help="sync all peers every N minutes (foreground)")
     s.add_argument("--interval", type=int, default=10, metavar="MIN")
-    s.set_defaults(fn=cmd_watch, peers=[], all=True, verbose=False, quiet=False, force_deletes=False, sequential=False, jobs=0)
+    s.set_defaults(fn=cmd_watch, peers=[], all=True, verbose=False, quiet=False, force_deletes=False,
+                   sequential=False, jobs=0, wait=0, no_notify=False, from_agent=False)
 
     s = sub.add_parser("speedtest", help="throughput to each peer: raw TCP and the ssh path rsync uses")
     s.add_argument("peers", nargs="*", help="peer names (default: all)")
@@ -407,9 +442,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(fn=cmd_history)
     sub.add_parser("doctor", help="check rsync, ssh keys, peers").set_defaults(fn=cmd_doctor)
 
-    s = sub.add_parser("install-agent", help="launchd: sync --all every N minutes")
+    s = sub.add_parser("install-agent", help="launchd: sync --all every N minutes and when ~/Documents changes")
     s.add_argument("--interval", type=int, default=15, metavar="MIN")
-    s.set_defaults(fn=lambda a: print(agent.install(a.interval)) or 0)
+    s.add_argument("--no-watch", action="store_true", help="interval only, no WatchPaths trigger")
+    s.set_defaults(fn=lambda a: print(agent.install(a.interval, None if a.no_watch else str(load_config().local_root))) or 0)
     sub.add_parser("uninstall-agent").set_defaults(fn=lambda a: print(agent.uninstall()) or 0)
     return ap
 
