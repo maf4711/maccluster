@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
+import signal
 import sys
 import time
 from pathlib import Path
 
-from docsync import __version__, advisor, agent, api, cli_tools, lock, macos, thunderbolt
+from docsync import __version__, advisor, agent, api, cli_tools, lock, macos, thunderbolt, watchdog
 from docsync.config import (CONFIG_FILE, MACCLUSTER_CONFIG, STATE_DIR, Config, Peer, load_config,
                             local_hostnames, peers_from_maccluster, save_config)
 from docsync.hosts import resolve, resolve_peer, select_peers
@@ -22,7 +24,7 @@ def _lock(state_dir: Path, wait: float = 0.0):
     """Exclusive run lock. With wait > 0, poll for up to `wait` seconds before giving up (exit 3)."""
     fh = lock.acquire(state_dir, wait)
     if fh is None:
-        print("docsync: another run is in progress — exiting", file=sys.stderr)
+        print(f"docsync: {lock.busy_message(state_dir)} — exiting", file=sys.stderr)
         sys.exit(3)
     return fh
 
@@ -123,6 +125,45 @@ def cmd_sync(a, dry: bool) -> int:
     return result.exit_code
 
 
+MAX_RUNTIME_LIMIT = 10_000_000  # seconds (~115 days)
+
+
+def _max_runtime(text: str) -> float:
+    try:
+        value = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid number: {text!r}") from None
+    if value < 0:
+        raise argparse.ArgumentTypeError("--max-runtime must be >= 0")
+    if not math.isfinite(value) or value > MAX_RUNTIME_LIMIT:
+        # inf/nan/1e20 would overflow the watchdog's wait and silently leave the run unbounded
+        raise argparse.ArgumentTypeError(f"--max-runtime must be a finite number between 0 and {MAX_RUNTIME_LIMIT}")
+    return value
+
+
+def _deadline_exceeded(seconds: float) -> None:
+    """Watchdog callback (runs in its thread): leave a trace, kill our rsync/ssh children, exit 4.
+    os._exit skips cleanup on purpose — a hung thread must not keep the process (and the lock) alive."""
+    msg = f"deadline of {seconds:g} s exceeded"
+    _append_text(msg)
+    try:
+        print(f"docsync: {msg} — ending this run (exit {watchdog.EXIT_DEADLINE})", file=sys.stderr, flush=True)
+        sys.stdout.flush()
+    except Exception:  # noqa: BLE001 — never let a broken pipe stop the exit
+        pass
+    watchdog.kill_descendants()
+    os._exit(watchdog.EXIT_DEADLINE)
+
+
+def _with_deadline(a, fn) -> int:
+    seconds = getattr(a, "max_runtime", watchdog.DEFAULT_MAX_RUNTIME)
+    watchdog.arm(seconds, lambda: _deadline_exceeded(seconds))
+    try:
+        return fn()
+    finally:
+        watchdog.disarm()
+
+
 def _append_log(run: RunReport) -> None:
     try:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -190,18 +231,47 @@ def cmd_history(a) -> int:
     return 0
 
 
+def _watch_run(a) -> int:
+    """One sync inside its own forked process, so its deadline (exit 4) ends that run, not the loop."""
+    sys.stdout.flush()
+    sys.stderr.flush()
+    pid = os.fork()
+    if pid == 0:
+        rc = 1
+        try:
+            rc = _with_deadline(a, lambda: cmd_sync(a, dry=False))
+        except SystemExit as e:
+            rc = e.code if isinstance(e.code, int) else (0 if e.code is None else 1)
+        except KeyboardInterrupt:
+            rc = 130  # Ctrl-C: end quietly, not an error worth a history entry
+        except BaseException as e:  # noqa: BLE001 — keep watching, leave a trace
+            _append_text(f"watch: unexpected error: {e!r}")
+        finally:
+            try:
+                sys.stdout.flush()
+                sys.stderr.flush()
+            finally:
+                os._exit(rc)
+    try:
+        return os.waitstatus_to_exitcode(os.waitpid(pid, 0)[1])
+    except KeyboardInterrupt:
+        # Ctrl-C reaches the whole process group; also forward it in case only we got it, then reap
+        try:
+            os.kill(pid, signal.SIGINT)
+            os.waitpid(pid, 0)
+        except (OSError, KeyboardInterrupt):
+            pass
+        raise
+
+
 def cmd_watch(a) -> int:
     """Foreground loop with exponential backoff after failures (interval → 2× → … → 6× cap)."""
     base = max(1, int(a.interval * 60))
     delay = base
     while True:
-        try:
-            rc = cmd_sync(a, dry=False)
-        except SystemExit as e:
-            rc = int(e.code or 0)
-        except Exception as e:  # noqa: BLE001 — keep watching, leave a trace
-            rc = 1
-            _append_text(f"watch: unexpected error: {e!r}")
+        rc = _watch_run(a)
+        if rc == 130:
+            raise KeyboardInterrupt  # the run was interrupted: stop watching (main() exits 130)
         delay = base if rc == 0 else min(delay * 2, base * 6)
         if rc != 0:
             print(f"watch: last run rc={rc}, next try in {delay // 60} min", file=sys.stderr)
@@ -244,15 +314,19 @@ def build_parser() -> argparse.ArgumentParser:
         s.add_argument("--force-deletes", action="store_true", help="override the max_delete guard")
         s.add_argument("--sequential", action="store_true", help="one peer after another (default: all peers in parallel)")
         s.add_argument("--wait", type=float, default=0, metavar="SEC", help="wait up to SEC seconds for a running sync to finish")
+        s.add_argument("--max-runtime", type=_max_runtime, default=watchdog.DEFAULT_MAX_RUNTIME, metavar="SEC",
+                       help=f"end the whole run with exit 4 after SEC seconds (default {watchdog.DEFAULT_MAX_RUNTIME}, 0 = no limit)")
         s.add_argument("--no-notify", action="store_true", help="no Notification Center message on failures/conflicts")
         s.add_argument("--from-agent", action="store_true", help=argparse.SUPPRESS)
         s.add_argument("-j", "--jobs", type=int, default=0, help="max parallel peers (default: all)")
         s.add_argument("--root", action="append", metavar="NAME", help="only this root (repeatable; default: all roots)")
         s.add_argument("--json", action="store_true", help="also print the result as one JSON object (last line)")
-        s.set_defaults(fn=lambda a, d=dry: cmd_sync(a, dry=d))
+        s.set_defaults(fn=lambda a, d=dry: _with_deadline(a, lambda: cmd_sync(a, dry=d)))
 
     s = sub.add_parser("watch", help="sync all peers every N minutes (foreground)")
     s.add_argument("--interval", type=int, default=10, metavar="MIN")
+    s.add_argument("--max-runtime", type=_max_runtime, default=watchdog.DEFAULT_MAX_RUNTIME, metavar="SEC",
+                   help="deadline per run (exit 4 for that run; the loop keeps going)")
     s.set_defaults(fn=cmd_watch, peers=[], all=True, verbose=False, quiet=False, force_deletes=False,
                    sequential=False, jobs=0, wait=0, no_notify=False, from_agent=False, root=None, json=False)
 

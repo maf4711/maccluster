@@ -1,4 +1,4 @@
-"""launchd agent: run `docsync sync --all` every N minutes."""
+"""launchd agent: run `docsync sync --all` every N minutes (each run capped by --max-runtime)."""
 
 from __future__ import annotations
 
@@ -7,12 +7,15 @@ import subprocess
 import sys
 from pathlib import Path
 
+from docsync.watchdog import DEFAULT_MAX_RUNTIME
+
 LABEL = "com.a321.docsync"
 PLIST = Path(f"~/Library/LaunchAgents/{LABEL}.plist").expanduser()
 LOG_DIR = Path("~/Library/Logs/docsync").expanduser()
 
 
-def plist_xml(interval_s: int, entry: str | list[str], watch_path: str | list[str] | None = None) -> str:
+def plist_xml(interval_s: int, entry: str | list[str], watch_path: str | list[str] | None = None,
+              max_runtime: int = DEFAULT_MAX_RUNTIME) -> str:
     argv = [sys.executable, entry] if isinstance(entry, str) else list(entry)
     paths = [watch_path] if isinstance(watch_path, str) else list(watch_path or [])
     watch = (f"\n  <key>WatchPaths</key><array>{''.join(f'<string>{p}</string>' for p in paths)}</array>"
@@ -22,7 +25,7 @@ def plist_xml(interval_s: int, entry: str | list[str], watch_path: str | list[st
 <plist version="1.0"><dict>
   <key>Label</key><string>{LABEL}</string>
   <key>ProgramArguments</key><array>
-    {''.join(f"<string>{x}</string>" for x in argv)}<string>sync</string><string>--all</string><string>--quiet</string><string>--from-agent</string>
+    {''.join(f"<string>{x}</string>" for x in argv)}<string>sync</string><string>--all</string><string>--quiet</string><string>--from-agent</string><string>--max-runtime</string><string>{max_runtime}</string>
   </array>
   <key>StartInterval</key><integer>{interval_s}</integer>{watch}
   <key>RunAtLoad</key><true/>

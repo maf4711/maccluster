@@ -255,6 +255,23 @@ class ReliabilityTests(unittest.TestCase):
             fh = cli._lock(state, wait=1)
             fh.close()
 
+    def test_cli_lock_message_names_holder(self):
+        import contextlib, io
+        from docsync import cli
+        try:
+            from tests.test_api import hold_lock
+        except ImportError:
+            from test_api import hold_lock
+        proc, err = hold_lock(self.state), io.StringIO()
+        try:
+            with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as cm:
+                cli._lock(self.state)
+        finally:
+            proc.kill()
+            proc.wait()
+        self.assertEqual(cm.exception.code, 3)
+        self.assertIn(f"another run is in progress (pid {proc.pid}, running 0 min, ", err.getvalue())
+
 
 class SharedScanTests(unittest.TestCase):
     def test_run_many_scans_local_once_and_streams_large_transfers(self):
@@ -442,3 +459,9 @@ class DryRunBytesTests(unittest.TestCase):
         touch(self.a / "Upper/Case.TXT", "y" * 1000, self.now)
         rep = self.sync(dry=True)
         self.assertEqual((rep.pulled_bytes, rep.pushed_bytes), (3000, 1000))
+
+
+try:  # DeadlineTests lives in its own module to keep this file short; collected from here
+    from tests.deadline_cases import DeadlineTests  # noqa: F401
+except ImportError:
+    from deadline_cases import DeadlineTests  # noqa: F401

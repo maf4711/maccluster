@@ -10,6 +10,20 @@ from pathlib import Path
 
 from docsync import api, discover
 
+ROOT = Path(__file__).resolve().parent.parent
+HOLD = ("import sys, time; from pathlib import Path; from docsync import lock; "
+        "fh = lock.acquire(Path(sys.argv[1])); print('held' if fh else 'busy', flush=True); time.sleep(60)")
+
+
+def hold_lock(state: Path) -> subprocess.Popen:
+    """A separate process that takes the run lock and keeps it; argv carries 'marker-arg'."""
+    import sys
+    env = dict(os.environ, PYTHONPATH=str(ROOT))
+    proc = subprocess.Popen([sys.executable, "-c", HOLD, str(state), "marker-arg"], stdout=subprocess.PIPE,
+                            text=True, env=env)
+    assert proc.stdout.readline().strip() == "held"
+    return proc
+
 
 def touch(p: Path, text: str, mtime: int):
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -78,6 +92,50 @@ class ApiSyncTests(unittest.TestCase):
             fh.close()
         self.assertEqual((res.ok, res.exit_code), (False, 3))
         self.assertTrue(api.sync(self.req([api.PeerSpec("b", str(self.b))])).ok)
+
+    def test_lock_file_names_holder(self):
+        from docsync import lock
+        state = self.base / "state"
+        proc = hold_lock(state)
+        try:
+            before = (state / "run.lock").read_text()
+            pid, started, cmd = before.splitlines()
+            self.assertEqual(int(pid), proc.pid)
+            self.assertLess(abs(float(started) - time.time()), 30)
+            self.assertIn("marker-arg", cmd)
+            self.assertEqual(lock.holder(state), {"pid": proc.pid, "started": float(started), "command": cmd})
+            self.assertIsNone(lock.acquire(state))  # a failed acquire leaves the record intact
+            self.assertEqual((state / "run.lock").read_text(), before)
+        finally:
+            proc.kill()
+            proc.wait()
+        (state / "run.lock").write_text("")
+        self.assertIsNone(lock.holder(state))
+
+    def test_dead_holder_is_replaced(self):
+        from docsync import lock
+        state = self.base / "state"
+        state.mkdir()
+        (state / "run.lock").write_text("999999\n1\nold command\n")
+        fh = lock.acquire(state)
+        try:
+            self.assertIsNotNone(fh)
+            h = lock.holder(state)
+            self.assertEqual(h["pid"], os.getpid())
+            self.assertNotEqual(h["command"], "old command")
+        finally:
+            fh.close()
+
+    def test_lock_held_names_holder(self):
+        proc = hold_lock(self.base / "state")
+        try:
+            res = api.sync(self.req([api.PeerSpec("b", str(self.b))]))
+        finally:
+            proc.kill()
+            proc.wait()
+        self.assertEqual(res.exit_code, 3)
+        self.assertIn(f"another run is in progress (pid {proc.pid}, running 0 min, ", res.error)
+        self.assertIn("marker-arg", res.error)
 
     def test_per_root_peer_path(self):
         d2 = self.base / "B2"
