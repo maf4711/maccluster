@@ -184,6 +184,23 @@ def remove_local(root: Path, home: Path, paths: list[str], stamp: str, use_trash
             full.unlink()
 
 
+def remote_remove_script(root: str, paths: list[str], stamp: str, use_trash: bool) -> str:
+    """Shell script that trashes (or unlinks) paths below root on the peer.
+    Quoting rule: every path is a single shlex-quoted token; "$T" is concatenated to it
+    unquoted-adjacent ("$T"/'a b.gz'), never nested inside double quotes."""
+    lines = ["set -e", f"cd {shlex.quote(root)}"]
+    if use_trash:
+        lines.append(f'T="$HOME/.Trash/docsync-{stamp}"')
+    for p in paths:
+        q = shlex.quote(p)
+        if use_trash:
+            d = shlex.quote(os.path.dirname(p) or ".")
+            lines.append(f'mkdir -p "$T"/{d} && mv -f {q} "$T"/{q}')
+        else:
+            lines.append(f"rm -f {q}")
+    return "\n".join(lines)
+
+
 class RemoteTransport:
     """Peer reached over ssh; files move with rsync."""
 
@@ -232,16 +249,7 @@ class RemoteTransport:
     def remove(self, paths: list[str], stamp: str, use_trash: bool, dry: bool) -> None:
         if dry or not paths:
             return
-        script = ["set -e", f"cd {shlex.quote(self.path)}"]
-        if use_trash:
-            script.append(f"T=\"$HOME/.Trash/docsync-{stamp}\"")
-        for p in paths:
-            q = shlex.quote(p)
-            if use_trash:
-                script.append(f'mkdir -p "$T/{shlex.quote(os.path.dirname(p) or ".")}" && mv -f {q} "$T/{q}"')
-            else:
-                script.append(f"rm -f {q}")
-        res = self.ssh("\n".join(script), timeout=600)
+        res = self.ssh(remote_remove_script(self.path, paths, stamp, use_trash), timeout=600)
         if res.returncode != 0:
             raise TransportError(f"remote delete failed: {res.stderr.strip()[-400:]}")
 

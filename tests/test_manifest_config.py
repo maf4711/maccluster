@@ -261,3 +261,20 @@ class SketchTests(unittest.TestCase):
         self.assertIn("✗ wrong", sk)
         self.assertIn("node-b FRONT port", sk)
         self.assertIn("node-b BACK port (TB1-3)", sk)
+
+
+class RemoteRemoveScriptTests(unittest.TestCase):
+    def test_script_runs_locally_with_spaces_and_quotes(self):
+        import subprocess
+        from docsync.transport import remote_remove_script
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d) / "Documents"
+            (root / "_Archiv/2026").mkdir(parents=True)
+            f = root / "_Archiv/2026/a b's 2.tar.conflict-x.gz"
+            f.write_text("x")
+            script = remote_remove_script(str(root), ["_Archiv/2026/a b's 2.tar.conflict-x.gz"], "T1", True)
+            res = subprocess.run(["sh", "-c", script], env={"HOME": d, "PATH": "/bin:/usr/bin"}, capture_output=True, text=True)
+            self.assertEqual(res.returncode, 0, res.stderr)
+            self.assertFalse(f.exists())
+            self.assertTrue((Path(d) / ".Trash/docsync-T1/_Archiv/2026/a b's 2.tar.conflict-x.gz").exists())
+            self.assertNotIn("\"$T/", script)
