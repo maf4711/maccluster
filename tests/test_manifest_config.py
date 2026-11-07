@@ -123,3 +123,11 @@ Total bytes received: 80
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DiscoverTests(unittest.TestCase):
+    def test_base_name_strips_boot_suffixes(self):
+        from docsync.discover import base_name
+        for h in ("CM-KWFVR7JGW3-3000.local", "CM-KWFVR7JGW3 (891)", "cm-kwfvr7jgw3.local", "CM-KWFVR7JGW3"):
+            self.assertEqual(base_name(h), "cm-kwfvr7jgw3", h)
+        self.assertEqual(base_name("mbpM5MaxMF-2.local"), "mbpm5maxmf")

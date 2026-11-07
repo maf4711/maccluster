@@ -29,6 +29,10 @@ def _resolve(peer: Peer, log) -> str | None:
     host, probes = discover.first_reachable(peer.hosts)
     for h, ms in probes.items():
         log(f"   {h:<28} {'%.1f ms' % ms if ms is not None else 'unreachable'}")
+    if host is None:
+        host = discover.bonjour_fallback(peer.hosts)
+        if host:
+            log(f"   {host:<28} found via Bonjour (name suffix changed)")
     return host
 
 
@@ -79,6 +83,7 @@ def cmd_peers(a) -> int:
     print(f"local: {cfg.local_root}   excludes: {len(cfg.excludes)}   policy: {cfg.conflict_policy}")
     for p in cfg.peers:
         host, probes = discover.first_reachable(p.hosts)
+        host = host or discover.bonjour_fallback(p.hosts)
         state = f"→ {host}" if host else "unreachable"
         b = base_file(p.name)
         last = time.strftime("%Y-%m-%d %H:%M", time.localtime(b.stat().st_mtime)) if b.exists() else "never"
@@ -197,8 +202,9 @@ def cmd_doctor(a) -> int:
         print("             synced by iCloud; docsync skips evicted files and is meant for peers on OTHER accounts")
     for p in cfg.peers:
         host, _ = discover.first_reachable(p.hosts)
+        host = host or discover.bonjour_fallback(p.hosts)
         if not host:
-            print(f"peer {p.name:<6} unreachable (ping)")
+            print(f"peer {p.name:<6} unreachable (ping + Bonjour)")
             ok = False
             continue
         try:
