@@ -63,6 +63,10 @@ class PeerReport:
     deleted_remote: int = 0
     conflicts: list[tuple[str, str, str]] = field(default_factory=list)  # path, winner, conflict copy
     unchanged: int = 0
+    cloud_only_local: int = 0
+    cloud_only_remote: int = 0
+    skipped: int = 0
+    warnings: list[str] = field(default_factory=list)
 
     def phase(self, name: str, t0: float) -> None:
         self.phases.append(Phase(name, time.monotonic() - t0))
@@ -91,6 +95,8 @@ class PeerReport:
             ("deleted", f"local {self.deleted_local:,}  remote {self.deleted_remote:,}"),
             ("conflicts", f"{len(self.conflicts):,}"),
             ("unchanged", f"{self.unchanged:,} files"),
+            ("cloud-only", f"local {self.cloud_only_local:,}  remote {self.cloud_only_remote:,}  (iCloud-evicted, not touched)"),
+            ("skipped", f"{self.skipped:,} (vanished during transfer)"),
             ("on the wire", f"sent {fmt_bytes(self.wire_sent)}  received {fmt_bytes(self.wire_received)}"),
             ("time", f"{fmt_secs(self.secs)}  ({', '.join(f'{p.name} {fmt_secs(p.secs)}' for p in self.phases)})"),
             ("throughput", "n/a (dry run)" if self.dry else fmt_rate(self.transferred_bytes, self.secs)),
@@ -100,6 +106,8 @@ class PeerReport:
         out = [head] + [f"   {k:<12} {v}" for k, v in rows]
         for path, winner, copy in self.conflicts:
             out.append(f"   ⚠ conflict  {path}  → kept {winner}; other side saved as {copy}")
+        for w in self.warnings[:10]:
+            out.append(f"   ⚠ {w}")
         return "\n".join(out)
 
 

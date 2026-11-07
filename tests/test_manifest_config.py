@@ -55,6 +55,12 @@ class ScanTests(unittest.TestCase):
             p.write_text("x")
             self.assertEqual(list(manifest.scan(Path(d), [])), [nfc])
 
+    def test_dataless_marker_hidden_and_collected(self):
+        cloud = set()
+        m = manifest.parse_lines("1\t-1\tevicted.pdf\x001\t5\tlocal.pdf\x00", [], cloud)
+        self.assertEqual(list(m), ["local.pdf"])
+        self.assertEqual(cloud, {"evicted.pdf"})
+
     def test_parse_lines(self):
         m = manifest.parse_lines("1700000000\t12\t./a b/c.txt\n1\t2\t.DS_Store\nbad line\n", config.DEFAULT_EXCLUDES)
         self.assertEqual(m, {"a b/c.txt": (1700000000, 12)})
@@ -112,7 +118,7 @@ Total transferred file size: 1,234 bytes
 Total bytes sent: 1,400
 Total bytes received: 80
 """
-        self.assertEqual(parse_rsync_stats(txt), {"files": 2, "bytes": 1234, "sent": 1400, "received": 80})
+        self.assertEqual(parse_rsync_stats(txt), {"files": 2, "bytes": 1234, "sent": 1400, "received": 80, "skipped": 0})
 
 
 if __name__ == "__main__":

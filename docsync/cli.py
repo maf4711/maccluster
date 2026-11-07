@@ -189,6 +189,12 @@ def cmd_doctor(a) -> int:
     except FileNotFoundError:
         return 1
     print(f"documents  {cfg.local_root} {'ok' if cfg.local_root.is_dir() else 'MISSING'}")
+    cloud: set[str] = set()
+    n = len(scan(cfg.local_root, cfg.excludes, cloud))
+    print(f"           {n:,} local files, {len(cloud):,} cloud-only (iCloud-evicted)")
+    if icloud_managed(cfg.local_root):
+        print("           ⚠ this folder is iCloud 'Desktop & Documents' — Macs on the same Apple ID are already")
+        print("             synced by iCloud; docsync skips evicted files and is meant for peers on OTHER accounts")
     for p in cfg.peers:
         host, _ = discover.first_reachable(p.hosts)
         if not host:
@@ -212,6 +218,14 @@ def cmd_watch(a) -> int:
         except SystemExit:
             pass
         time.sleep(a.interval * 60)
+
+
+def icloud_managed(root: Path) -> bool:
+    link = Path("~/Library/Mobile Documents/com~apple~CloudDocs/Documents").expanduser()
+    try:
+        return link.is_symlink() and link.resolve() == root.resolve()
+    except OSError:
+        return False
 
 
 def build_parser() -> argparse.ArgumentParser:

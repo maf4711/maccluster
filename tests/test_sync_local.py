@@ -94,6 +94,23 @@ class LocalSyncTests(unittest.TestCase):
         self.assertTrue(self.sync().ok)  # converged: next run is a no-op
         self.assertEqual(self.sync().transferred_files, 0)
 
+    def test_cloud_only_files_are_never_deleted_or_pulled(self):
+        touch(self.a / "keep.txt", "k", self.now)
+        self.sync()  # base now knows keep.txt
+        orig = self.t.manifest
+        # peer reports keep.txt as evicted to iCloud (size -1 marker) instead of present
+        self.t.manifest = lambda ex, dl=None: (dl.add("keep.txt") if dl is not None else None) or {}
+        try:
+            rep = self.sync()
+        finally:
+            self.t.manifest = orig
+        self.assertTrue(rep.ok, rep.error)
+        self.assertEqual(rep.cloud_only_remote, 1)
+        self.assertEqual((rep.deleted_local, rep.deleted_remote, rep.pushed_files), (0, 0, 0))
+        self.assertTrue((self.a / "keep.txt").exists())
+        from docsync import manifest as mf
+        self.assertIn("keep.txt", mf.load(base_file("b", self.state)))  # base entry survived
+
     def test_trash_instead_of_unlink(self):
         home = Path(self.tmp.name) / "A"
         self.cfg.trash = True

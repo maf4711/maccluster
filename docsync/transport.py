@@ -54,7 +54,7 @@ RSYNC_STAT_KEYS = {
 
 def parse_rsync_stats(text: str) -> dict[str, int]:
     """Pull the numbers docsync reports from `rsync --stats` output."""
-    out = {"files": 0, "bytes": 0, "sent": 0, "received": 0}
+    out = {"files": 0, "bytes": 0, "sent": 0, "received": 0, "skipped": 0}
     for line in text.splitlines():
         for key, name in RSYNC_STAT_KEYS.items():
             if line.startswith(key + ":"):
@@ -70,7 +70,7 @@ def _run_rsync(src: str, dst: str, paths: list[str], ssh_cmd: list[str] | None,
                dry: bool, verbose: bool) -> dict[str, int]:
     """rsync the given relative paths from src/ to dst/. Returns parsed --stats."""
     if not paths:
-        return {"files": 0, "bytes": 0, "sent": 0, "received": 0}
+        return {"files": 0, "bytes": 0, "sent": 0, "received": 0, "skipped": 0}
     lst = _files_from(paths)
     try:
         cmd = [rsync_bin(), "-a", "--from0", f"--files-from={lst}", "--partial",
@@ -85,9 +85,15 @@ def _run_rsync(src: str, dst: str, paths: list[str], ssh_cmd: list[str] | None,
         res = subprocess.run(cmd, text=True, capture_output=True)
         if verbose and res.stdout:
             print(res.stdout.rstrip())
-        if res.returncode not in (0, 24):  # 24 = vanished source files, tolerable
+        # 23/24: some files vanished or could not be read (iCloud/other sync in flight) — report, don't abort
+        if res.returncode not in (0, 23, 24):
             raise TransportError(f"rsync rc={res.returncode}: {res.stderr.strip()[-800:]}")
-        return parse_rsync_stats(res.stdout)
+        stats = parse_rsync_stats(res.stdout)
+        if res.returncode in (23, 24):
+            errs = [l for l in res.stderr.splitlines() if "error:" in l or "failed:" in l]
+            stats["skipped"] = max(len(errs), 1)
+            stats["errors"] = errs[:5]
+        return stats
     finally:
         os.unlink(lst)
 
@@ -105,8 +111,8 @@ class LocalTransport:
             raise TransportError(f"not a directory: {self.root}")
         return self.label
 
-    def manifest(self, excludes: list[str]) -> Manifest:
-        return scan(self.root, excludes)
+    def manifest(self, excludes: list[str], dataless: set[str] | None = None) -> Manifest:
+        return scan(self.root, excludes, dataless)
 
     def push(self, local_root: Path, paths: list[str], dry: bool, verbose: bool) -> dict[str, int]:
         return _run_rsync(f"{local_root}/", f"{self.root}/", paths, None, dry, verbose)
@@ -169,14 +175,14 @@ class RemoteTransport:
             raise TransportError(res.stderr.strip().splitlines()[-1] if res.stderr.strip() else f"ssh rc={res.returncode}")
         return f"{res.stdout.strip()} ({(time.monotonic() - t0) * 1000:.0f} ms)"
 
-    def manifest(self, excludes: list[str]) -> Manifest:
+    def manifest(self, excludes: list[str], dataless: set[str] | None = None) -> Manifest:
         q = shlex.quote(self.path)
         res = self.ssh(f"command -v python3 >/dev/null 2>&1 && python3 - {q}", stdin=LISTER_PY, timeout=600)
         if res.returncode != 0:
             res = self.ssh(LISTER_SH.format(root=q), timeout=600)
             if res.returncode != 0:
                 raise TransportError(f"remote listing failed: {res.stderr.strip()[-400:]}")
-        return parse_lines(res.stdout, excludes)
+        return parse_lines(res.stdout, excludes, dataless)
 
     def push(self, local_root: Path, paths: list[str], dry: bool, verbose: bool) -> dict[str, int]:
         return _run_rsync(f"{local_root}/", self.rsync_path, paths, self.ssh_cmd, dry, verbose)

@@ -10,6 +10,7 @@ from pathlib import Path
 
 Entry = tuple[int, int]  # (mtime seconds, size bytes)
 Manifest = dict[str, Entry]
+SF_DATALESS = 0x40000000  # macOS: file is evicted to iCloud; reading it triggers a download
 
 
 def norm(path: str) -> str:
@@ -32,8 +33,9 @@ def excluded(relpath: str, patterns: list[str]) -> bool:
     return False
 
 
-def scan(root: Path, patterns: list[str]) -> Manifest:
-    """Walk root, return manifest of regular files (symlinks skipped)."""
+def scan(root: Path, patterns: list[str], dataless: set[str] | None = None) -> Manifest:
+    """Walk root, return manifest of regular files (symlinks skipped).
+    Cloud-only (dataless) files are left out of the manifest and added to `dataless`."""
     out: Manifest = {}
     root = root.expanduser()
     if not root.is_dir():
@@ -58,13 +60,18 @@ def scan(root: Path, patterns: list[str]) -> Manifest:
                 continue
             if not os.path.isfile(full) or os.path.islink(full):
                 continue
+            if getattr(st, "st_flags", 0) & SF_DATALESS:
+                if dataless is not None:
+                    dataless.add(norm(rel))
+                continue
             out[norm(rel)] = (int(st.st_mtime), int(st.st_size))
     return out
 
 
-def parse_lines(text: str, patterns: list[str]) -> Manifest:
+def parse_lines(text: str, patterns: list[str], dataless: set[str] | None = None) -> Manifest:
     """Parse 'mtime<TAB>size<TAB>relpath' records (remote lister output).
-    Records are NUL-separated (python lister) or newline-separated (stat fallback)."""
+    Records are NUL-separated (python lister) or newline-separated (stat fallback).
+    size == -1 marks a cloud-only file: kept out of the manifest, added to `dataless`."""
     out: Manifest = {}
     records = text.split("\0") if "\0" in text else text.splitlines()
     for line in records:
@@ -76,6 +83,10 @@ def parse_lines(text: str, patterns: list[str]) -> Manifest:
             continue
         rel = norm(rel[2:] if rel.startswith("./") else rel)
         if excluded(rel, patterns):
+            continue
+        if int(size) < 0:
+            if dataless is not None:
+                dataless.add(rel)
             continue
         out[rel] = (int(float(mtime)), int(size))
     return out
@@ -113,7 +124,8 @@ for dirpath, dirnames, filenames in os.walk(root):
         except OSError:
             continue
         rel = os.path.relpath(full, root)
-        out.write("%d\t%d\t%s\0" % (int(st.st_mtime), st.st_size, rel))
+        size = -1 if getattr(st, "st_flags", 0) & 0x40000000 else st.st_size
+        out.write("%d\t%d\t%s\0" % (int(st.st_mtime), size, rel))
 '''
 
 # Fallback when the peer has no python3: BSD stat (macOS), then GNU stat.

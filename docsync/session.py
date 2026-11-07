@@ -37,14 +37,24 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
         rep.phase("connect", t0)
 
         t0 = time.monotonic()
-        local = manifest.scan(local_root, cfg.excludes)
-        remote = transport.manifest(cfg.excludes)
+        cloud_local: set[str] = set()
+        cloud_remote: set[str] = set()
+        local = manifest.scan(local_root, cfg.excludes, cloud_local)
+        remote = transport.manifest(cfg.excludes, cloud_remote)
         rep.phase("list", t0)
         rep.local_files, rep.local_bytes = len(local), _bytes_of(local, local)
         rep.remote_files, rep.remote_bytes = len(remote), _bytes_of(remote, remote)
+        rep.cloud_only_local, rep.cloud_only_remote = len(cloud_local), len(cloud_remote)
 
-        base = manifest.load(base_file(peer_name, state_dir))
-        rep.first_sync = base is None
+        # Cloud-only (iCloud-evicted) files are invisible to this run on BOTH sides and in the
+        # base, so they are never downloaded, never "deleted", and their base entry survives.
+        hidden = cloud_local | cloud_remote
+        for h in hidden:
+            local.pop(h, None)
+            remote.pop(h, None)
+        old_base = manifest.load(base_file(peer_name, state_dir))
+        rep.first_sync = old_base is None
+        base = None if old_base is None else {k: v for k, v in old_base.items() if k not in hidden}
         plan = engine.plan(local, remote, base, cfg.conflict_policy)
         rep.unchanged = sum(1 for p in local if p in remote and local[p] == remote[p])
         log(f"[{peer_name}] plan: {plan.summary}")
@@ -56,16 +66,20 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
         host = socket.gethostname().split(".")[0]
         for path, winner in plan.conflicts:
             copy = engine.conflict_name(path, stamp, host)
-            if winner == "remote":  # keep my copy under a conflict name, then pull theirs
-                if not dry:
-                    (local_root / copy).parent.mkdir(parents=True, exist_ok=True)
-                    os.replace(local_root / path, local_root / copy)
-                plan.pull.append(path)
-                plan.push.append(copy)
-            else:
-                transport.rename(path, copy, dry)
-                plan.push.append(path)
-                plan.pull.append(copy)
+            try:
+                if winner == "remote":  # keep my copy under a conflict name, then pull theirs
+                    if not dry:
+                        (local_root / copy).parent.mkdir(parents=True, exist_ok=True)
+                        os.replace(local_root / path, local_root / copy)
+                    plan.pull.append(path)
+                    plan.push.append(copy)
+                else:
+                    transport.rename(path, copy, dry)
+                    plan.push.append(path)
+                    plan.pull.append(copy)
+            except (TransportError, OSError) as e:  # file changed under us (another sync in flight)
+                rep.warnings.append(f"conflict skipped, file vanished: {path} ({e})")
+                continue
             rep.conflicts.append((path, winner, copy))
         rep.phase("conflicts", t0)
 
@@ -75,6 +89,7 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
         rep.pushed_bytes = _bytes_of(local, [p for p in plan.push if p in local]) if dry else st["bytes"]
         rep.wire_sent += st["sent"]
         rep.wire_received += st["received"]
+        _skipped(rep, st, "push")
         rep.phase("push", t0)
 
         t0 = time.monotonic()
@@ -83,6 +98,7 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
         rep.pulled_bytes = _bytes_of(remote, [p for p in plan.pull if p in remote]) if dry else st["bytes"]
         rep.wire_sent += st["sent"]
         rep.wire_received += st["received"]
+        _skipped(rep, st, "pull")
         rep.phase("pull", t0)
 
         t0 = time.monotonic()
@@ -92,13 +108,24 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
         rep.phase("delete", t0)
 
         if not dry:
-            after = manifest.scan(local_root, cfg.excludes)
-            manifest.save(base_file(peer_name, state_dir), engine.merged_base(after),
+            after = manifest.scan(local_root, cfg.excludes, set())
+            new_base = engine.merged_base({k: v for k, v in after.items() if k not in hidden})
+            for h in hidden:  # keep what we knew about cloud-only files
+                if old_base and h in old_base:
+                    new_base[h] = old_base[h]
+            manifest.save(base_file(peer_name, state_dir), new_base,
                           meta={"peer": peer_name, "host": rep.host, "synced_at": datetime.now().isoformat()})
     except (TransportError, OSError) as e:
         rep.ok, rep.error = False, str(e)
     rep.finish()
     return rep
+
+
+def _skipped(rep: PeerReport, st: dict, phase: str) -> None:
+    if st.get("skipped"):
+        rep.skipped += st["skipped"]
+        for e in st.get("errors", []):
+            rep.warnings.append(f"{phase}: {e.strip()}")
 
 
 def _print_plan(plan: engine.Plan, log) -> None:
