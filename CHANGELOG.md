@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.7.5 — 2026-11-07
+
+### Fixed
+- `remote-install` no longer reports a successful install as rc=1 when `doctor`/`status`
+  find the cluster not fully healthy at that moment; that is printed as a warning. Only heal
+  and service install decide the result.
+- Every remote install transcript is saved to `~/Library/Logs/maccluster/remote-install-<peer>-<time>-rc<N>.log`
+  and a failure names its reason and the log path.
+
 ## 0.7.4 — 2026-11-07
 
 ### Fixed

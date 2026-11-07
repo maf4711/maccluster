@@ -133,8 +133,12 @@ if [[ "$HEAL_RC" == "1" ]]; then
 fi
 if [[ "$HEAL_RC" != "0" ]]; then RESULT=1; fi
 maccluster service install || RESULT=1
-maccluster doctor || RESULT=1
-maccluster status || RESULT=1
+# doctor/status describe the cluster, not this install: a peer that is briefly unreachable
+# must not turn a successful install into rc=1 (they are reported, not counted).
+DOCTOR_RC=0; maccluster doctor || DOCTOR_RC=$?
+STATUS_RC=0; maccluster status || STATUS_RC=$?
+[[ "$DOCTOR_RC$STATUS_RC" == "00" ]] || echo "warning: cluster not fully healthy after install (doctor rc=$DOCTOR_RC, status rc=$STATUS_RC)"
+[[ "$HEAL_RC" == "0" ]] || echo "error: heal failed rc=$HEAL_RC"
 echo "remote install complete on $(hostname), status=$RESULT"
 exit "$RESULT"
 """)

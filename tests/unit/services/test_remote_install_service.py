@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ipaddress import IPv4Address
+from pathlib import Path
 
 from maccluster.domain.enums import NodeRole
 from maccluster.domain.models import Node
@@ -62,3 +63,26 @@ def test_install_lock_waits_a_minute():
 
     assert "MACCLUSTER_INSTALL_LOCK_WAIT" in REMOTE_INSTALL_SH
     assert "'60'" in REMOTE_INSTALL_SH  # default: wait a minute for automation/other installs
+
+
+def test_cluster_health_does_not_fail_the_install():
+    from maccluster.services.remote_install_script import REMOTE_INSTALL_SH
+
+    assert "maccluster doctor || RESULT=1" not in REMOTE_INSTALL_SH
+    assert "maccluster status || RESULT=1" not in REMOTE_INSTALL_SH
+    assert "maccluster service install || RESULT=1" in REMOTE_INSTALL_SH
+
+
+def test_install_log_is_saved(tmp_path, monkeypatch):
+    from maccluster.services import remote_install_service as ris
+
+    monkeypatch.setattr(ris.Path, "home", classmethod(lambda cls: tmp_path))
+    path = ris._save_install_log("node-b", "==> args\nerror: heal failed rc=1", 1)
+    assert path.endswith("-rc1.log") and "node-b" in path
+    assert "heal failed" in Path(path).read_text()
+    assert (
+        ris._last_error_line(
+            "warning: cluster not fully healthy\nerror: heal failed rc=1\nstatus=1"
+        )
+        == "error: heal failed rc=1"
+    )

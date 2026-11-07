@@ -40,6 +40,20 @@ class RemoteInstallResult:
     log: str = ""
 
 
+def _save_install_log(peer_id: str, log: str, rc: int) -> str:
+    """Keep the full peer-side transcript; without it a failed install cannot be explained later."""
+    import time as _time
+
+    d = Path.home() / "Library" / "Logs" / "maccluster"
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+        f = d / f"remote-install-{peer_id}-{_time.strftime('%Y%m%dT%H%M%S')}-rc{rc}.log"
+        f.write_text(log + "\n", encoding="utf-8")
+        return str(f)
+    except OSError:
+        return "(not saved)"
+
+
 def _last_error_line(log: str) -> str:
     """The line that says why the peer script stopped (its errors are short echo lines)."""
     lines = [ln.strip() for ln in log.splitlines() if ln.strip()]
@@ -347,6 +361,7 @@ def remote_install(
                 timeout=timeout,
             )
             log = ((run.stdout or "") + "\n" + (run.stderr or "")).strip()
+            log_path = _save_install_log(peer_node.id, log, run.returncode)
             engine_note = "docsync wheel not found — peer keeps the ditto sync engine"
             if run.returncode == 0 and docsync_wheel is not None:
                 with docsync_wheel.open("rb") as fh:
@@ -387,7 +402,7 @@ def remote_install(
                 ok=run.returncode == 0,
                 message=f"ok; {engine_note}"
                 if run.returncode == 0
-                else f"remote install failed rc={run.returncode}: {_last_error_line(log)}",
+                else f"remote install failed rc={run.returncode}: {_last_error_line(log)} (log: {log_path})",
                 log=log[-4000:],
             )
         finally:
