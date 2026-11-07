@@ -14,6 +14,45 @@ from maccluster.services.sync_paths import contained_path
 _RUN_DIR_NAME = re.compile(r"^\d{8}T\d{6}Z$")
 
 DEFAULT_KEEP_RUNS = 5
+DEFAULT_MAX_AGE_DAYS = 14
+DEFAULT_MAX_BYTES = 20 * 1024**3  # 20 GiB across all runs; the newest run is always kept
+
+
+def _run_dirs(base: Path) -> list[Path]:
+    """SafetyNet run directories, newest first (names are UTC stamps)."""
+    return sorted(
+        (p for p in base.iterdir() if p.is_dir() and _RUN_DIR_NAME.match(p.name)),
+        key=lambda p: p.name,
+        reverse=True,
+    )
+
+
+def _dir_bytes(path: Path) -> int:
+    total = 0
+    for p in path.rglob("*"):
+        try:
+            if p.is_file() and not p.is_symlink():
+                total += p.stat().st_size
+        except OSError:
+            continue
+    return total
+
+
+def _run_age_days(path: Path, now: datetime) -> float:
+    try:
+        stamp = datetime.strptime(path.name, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
+    except ValueError:
+        return 0.0
+    return (now - stamp).total_seconds() / 86400.0
+
+
+def safetynet_usage(root: Path | None = None) -> tuple[int, int]:
+    """(run directories, bytes) under the SafetyNet root."""
+    base = root or default_safetynet_root()
+    if not base.is_dir():
+        return 0, 0
+    runs = _run_dirs(base)
+    return len(runs), sum(_dir_bytes(r) for r in runs)
 
 
 def new_run_dir(root: Path | None = None) -> Path:
@@ -24,9 +63,21 @@ def new_run_dir(root: Path | None = None) -> Path:
     return path
 
 
-def prune_old_runs(root: Path | None = None, *, keep: int = DEFAULT_KEEP_RUNS) -> int:
-    """Delete all but the `keep` most recent SafetyNet run directories.
+def prune_old_runs(
+    root: Path | None = None,
+    *,
+    keep: int = DEFAULT_KEEP_RUNS,
+    max_age_days: float | None = DEFAULT_MAX_AGE_DAYS,
+    max_bytes: int | None = DEFAULT_MAX_BYTES,
+    now: datetime | None = None,
+) -> int:
+    """Delete SafetyNet run directories beyond the retention policy.
 
+    Three limits, applied in this order, oldest runs first; the newest run is
+    never removed by the age or size limit:
+      1. count — keep at most `keep` runs,
+      2. age   — drop runs older than `max_age_days` (None disables),
+      3. size  — drop oldest runs until the total is <= `max_bytes` (None disables).
     Run directories are named by their UTC creation stamp (new_run_dir), so
     lexicographic order is chronological order. Anything not matching that
     stamp pattern is left alone. Returns the number of directories removed.
@@ -34,15 +85,31 @@ def prune_old_runs(root: Path | None = None, *, keep: int = DEFAULT_KEEP_RUNS) -
     base = root or default_safetynet_root()
     if not base.is_dir():
         return 0
-    runs = sorted(
-        (p for p in base.iterdir() if p.is_dir() and _RUN_DIR_NAME.match(p.name)),
-        key=lambda p: p.name,
-        reverse=True,
-    )
+    runs = _run_dirs(base)
     removed = 0
     for stale in runs[keep:]:
         shutil.rmtree(stale, ignore_errors=True)
         removed += 1
+    runs = runs[:keep]
+    now = now or datetime.now(UTC)
+    if max_age_days is not None:
+        kept = []
+        for i, run in enumerate(runs):
+            if i > 0 and _run_age_days(run, now) > max_age_days:
+                shutil.rmtree(run, ignore_errors=True)
+                removed += 1
+            else:
+                kept.append(run)
+        runs = kept
+    if max_bytes is not None and runs:
+        sizes = {r: _dir_bytes(r) for r in runs}
+        total = sum(sizes.values())
+        for run in reversed(runs):  # oldest first
+            if total <= max_bytes or run is runs[0]:
+                break
+            shutil.rmtree(run, ignore_errors=True)
+            total -= sizes[run]
+            removed += 1
     return removed
 
 

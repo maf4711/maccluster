@@ -684,6 +684,15 @@ def sync_home(
             outcome = sync_transport.NO_TRANSFER
             t_peer = time.monotonic()
             sn_count = 0
+            if not dry_run:
+                # Retention runs on EVERY real sync (push-only included), not just when
+                # pulling with SafetyNet: node-a accumulated 274 GB in 36 runs otherwise.
+                try:
+                    pruned = prune_old_runs()
+                    if pruned:
+                        prog.note(f"  SafetyNet: pruned {pruned} old run director{'y' if pruned == 1 else 'ies'}")
+                except Exception as exc:  # retention must never break a sync
+                    prog.note(f"  SafetyNet: prune skipped ({exc})")
             v_ok: bool | None = None
             v_checked = v_mis = 0
 
