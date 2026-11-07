@@ -22,7 +22,7 @@ def _lock(state_dir: Path, wait: float = 0.0):
     """Exclusive run lock. With wait > 0, poll for up to `wait` seconds before giving up (exit 3)."""
     fh = lock.acquire(state_dir, wait)
     if fh is None:
-        print("docsync: another run is in progress — exiting", file=sys.stderr)
+        print(f"docsync: {lock.busy_message(state_dir)} — exiting", file=sys.stderr)
         sys.exit(3)
     return fh
 

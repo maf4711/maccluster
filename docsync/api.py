@@ -120,7 +120,7 @@ def sync(req: SyncRequest) -> SyncResult:
     if req.lock:
         fh = lock.acquire(state_dir, req.lock_wait)
         if fh is None:
-            return SyncResult(RunReport(), error="another run is in progress")
+            return SyncResult(RunReport(), error=lock.busy_message(state_dir))
     try:
         roots = cfg.effective_roots()
 
