@@ -60,7 +60,7 @@ class Result:
         if self.tcp_up or self.tcp_down:
             rows.append(f"   TCP raw   ↑ {_rate(self.tcp_up)}   ↓ {_rate(self.tcp_down)}")
         if self.ssh_up or self.ssh_down:
-            rows.append(f"   ssh path  ↑ {_rate(self.ssh_up)}   ↓ {_rate(self.ssh_down)}   ← ceiling for rsync")
+            rows.append(f"   ssh path  ↑ {_rate(self.ssh_up)}   ↓ {_rate(self.ssh_down)}   ← one rsync stream (aes128-gcm, no mux)")
         for e in self.errors:
             rows.append(f"   ⚠ {e}")
         return "\n".join(rows)
@@ -158,7 +158,7 @@ def ssh_test(ssh_cmd: list[str], userhost: str, secs: float) -> tuple[float, flo
 
 
 def run(peer_name: str, host: str, via: str, userhost: str, ssh_cmd: list[str], secs: float,
-        ping_ms: float | None, skip_tcp: bool = False, skip_ssh: bool = False) -> Result:
+        ping_ms: float | None, skip_tcp: bool = False, skip_ssh: bool = False, bulk_ssh_cmd: list[str] | None = None) -> Result:
     res = Result(peer=peer_name, host=host, via=via, ping_ms=ping_ms)
     if not skip_tcp:
         try:
@@ -167,7 +167,7 @@ def run(peer_name: str, host: str, via: str, userhost: str, ssh_cmd: list[str], 
             res.errors.append(f"tcp: {e}")
     if not skip_ssh:
         try:
-            res.ssh_up, res.ssh_down = ssh_test(ssh_cmd, userhost, secs)
+            res.ssh_up, res.ssh_down = ssh_test(bulk_ssh_cmd or ssh_cmd, userhost, secs)
         except Exception as e:  # noqa: BLE001
             res.errors.append(f"ssh: {e}")
     return res

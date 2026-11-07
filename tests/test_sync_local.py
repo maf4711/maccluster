@@ -255,3 +255,45 @@ class ReliabilityTests(unittest.TestCase):
             holder.close()  # releases the lock
             fh = cli._lock(state, wait=1)
             fh.close()
+
+
+class SharedScanTests(unittest.TestCase):
+    def test_run_many_scans_local_once_and_streams_large_transfers(self):
+        from docsync import manifest, session, transport
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            a, b, c = base / "A", base / "B", base / "C"
+            for x in (a, b, c):
+                x.mkdir()
+            now = int(time.time()) - 100
+            for i in range(20):  # 20 files × 4 MB = 80 MB > STREAM_MIN_BYTES → streams kick in
+                (b / f"big{i}.bin").write_bytes(os.urandom(4 << 20))
+                os.utime(b / f"big{i}.bin", (now, now))
+            touch(a / "from-a.txt", "a", now)
+            calls = {"n": 0}
+            real = manifest.scan
+            def counting(*x, **k):
+                calls["n"] += 1
+                return real(*x, **k)
+            manifest.scan = counting
+            try:
+                cfg = Config(path=str(a), trash=False, transfer_streams=4)
+                reps = session.run_many(cfg, [("b", LocalTransport(b)), ("c", LocalTransport(c))], parallel=True,
+                                        state_dir=base / "state", log=lambda *x: None)
+            finally:
+                manifest.scan = real
+            self.assertTrue(all(r.ok for r in reps), [r.error for r in reps])
+            self.assertEqual(calls["n"], 1)  # one shared local walk, no post-apply rescans
+            rb = [r for r in reps if r.peer == "b"][0]
+            self.assertEqual(rb.pulled_files, 20)
+            self.assertEqual(rb.streams, 4)
+            self.assertTrue(all((a / f"big{i}.bin").exists() for i in range(20)))
+            # base of peer b must know the pulled files (touched-path refresh), and from-a.txt
+            mb = manifest.load(base / "state" / "base-b.json")
+            self.assertIn("big0.bin", mb)
+            self.assertIn("from-a.txt", mb)
+            # peer c's base must NOT contain big*.bin pulled from b (they still have to flow to c next run)
+            mc = manifest.load(base / "state" / "base-c.json")
+            self.assertNotIn("big0.bin", mc)
+            reps2 = session.run_many(cfg, [("c", LocalTransport(c))], parallel=False, state_dir=base / "state", log=lambda *x: None)
+            self.assertEqual(reps2[0].pushed_files, 20)

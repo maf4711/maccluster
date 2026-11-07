@@ -200,7 +200,7 @@ def cmd_speedtest(a) -> int:
             print(f"── {p.name}  {host} via {via}  … testing {a.seconds:.0f}s per direction", flush=True)
             t = RemoteTransport(p.userhost(ip), p.path)
             r = speedtest.run(p.name, host, via, p.userhost(ip), t.ssh_cmd, a.seconds, ping_ms,
-                              skip_tcp=a.ssh_only, skip_ssh=a.tcp_only)
+                              skip_tcp=a.ssh_only, skip_ssh=a.tcp_only, bulk_ssh_cmd=t.bulk_ssh_cmd)
             results.append(r)
             print(r.render())
     print()

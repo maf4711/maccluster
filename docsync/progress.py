@@ -24,11 +24,26 @@ def parse_progress(line: str) -> dict | None:
     }
 
 
+def _sum_speed(speeds: list[str]) -> str:
+    """'12.34MB/s' + '1.00GB/s' -> '1.01GB/s' (rsync units)."""
+    unit = {"B/s": 1, "kB/s": 1e3, "MB/s": 1e6, "GB/s": 1e9}
+    total = 0.0
+    for sp in speeds:
+        m = re.match(r"([\d.]+)(kB/s|MB/s|GB/s|B/s)", sp or "")
+        if m:
+            total += float(m.group(1)) * unit[m.group(2)]
+    if total >= 1e9:
+        return f"{total / 1e9:.2f}GB/s"
+    if total >= 1e6:
+        return f"{total / 1e6:.2f}MB/s"
+    return f"{total / 1e3:.2f}kB/s" if total else ""
+
+
 class Bar:
     """One line, redrawn with \\r. Silent unless stream is a TTY."""
 
-    def __init__(self, label: str, nfiles: int, total_bytes: int, stream=None, enabled: bool | None = None):
-        self.label, self.nfiles, self.total_bytes = label, nfiles, total_bytes
+    def __init__(self, label: str, nfiles: int, total_bytes: int, stream=None, enabled: bool | None = None, multi: bool = False):
+        self.label, self.nfiles, self.total_bytes, self.multi = label, nfiles, total_bytes, multi
         self.stream = stream or sys.stderr
         self.enabled = self.stream.isatty() if enabled is None else enabled
         self.last_draw = 0.0
@@ -37,10 +52,22 @@ class Bar:
         if self.enabled:
             self.draw({"bytes": 0, "pct": 0, "speed": "", "eta": "", "xfr": 0, "left": nfiles, "total": nfiles}, force=True)
 
-    def feed(self, line: str) -> None:
+    def feed(self, line: str, stream: int = 0) -> None:
+        """Progress line from one rsync stream; totals are aggregated across streams."""
         p = parse_progress(line)
-        if p:
+        if not p:
+            return
+        if not hasattr(self, "_streams"):
+            self._streams = {}
+        self._streams[stream] = p
+        if len(self._streams) == 1 and stream == 0 and not self.multi:
             self.draw(p)
+            return
+        agg = {"bytes": sum(x["bytes"] for x in self._streams.values()), "speed": "", "eta": p.get("eta", ""),
+               "xfr": sum((x.get("xfr") or 0) for x in self._streams.values()), "left": None, "total": None}
+        agg["pct"] = int(100 * agg["bytes"] / self.total_bytes) if self.total_bytes else p["pct"]
+        agg["speed"] = _sum_speed([x.get("speed", "") for x in self._streams.values()])
+        self.draw(agg)
 
     def draw(self, p: dict, force: bool = False) -> None:
         if not self.enabled:
