@@ -30,12 +30,12 @@ class DeadlineTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def spawn(self, args, hang=""):
+    def spawn(self, args, hang="", **kw):
         import subprocess, sys
         env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parent.parent), DOCSYNC_TEST_HANG=hang,
                    DOCSYNC_CONFIG_DIR=str(self.cfgdir), DOCSYNC_STATE_DIR=str(self.state))
         return subprocess.Popen([sys.executable, "-c", WRAP, *args], env=env, text=True,
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kw)
 
     def history(self):
         f = self.state / "history.log"
@@ -71,6 +71,11 @@ class DeadlineTests(unittest.TestCase):
         _, err = p.communicate(timeout=20)
         self.assertEqual(p.returncode, 2)
         self.assertIn("--max-runtime must be >= 0", err)
+        for bad in ("inf", "nan", "1e20"):
+            p = self.spawn(["sync", "--max-runtime", bad])
+            _, err = p.communicate(timeout=20)
+            self.assertEqual(p.returncode, 2, bad)
+            self.assertIn("--max-runtime must be a finite number between 0 and 10000000", err)
         self.assertEqual(cli.build_parser().parse_args(["sync"]).max_runtime, 1800)
         seen, orig = [], cli.cmd_sync
         cli.cmd_sync = lambda a, dry: seen.append(watchdog.active()) or 0
@@ -109,3 +114,22 @@ class DeadlineTests(unittest.TestCase):
         self.assertFalse(marker.exists())
         self.assertIn("deadline of 2 s exceeded", self.history())
         self.assertTrue(list(self.state.glob("base-*")), "the second run should complete")
+
+    def test_watch_ctrl_c_exits_130_quietly(self):
+        import signal
+        from docsync import watchdog
+        p = self.spawn(["watch", "--interval", "1", "--max-runtime", "0"], hang="1", start_new_session=True)
+        t0 = time.monotonic()
+        try:  # wait for the forked run and its hung listing child, then Ctrl-C the process group
+            while len(watchdog.descendants(p.pid)) < 2 and time.monotonic() - t0 < 15:
+                time.sleep(0.1)
+            self.assertGreaterEqual(len(watchdog.descendants(p.pid)), 2)
+            os.killpg(p.pid, signal.SIGINT)
+            _, err = p.communicate(timeout=10)
+        finally:
+            if p.poll() is None:
+                os.killpg(p.pid, signal.SIGKILL)
+                p.communicate()
+        self.assertEqual(p.returncode, 130, err)
+        self.assertNotIn("unexpected error", self.history())
+        self.assertNotIn("Traceback", err)

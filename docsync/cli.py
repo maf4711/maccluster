@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
+import signal
 import sys
 import time
 from pathlib import Path
@@ -123,13 +125,19 @@ def cmd_sync(a, dry: bool) -> int:
     return result.exit_code
 
 
+MAX_RUNTIME_LIMIT = 10_000_000  # seconds (~115 days)
+
+
 def _max_runtime(text: str) -> float:
     try:
         value = float(text)
     except ValueError:
         raise argparse.ArgumentTypeError(f"invalid number: {text!r}") from None
-    if value < 0 or value != value:
+    if value < 0:
         raise argparse.ArgumentTypeError("--max-runtime must be >= 0")
+    if not math.isfinite(value) or value > MAX_RUNTIME_LIMIT:
+        # inf/nan/1e20 would overflow the watchdog's wait and silently leave the run unbounded
+        raise argparse.ArgumentTypeError(f"--max-runtime must be a finite number between 0 and {MAX_RUNTIME_LIMIT}")
     return value
 
 
@@ -234,13 +242,26 @@ def _watch_run(a) -> int:
             rc = _with_deadline(a, lambda: cmd_sync(a, dry=False))
         except SystemExit as e:
             rc = e.code if isinstance(e.code, int) else (0 if e.code is None else 1)
+        except KeyboardInterrupt:
+            rc = 130  # Ctrl-C: end quietly, not an error worth a history entry
         except BaseException as e:  # noqa: BLE001 — keep watching, leave a trace
             _append_text(f"watch: unexpected error: {e!r}")
         finally:
-            sys.stdout.flush()
-            sys.stderr.flush()
-            os._exit(rc)
-    return os.waitstatus_to_exitcode(os.waitpid(pid, 0)[1])
+            try:
+                sys.stdout.flush()
+                sys.stderr.flush()
+            finally:
+                os._exit(rc)
+    try:
+        return os.waitstatus_to_exitcode(os.waitpid(pid, 0)[1])
+    except KeyboardInterrupt:
+        # Ctrl-C reaches the whole process group; also forward it in case only we got it, then reap
+        try:
+            os.kill(pid, signal.SIGINT)
+            os.waitpid(pid, 0)
+        except (OSError, KeyboardInterrupt):
+            pass
+        raise
 
 
 def cmd_watch(a) -> int:
@@ -249,6 +270,8 @@ def cmd_watch(a) -> int:
     delay = base
     while True:
         rc = _watch_run(a)
+        if rc == 130:
+            raise KeyboardInterrupt  # the run was interrupted: stop watching (main() exits 130)
         delay = base if rc == 0 else min(delay * 2, base * 6)
         if rc != 0:
             print(f"watch: last run rc={rc}, next try in {delay // 60} min", file=sys.stderr)
