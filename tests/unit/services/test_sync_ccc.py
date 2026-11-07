@@ -63,7 +63,8 @@ def test_prune_old_runs_keeps_only_the_newest(tmp_path: Path):
     for name in names:
         (sn_root / name).mkdir()
 
-    removed = prune_old_runs(sn_root, keep=5)
+    # count rule in isolation: the age/size limits (added 2026-11) are disabled here
+    removed = prune_old_runs(sn_root, keep=5, max_age_days=None, max_bytes=None)
 
     assert removed == 2
     remaining = sorted(p.name for p in sn_root.iterdir())

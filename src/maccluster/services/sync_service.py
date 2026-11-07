@@ -690,7 +690,9 @@ def sync_home(
                 try:
                     pruned = prune_old_runs()
                     if pruned:
-                        prog.note(f"  SafetyNet: pruned {pruned} old run director{'y' if pruned == 1 else 'ies'}")
+                        prog.note(
+                            f"  SafetyNet: pruned {pruned} old run director{'y' if pruned == 1 else 'ies'}"
+                        )
                 except Exception as exc:  # retention must never break a sync
                     prog.note(f"  SafetyNet: prune skipped ({exc})")
             v_ok: bool | None = None

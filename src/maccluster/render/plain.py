@@ -148,11 +148,20 @@ def render_status(snap: HealthSnapshot) -> str:
         stale = "stale" if hb.stale else "fresh"
         lines.append(f"heal: heartbeat={stale} — {sanitize(hb.detail)}")
     try:
-        from maccluster.services.sync_safetynet import DEFAULT_KEEP_RUNS, DEFAULT_MAX_AGE_DAYS, DEFAULT_MAX_BYTES, safetynet_usage
+        from maccluster.services.sync_safetynet import (
+            DEFAULT_KEEP_RUNS,
+            DEFAULT_MAX_AGE_DAYS,
+            DEFAULT_MAX_BYTES,
+            safetynet_usage,
+        )
 
         n_runs, n_bytes = safetynet_usage()
         if n_runs:
-            flag = "  ⚠ over policy" if (n_runs > DEFAULT_KEEP_RUNS or n_bytes > DEFAULT_MAX_BYTES) else ""
+            flag = (
+                "  ⚠ over policy"
+                if (n_runs > DEFAULT_KEEP_RUNS or n_bytes > DEFAULT_MAX_BYTES)
+                else ""
+            )
             lines.append(
                 f"safetynet: {n_runs} runs, {n_bytes / 1024**3:.1f} GB in ~/.maccluster-safetynet "
                 f"(policy: keep {DEFAULT_KEEP_RUNS}, {DEFAULT_MAX_AGE_DAYS} d, {DEFAULT_MAX_BYTES // 1024**3} GB){flag}"
