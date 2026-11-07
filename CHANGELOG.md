@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.7.2 — 2026-11-07
+
+### Fixed
+- docsync engine leaves git working trees to git: `sync dev` uses ditto in `auto`, and
+  `sync home` skips the `Developer/` root (a first three-way sync planned 8,459 conflict
+  copies inside repositories).
+- docsync engine never syncs `*.app` / `*.xcarchive` (a first sync planned ~297,000 files
+  from three Xcode.app copies in Downloads).
+- SafetyNet usage counts hardlinked files once (node-a showed 1.6 TB for 274 GB on disk).
+
 ## 0.7.1 — 2026-11-07
 
 ### Fixed
