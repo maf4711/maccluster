@@ -153,6 +153,16 @@ class ApiSyncTests(unittest.TestCase):
 
 
 class ApiResolveTests(unittest.TestCase):
+    def test_local_directory_peer_is_not_pinged(self):
+        with tempfile.TemporaryDirectory() as d:
+            orig = discover.ping
+            discover.ping = lambda *a, **k: self.fail("a directory peer must not be pinged")
+            try:
+                self.assertEqual(api.resolve_peer([d]), (d, "local directory"))
+                self.assertEqual(api.resolve_peer([d + "/missing"]), (None, ""))
+            finally:
+                discover.ping = orig
+
     def test_resolve_peer_thunderbolt_first(self):
         orig = (discover.order_hosts, discover.ping)
         discover.order_hosts = lambda hosts: [("10.42.0.2", "Thunderbolt"), ("mini.local", "LAN")]

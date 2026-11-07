@@ -22,7 +22,14 @@ def transport_for(peer: Peer, host: str, path: str | None = None, bind: str | No
 def resolve(peer: Peer, log) -> tuple[str | None, str]:
     """Pick the first reachable host: Thunderbolt first (like maccluster), then LAN, then Bonjour,
     then unconfigured Thunderbolt neighbours from the ARP table. Returns (host, transport)."""
+    for h in peer.hosts:  # a directory on this Mac (mounted volume, local mirror) is never pinged
+        if h.startswith("/") and Path(h).expanduser().is_dir():
+            log(f"   {h:<28} local directory")
+            return h, "local directory"
     for h, via in discover.order_hosts(peer.hosts):
+        if h.startswith("/"):
+            log(f"   {h:<28} not a directory")
+            continue
         if via.endswith("(link down)"):
             log(f"   {h:<28} skipped — {via}")
             continue
