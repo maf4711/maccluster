@@ -11,7 +11,7 @@ from pathlib import Path
 
 from docsync.config import STATE_DIR
 
-SWIFT_SRC = Path(__file__).resolve().parent.parent / "bin" / "docsync-advisor.swift"
+SWIFT_SRC = Path(__file__).resolve().parent / "resources" / "docsync-advisor.swift"
 HELPER = STATE_DIR / "bin" / "docsync-advisor"
 
 

@@ -3,36 +3,28 @@
 from __future__ import annotations
 
 import argparse
-import fcntl
+import json
 import os
 import sys
 import time
 from pathlib import Path
 
-from docsync import __version__, advisor, agent, cli_tools, macos, thunderbolt
+from docsync import __version__, advisor, agent, api, cli_tools, lock, macos, thunderbolt
 from docsync.config import (CONFIG_FILE, MACCLUSTER_CONFIG, STATE_DIR, Config, Peer, load_config,
                             local_hostnames, peers_from_maccluster, save_config)
-from docsync.hosts import Unreachable, resolve, resolve_peer, select_peers, transport_for
+from docsync.hosts import resolve, resolve_peer, select_peers
 from docsync.manifest import scan
 from docsync.report import RunReport, fmt_bytes
-from docsync.session import base_file, run_roots
+from docsync.session import base_file
 
 
 def _lock(state_dir: Path, wait: float = 0.0):
     """Exclusive run lock. With wait > 0, poll for up to `wait` seconds before giving up (exit 3)."""
-    state_dir.mkdir(parents=True, exist_ok=True)
-    fh = open(state_dir / "run.lock", "w")
-    deadline = time.monotonic() + wait
-    while True:
-        try:
-            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return fh
-        except OSError:
-            if time.monotonic() >= deadline:
-                fh.close()
-                print("docsync: another run is in progress — exiting", file=sys.stderr)
-                sys.exit(3)
-            time.sleep(0.5)
+    fh = lock.acquire(state_dir, wait)
+    if fh is None:
+        print("docsync: another run is in progress — exiting", file=sys.stderr)
+        sys.exit(3)
+    return fh
 
 
 # ── commands ────────────────────────────────────────────────────────────────
@@ -94,40 +86,41 @@ def cmd_sync(a, dry: bool) -> int:
     peers = select_peers(cfg, a.peers, a.all)
     roots = _roots(cfg, getattr(a, "root", None))
     log = (lambda *x: None) if a.quiet else print
-    lock = _lock(STATE_DIR, wait=getattr(a, "wait", 0) or 0)
-    run = RunReport()
+    fh = _lock(STATE_DIR, wait=getattr(a, "wait", 0) or 0)
     tb_speed = thunderbolt.state().best_speed if peers else 0
     try:
-        hosts: dict[str, tuple[str | None, str]] = {}
+        specs = []
         for p in peers:  # resolve hosts once per run (quick, sequential, readable output)
             log(f"── {p.name}")
             host, via = resolve(p, log)
             if host and via == "Thunderbolt" and tb_speed:
                 via = f"Thunderbolt {tb_speed} Gb/s"
-            hosts[p.name] = (host, via)
-
-        def jobs_for_root(root):
-            return [(p.name, Unreachable(p) if hosts[p.name][0] is None
-                     else transport_for(p, hosts[p.name][0], cfg.peer_path(p, root))) for p in peers]
-
-        parallel = not a.sequential and len(peers) > 1
-        if parallel:
+            specs.append(api.PeerSpec(p.name, host, p.user, via=via, hosts_tried=list(p.hosts),
+                                      paths={r.name: cfg.peer_path(p, r) for r in roots}))
+        if not a.sequential and len(peers) > 1:
             log(f"syncing {len(peers)} peers in parallel, {len(roots)} root{'s' if len(roots) != 1 else ''}")
-        reps = run_roots(cfg, roots, jobs_for_root, parallel=parallel, max_workers=a.jobs, log=log, dry=dry,
-                         verbose=a.verbose, progress=not a.quiet and sys.stderr.isatty(), force_deletes=a.force_deletes)
-        for rep in reps:
-            rep.via = hosts.get(rep.peer, (None, ""))[1]
-            run.peers.append(rep)
+        result = api.sync(api.SyncRequest(
+            roots=[api.RootSpec(r.name, r.path, r.peer_path, cfg.for_root(r).excludes) for r in roots], peers=specs,
+            conflict_policy=cfg.conflict_policy, max_delete=cfg.max_delete, force_deletes=a.force_deletes,
+            transfer_streams=cfg.transfer_streams, case_insensitive=cfg.case_insensitive, trash=cfg.trash,
+            excludes=cfg.excludes, safetynet=cfg.safetynet, safetynet_keep=cfg.safetynet_keep,
+            safetynet_max_age_days=cfg.safetynet_max_age_days, safetynet_max_gb=cfg.safetynet_max_gb,
+            dry_run=dry, parallel=not a.sequential, max_workers=a.jobs, verbose=a.verbose,
+            terminal_progress=not a.quiet and sys.stderr.isatty(), log=log, state_dir=STATE_DIR,
+            lock=False))  # the CLI already holds the lock (it supports --wait and prints the exit-3 message)
+        run = result.report
     finally:
-        lock.close()
+        fh.close()
     print()
     print(run.render())
+    if getattr(a, "json", False):
+        print(json.dumps(result.to_dict(), ensure_ascii=False))
     _append_log(run)
     if not dry and not getattr(a, "no_notify", False):
         note = run.notable()
         if note:
             macos.notify("docsync", note, subtitle="sync needs a look — docsync history")
-    return 0 if run.ok else 2
+    return result.exit_code
 
 
 def _append_log(run: RunReport) -> None:
@@ -255,12 +248,13 @@ def build_parser() -> argparse.ArgumentParser:
         s.add_argument("--from-agent", action="store_true", help=argparse.SUPPRESS)
         s.add_argument("-j", "--jobs", type=int, default=0, help="max parallel peers (default: all)")
         s.add_argument("--root", action="append", metavar="NAME", help="only this root (repeatable; default: all roots)")
+        s.add_argument("--json", action="store_true", help="also print the result as one JSON object (last line)")
         s.set_defaults(fn=lambda a, d=dry: cmd_sync(a, dry=d))
 
     s = sub.add_parser("watch", help="sync all peers every N minutes (foreground)")
     s.add_argument("--interval", type=int, default=10, metavar="MIN")
     s.set_defaults(fn=cmd_watch, peers=[], all=True, verbose=False, quiet=False, force_deletes=False,
-                   sequential=False, jobs=0, wait=0, no_notify=False, from_agent=False, root=None)
+                   sequential=False, jobs=0, wait=0, no_notify=False, from_agent=False, root=None, json=False)
 
     s = sub.add_parser("advise", help="on-device Apple Foundation Model: what to do about conflicts, held-back deletes, peers")
     s.add_argument("peers", nargs="*", help="limit the report to these peers")
