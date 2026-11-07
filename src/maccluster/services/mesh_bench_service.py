@@ -14,6 +14,7 @@ from maccluster.domain.enums import BenchQuality
 from maccluster.domain.models import BenchResult, MeshBenchReport, MeshPathResult, Node
 from maccluster.errors import CliError
 from maccluster.health.bench_quality import assess_bench_quality
+from maccluster.services.bench_history import record_samples, samples_from_mesh
 from maccluster.services.busy_guard import read_busy_state
 from maccluster.services.config_service import load_and_bind_self
 from maccluster.services.fleet_exec import directed_pairs, iter_peers, run_on_peer
@@ -67,7 +68,9 @@ def run_mesh_bench(
     force: bool = False,
     env: Mapping[str, str] | None = None,
     busy_path: Path | None = None,
+    history_path: Path | None = None,
 ) -> MeshBenchReport:
+    """Full-mesh iperf3; every ok path is appended to the bench history (tb rung)."""
     if ctx.bench is None or not ctx.bench.available():
         raise CliError(
             "iperf3 not found — install via Homebrew: brew install iperf3",
@@ -105,7 +108,7 @@ def run_mesh_bench(
     ]
     ok_n = sum(1 for p in paths if p.ok)
     note = "" if orchestrated else " orchestrate skipped: no ssh"
-    return MeshBenchReport(
+    report = MeshBenchReport(
         bind_mode="tb-bridge",
         duration_s=duration,
         orchestrated=orchestrated,
@@ -113,6 +116,8 @@ def run_mesh_bench(
         paths=tuple(paths),
         summary=f"{ok_n}/{len(paths)} ok{note}",
     )
+    record_samples(samples_from_mesh(report, self_id=self_node.id), path=history_path)
+    return report
 
 
 def _can_orchestrate(ctx: AppContext, *, self_ip: str, sample: Node) -> bool:

@@ -1,5 +1,81 @@
 # Changelog
 
+## Unreleased
+
+## 0.5.0 — 2026-08-30
+
+### Added
+- Per-peer Thunderbolt link rate in `status` / `speedtest` (each cable's own
+  negotiated speed, not a single cluster-wide number).
+- `maccluster bench --compare` and doctor fold `arep`'s bench-history.jsonl.
+- Doctor warns when a fleet peer can doze mid-sync (`pmset` sleep / Power Nap)
+  and that warning degrades the fleet exit code.
+
+### Fixed
+- Local inventory lists directories through one pooled helper (~51× on a
+  real home tree); a partial walk cannot drive a newest-wins transfer.
+- Progress percent is monotonic; planned totals reset the counters they
+  replace; `--allow-partial-inventory` is reachable from pull/push too.
+- Dated backup-dump folders stay out of home sync; SafetyNet run dirs prune
+  to the last 5.
+
+## 0.4.0 — 2026-08-30
+
+### Added — sync transport ladder `rdma` → `tb` → `wifi`
+
+Inventory and planning are unchanged; the transfer stage of every sync
+(`sync home`, `sync dev`, `pull`, `push`, `delta --apply`) now walks a per-peer
+ladder and steps down one rung on failure:
+
+| Prio | Rung | Data path | Available when |
+|---|---|---|---|
+| 1 | `rdma` | `arep xfer push\|pull` — autoreplikator moves the planned files over RDMA on the Thunderbolt link device (`services/sync_rdma.py`) | `arep status --json`: peer `trusted` + `rdma` in `transportCapable` |
+| 2 | `tb` | existing ssh/scp/ditto, bound to the TB Self-IP | peer IP answers on `bridge0` |
+| 3 | `wifi` | existing ssh/scp/ditto via `user@host.local`, no bind | `*.local` hostname in `cluster.toml` |
+
+- A failing rung (exception or rc ≠ 0) logs exactly
+  `transport downgrade <from>→<to>: <reason>`; after a partial run both sides
+  are re-stat'ed for the planned files (`services/sync_replan.py`) so the next
+  rung only carries what is still missing. Last rung failing keeps the old
+  failure shape; no rung available → `no transport available: <reasons>`,
+  rc −1. `--dry-run` never spawns arep.
+- **`arep xfer` contract**: manifest as JSON-Lines `{"rel","size","mtimeNs"}` on
+  stdin, progress as JSON-Lines `{"event":"progress","done","total"}` /
+  `{"event":"done","bytes"}` / `{"event":"error","reason"}` on stdout, exit 0
+  ok / non-zero abort. `arep` joins the subprocess allowlist (resolved from
+  `~/.local/bin` too); an `error` event, non-zero exit, `--timeout` kill
+  (rc 124) or a start failure all downgrade.
+- **`cluster.toml`**: optional `transport_priority = ["rdma", "tb", "wifi"]`
+  (default). Validated: non-empty, known names only, no duplicates; dumped by
+  `config show` only when non-default.
+- **CLI**: `--transport rdma|tb|wifi` on `sync home` / `sync dev` forces one
+  rung — no probing of the others, no downgrade; an unavailable rung fails the
+  peer with the probe reason. On `sync dev` it is exclusive with
+  `--no-wifi` / `--wifi-only` and disables the Wi-Fi top-N pass.
+- **Output**: peer rows show `transport=<rung>` and the downgrade lines;
+  progress phase reads `transfer transport=rdma`; `--json` adds
+  `peers[].transport`, `peers[].downgrades`, `transport_priority`.
+- **`doctor`**: new finding `rdma_no_device_to_peer` (WARN, advisory — exit
+  code unchanged) when `rdma_ctl` reports RDMA enabled but `arep status --json`
+  lists no rdma-capable peer; `rdma_device_to_peer` INFO otherwise. arep is only
+  queried when RDMA is enabled. Nothing switches `rdma_ctl` (Recovery-OS only).
+
+Spec: autoreplikator `docs/superpowers/specs/2026-08-29-rdma-transport-design.md` §5.
+Docs: `docs/SYNC-HOME.md` → "Transport ladder".
+
+## 0.3.2 — 2026-08-29
+
+### Fixed — topo matches peers via Thunderbolt domain UUID
+- system_profiler names a TB peer only by model code ("Mac16,11"), and the
+  parser even kept the local bus Device Name ("MacBook Pro") as peer — with
+  two identical Mac minis the topology could never tell which cable goes to
+  which node (`matched=-`, `unmatched peers`). The parser now reads the
+  nested attached-device block (real peer model + the peer port's own
+  Domain UUID → `ThunderboltPort.peer_domain_uuid`), and matching prefers
+  that UUID against a new optional per-node `tb_domain_uuids` list in
+  cluster.toml, falling back to hostname matching. `topo` now renders
+  `peer=Mac16,11 matched=node-a` per link.
+
 ## 0.3.1 — 2026-08-28
 
 ### Added — fleet commands, host doctor snapshot, mesh bench, TB-gateway guard
@@ -11,6 +87,9 @@
   `maccluster heal` on each peer over the TB bridge; missing remote CLI or
   required sudo is reported per-hop instead of failing the whole run
 - **`bench --mesh`**: sequential directed full-mesh iperf3 across all nodes
+- **`up` shows the TB link count**: `interface=bridge0 ip=… tb_links=2` — the
+  bridge is one interface, but you can now see how many cables actually carry
+  a live Mac↔Mac link (`MutateResult.tb_links`, also in `--json`)
 - **Thunderbolt Bridge must not kill Wi-Fi**: a `Router` left on the TB Bridge
   service made macOS prefer it as the default gateway and dropped internet;
   `up` / `heal` now strip that Router and reorder services Wi-Fi-first,
@@ -371,3 +450,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Optional `iperf3` bandwidth bench and optional SSH peer probes.
 - Plaintext symbols + optional rich monitor; `--json` with `schema_version`.
 - Exit codes: 0 ok, 1 error, 2 usage, 3 degraded.
+# Unreleased
+
+- Add unattended cluster maintenance, local updates, optional persisted schedules,
+  structured receipts, and opt-in verified home sync.
+- Verify and reuse one wheel across peers; preserve existing peer configuration
+  during automation, honor remote `--no-config`, and make remote dry runs inert.
+- Report LaunchAgent activation failures and reuse unchanged loaded services.
+- Use kernel-backed mutation locks, enforce transfer deadlines across child
+  processes, validate heartbeat data, and write heartbeats atomically.
+- Keep SafetyNet backups independent of overwritten files, reject unsafe sync
+  paths, and include file/directory symlinks consistently in inventory.
+- Isolate test home-directory state and add failure-path regression coverage.

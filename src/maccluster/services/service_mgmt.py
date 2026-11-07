@@ -17,6 +17,12 @@ from maccluster.constants import (
 )
 from maccluster.domain.models import ServiceState
 from maccluster.errors import CliError
+from maccluster.services.automation_schedule import (  # noqa: F401 — public service API
+    automation_service_status,
+    install_automation_service,
+    load_automation_settings,
+    uninstall_automation_service,
+)
 from maccluster.services.config_service import load_config
 
 
@@ -68,7 +74,9 @@ def install_service(ctx: AppContext) -> ServiceState:
         )
         detail = f"{state.detail}; watchdog={wd.detail}"
     except Exception as exc:
-        detail = f"{state.detail}; watchdog_install_failed={exc}"
+        raise CliError(
+            f"heal installed, but watchdog installation failed: {exc}", exit_code=1
+        ) from exc
     return ServiceState(
         label=state.label,
         installed=state.installed,

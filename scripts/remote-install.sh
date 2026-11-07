@@ -28,6 +28,9 @@ fi
 
 # Strip user@ for policy check; maccluster CLI takes node id or IP
 TARGET_IP="${PEER##*@}"
+if [[ "${PEER}" == *@* ]]; then
+  EXTRA=(--user "${PEER%@*}" ${EXTRA[@]:+"${EXTRA[@]}"})
+fi
 if [[ "${TARGET_IP}" == node-* ]]; then
   :
 elif [[ "${TARGET_IP}" =~ ^10\.42\.0\.[0-9]+$ ]]; then
@@ -50,5 +53,6 @@ fi
 
 # Fallback: python from checkout
 export MACCLUSTER_SRC="${ROOT}"
+export PYTHONPATH="${ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}"
 cd "${ROOT}"
 python3 -m maccluster remote-install "${TARGET_IP}" ${EXTRA[@]:+"${EXTRA[@]}"}

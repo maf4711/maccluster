@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import math
 import time
 from pathlib import Path
 
+from maccluster.adapters.filesystem import FileSystem
 from maccluster.config.paths import default_heal_heartbeat_path
 from maccluster.constants import DEFAULT_HEAL_INTERVAL_S, HEAL_HEARTBEAT_STALE_FACTOR
 from maccluster.domain.models import HealHeartbeat
@@ -30,7 +32,7 @@ def write_heartbeat(
         "exit_code": int(exit_code),
         "interval_seconds": float(interval_seconds or DEFAULT_HEAL_INTERVAL_S),
     }
-    p.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    FileSystem().write_text_atomic(p, json.dumps(payload, allow_nan=False) + "\n")
     return p
 
 
@@ -52,6 +54,8 @@ def read_heartbeat(
         )
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("expected a JSON object")
         ts = float(data.get("ts", 0))
         last_ok = bool(data.get("ok")) if "ok" in data else None
         last_exit = data.get("exit_code")
@@ -61,7 +65,9 @@ def read_heartbeat(
             if interval_seconds is not None
             else data.get("interval_seconds") or DEFAULT_HEAL_INTERVAL_S
         )
-    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        if not math.isfinite(ts) or not math.isfinite(interval) or interval <= 0:
+            raise ValueError("timestamp and interval must be finite; interval must be positive")
+    except (OSError, ValueError, TypeError, OverflowError) as exc:
         return HealHeartbeat(
             path=str(p),
             age_seconds=None,

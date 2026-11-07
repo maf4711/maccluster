@@ -7,6 +7,7 @@ from pathlib import Path
 from maccluster.doctor_logic.host_parse import (
     parse_df_free_gb,
     parse_pmset_cpu_limit,
+    parse_rdma_enabled,
     parse_sntp_offset_s,
     parse_uptime_load_1m,
     parse_vm_stat_ram_gb,
@@ -99,3 +100,67 @@ def test_snapshot_from_raw_error_when_empty():
     assert snap.node_id == "self"
     assert snap.ram_used_gb is None
     assert snap.error is None
+
+
+def test_parse_rdma_enabled_disabled_and_ambiguous():
+    assert parse_rdma_enabled("RDMA: enabled\n") is True
+    assert parse_rdma_enabled("RDMA: disabled\n") is False
+    assert parse_rdma_enabled("enabled") is True
+    assert parse_rdma_enabled("disabled") is False
+    assert parse_rdma_enabled("") is None
+    assert parse_rdma_enabled("garbage output", returncode=1) is None
+    assert parse_rdma_enabled("some enable-ish text", returncode=0) is True
+
+
+def test_snapshot_from_raw_rdma_not_probed_by_default():
+    snap = snapshot_from_raw("self")
+    assert snap.rdma_tool_available is None
+    assert snap.rdma_enabled is None
+
+
+def test_snapshot_from_raw_rdma_enabled():
+    snap = snapshot_from_raw("node-b", rdma="RDMA: enabled\n", rdma_missing=False)
+    assert snap.rdma_tool_available is True
+    assert snap.rdma_enabled is True
+
+
+def test_snapshot_from_raw_rdma_disabled():
+    snap = snapshot_from_raw("node-b", rdma="RDMA: disabled\n", rdma_missing=False)
+    assert snap.rdma_tool_available is True
+    assert snap.rdma_enabled is False
+
+
+def test_snapshot_from_raw_rdma_tool_missing():
+    snap = snapshot_from_raw("node-b", rdma=None, rdma_missing=True)
+    assert snap.rdma_tool_available is False
+    assert snap.rdma_enabled is None
+
+
+def test_snapshot_from_json_raw_branch_carries_rdma():
+    payload = (
+        '{"vm_stat":"","df":"","uptime":"","pmset":"",'
+        '"sntp":null,"sntp_missing":true,'
+        '"rdma":"RDMA: enabled\\n","rdma_missing":false}'
+    )
+    snap = snapshot_from_json("node-b", payload)
+    assert snap.rdma_tool_available is True
+    assert snap.rdma_enabled is True
+
+
+def test_snapshot_from_json_raw_branch_without_rdma_key_is_not_probed():
+    # Older/other remote payloads without rdma keys must not fake tool_available.
+    payload = '{"vm_stat":"","df":"","uptime":"","pmset":"","sntp":null,"sntp_missing":true}'
+    snap = snapshot_from_json("node-b", payload)
+    assert snap.rdma_tool_available is None
+    assert snap.rdma_enabled is None
+
+
+def test_snapshot_from_json_numeric_branch_carries_rdma():
+    payload = (
+        '{"ram_used_gb":8.5,"ram_free_gb":16.0,"load_1m":0.4,'
+        '"disk_free_gb":120.0,"cpu_speed_limit_pct":null,"ntp_offset_s":0.01,'
+        '"rdma_tool_available":true,"rdma_enabled":false}'
+    )
+    snap = snapshot_from_json("node-c", payload)
+    assert snap.rdma_tool_available is True
+    assert snap.rdma_enabled is False

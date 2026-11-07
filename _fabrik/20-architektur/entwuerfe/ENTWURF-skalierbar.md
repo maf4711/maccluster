@@ -139,7 +139,7 @@ Stattdessen:
 COMMANDS: dict[str, CommandHandler] = {
     "tb": TbCommand,
     "init": InitCommand,
-    "config": ConfigCommand,      # show | validate
+    "config": ConfigCommand,  # show | validate
     "up": UpCommand,
     "heal": HealCommand,
     "status": StatusCommand,
@@ -147,7 +147,7 @@ COMMANDS: dict[str, CommandHandler] = {
     "topo": TopoCommand,
     "doctor": DoctorCommand,
     "bench": BenchCommand,
-    "service": ServiceCommand,    # install | uninstall | status
+    "service": ServiceCommand,  # install | uninstall | status
 }
 ```
 

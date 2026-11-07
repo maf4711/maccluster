@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 from pathlib import Path
 
 from maccluster.adapters.plist_template import (
+    render_automation_plist,
     render_heal_plist,
     render_sync_plist,
     render_watchdog_plist,
@@ -23,6 +25,8 @@ from maccluster.constants import (
 from maccluster.domain.models import ServiceState
 from maccluster.errors import CliError
 from maccluster.ports.process import ProcessRunnerPort
+
+AUTOMATION_LABEL = "com.maccluster.automation"
 
 
 def launch_agents_dir() -> Path:
@@ -61,7 +65,17 @@ class LaunchAgentService:
         plist_path.parent.mkdir(parents=True, exist_ok=True)
         if plist_path.is_symlink():
             raise CliError(f"refusing to write through symlink: {plist_path}", exit_code=2)
-        if label == LAUNCH_AGENT_SYNC_LABEL:
+        if label == AUTOMATION_LABEL:
+            if interval_seconds < 300:
+                raise CliError("automation interval must be >= 300 seconds", exit_code=2)
+            (Path.home() / "Library" / "Logs" / "maccluster").mkdir(parents=True, exist_ok=True)
+            content = render_automation_plist(
+                label=label,
+                program=str(program),
+                config_path=str(config_path),
+                interval_seconds=interval_seconds,
+            )
+        elif label == LAUNCH_AGENT_SYNC_LABEL:
             content = render_sync_plist(
                 label=label,
                 program=str(program),
@@ -78,15 +92,23 @@ class LaunchAgentService:
                     int(interval_seconds or DEFAULT_WATCHDOG_INTERVAL_S),
                 ),
             )
-        else:
+        elif label == LAUNCH_AGENT_LABEL:
             content = render_heal_plist(
                 label=label,
                 program=str(program),
                 config_path=str(config_path),
                 throttle_interval=max(10, interval_seconds),
             )
-        plist_path.write_text(content, encoding="utf-8")
-        os.chmod(plist_path, 0o644)
+        else:
+            raise CliError(f"unknown service label: {label}", exit_code=2)
+        if plist_path.is_file() and plist_path.read_text(encoding="utf-8") == content:
+            existing = self.status(label=label)
+            if existing.detail in ("loaded", "running"):
+                return replace(existing, interval_seconds=interval_seconds)
+        from maccluster.adapters.filesystem import FileSystem
+
+        writer = self._fs_write or FileSystem().write_text_atomic
+        writer(plist_path, content, mode=0o644)
 
         uid = os.getuid()
         domain = f"gui/{uid}"
@@ -110,16 +132,22 @@ class LaunchAgentService:
                 timeout=TIMEOUT_GENERIC,
             )
             if kick.returncode != 0:
-                # Still installed on disk — report installed even if load soft-fails in tests
-                pass
+                raise CliError(
+                    f"LaunchAgent {label} is installed but could not be loaded: "
+                    f"{(kick.stderr or kick.stdout or 'launchctl bootstrap failed').strip()}",
+                    exit_code=1,
+                )
 
+        state = self.status(label=label)
+        if state.detail == "installed (not loaded)":
+            raise CliError(f"LaunchAgent {label} was not loaded after installation", exit_code=1)
         return ServiceState(
             label=label,
-            installed=True,
-            running=True,
-            plist_path=str(plist_path),
+            installed=state.installed,
+            running=state.running,
+            plist_path=state.plist_path,
             interval_seconds=interval_seconds,
-            detail="installed",
+            detail=state.detail,
         )
 
     def uninstall(self, *, label: str = LAUNCH_AGENT_LABEL) -> ServiceState:
@@ -170,35 +198,35 @@ class LaunchAgentService:
 
 class FakeService:
     def __init__(self) -> None:
-        self.state = ServiceState(
-            label=LAUNCH_AGENT_LABEL,
-            installed=False,
-            running=False,
-            plist_path=None,
-            detail="not installed",
-        )
+        self.states: dict[str, ServiceState] = {}
 
     def install(self, **kwargs) -> ServiceState:
-        interval = kwargs.get("interval_seconds", 30)
-        self.state = ServiceState(
-            label=kwargs.get("label", LAUNCH_AGENT_LABEL),
+        label = kwargs.get("label", LAUNCH_AGENT_LABEL)
+        state = ServiceState(
+            label=label,
             installed=True,
             running=True,
-            plist_path="/tmp/com.maccluster.heal.plist",
-            interval_seconds=interval,
+            plist_path=f"/tmp/{label}.plist",
+            interval_seconds=kwargs.get("interval_seconds", 30),
             detail="installed",
         )
-        return self.state
+        self.states[label] = state
+        return state
 
     def uninstall(self, **kwargs) -> ServiceState:
-        self.state = ServiceState(
-            label=kwargs.get("label", LAUNCH_AGENT_LABEL),
-            installed=False,
-            running=False,
-            plist_path=None,
-            detail="not installed",
-        )
-        return self.state
+        label = kwargs.get("label", LAUNCH_AGENT_LABEL)
+        self.states.pop(label, None)
+        return self.status(label=label)
 
     def status(self, **kwargs) -> ServiceState:
-        return self.state
+        label = kwargs.get("label", LAUNCH_AGENT_LABEL)
+        return self.states.get(
+            label,
+            ServiceState(
+                label=label,
+                installed=False,
+                running=False,
+                plist_path=None,
+                detail="not installed",
+            ),
+        )

@@ -12,7 +12,7 @@ from maccluster.services.sync_filters import (
     merge_includes,
 )
 from maccluster.services.sync_history import format_last_run, write_run_log
-from maccluster.services.sync_safetynet import backup_before_overwrite, new_run_dir
+from maccluster.services.sync_safetynet import backup_before_overwrite, new_run_dir, prune_old_runs
 from maccluster.services.sync_service import FileMeta
 from maccluster.services.sync_verify import verify_local_sample
 
@@ -46,6 +46,46 @@ def test_safetynet_backup(tmp_path: Path):
     n = backup_before_overwrite(home, ["f.txt"], run_dir=run)
     assert n == 1
     assert (run / "f.txt").read_text(encoding="utf-8") == "v1"
+
+
+def test_prune_old_runs_keeps_only_the_newest(tmp_path: Path):
+    sn_root = tmp_path / "sn"
+    sn_root.mkdir()
+    names = [
+        "20260101T000000Z",
+        "20260102T000000Z",
+        "20260103T000000Z",
+        "20260104T000000Z",
+        "20260105T000000Z",
+        "20260106T000000Z",
+        "20260107T000000Z",
+    ]
+    for name in names:
+        (sn_root / name).mkdir()
+
+    removed = prune_old_runs(sn_root, keep=5)
+
+    assert removed == 2
+    remaining = sorted(p.name for p in sn_root.iterdir())
+    assert remaining == names[-5:]
+
+
+def test_prune_old_runs_ignores_non_run_entries(tmp_path: Path):
+    sn_root = tmp_path / "sn"
+    sn_root.mkdir()
+    (sn_root / "20260101T000000Z").mkdir()
+    (sn_root / "not-a-run-dir").mkdir()
+    (sn_root / "stray-file.txt").write_text("x", encoding="utf-8")
+
+    removed = prune_old_runs(sn_root, keep=5)
+
+    assert removed == 0
+    assert (sn_root / "not-a-run-dir").is_dir()
+    assert (sn_root / "stray-file.txt").is_file()
+
+
+def test_prune_old_runs_missing_root_is_noop(tmp_path: Path):
+    assert prune_old_runs(tmp_path / "does-not-exist", keep=5) == 0
 
 
 def test_verify_sample(tmp_path: Path):

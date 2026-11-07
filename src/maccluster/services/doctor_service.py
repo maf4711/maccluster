@@ -10,9 +10,12 @@ from maccluster.doctor_logic.report import build_report
 from maccluster.domain.enums import CheckSeverity, ReachabilityState
 from maccluster.domain.models import DoctorFinding, DoctorReport, NodeHealth
 from maccluster.health.mesh import build_mesh_health
+from maccluster.mapping.tb_identity import check_tb_identity
+from maccluster.services.bench_history import AREP_STALE_AFTER_DAYS, arep_history_age_days
 from maccluster.services.config_service import load_and_bind_self, load_config
 from maccluster.services.heal_heartbeat import read_heartbeat
 from maccluster.services.tb_service import probe_tb
+from maccluster.services.transport_ladder import arep_status_json
 
 
 def run_doctor(
@@ -54,6 +57,8 @@ def run_doctor(
         tb_error = str(exc)
     findings.append(checks.check_tb(tb, tb_error))
     findings.append(checks.check_cable(tb))
+    # Are cluster.toml's tb ids for this Mac still the live ones? (reboot → new UUIDs)
+    findings.append(check_tb_identity(self_node, tb))
 
     bridge = None
     desired_ip = str(self_node.ip) if self_node else None
@@ -105,6 +110,13 @@ def run_doctor(
     except Exception:
         rdma = None
     findings.append(checks.check_rdma(rdma))
+    arep_peers: list[dict] = []
+    if rdma is not None and rdma.enabled is True:
+        # Only worth asking arep when the OS has RDMA on; never raises.
+        status = arep_status_json(runner=ctx.runner)
+        raw = status.get("peers") if isinstance(status, dict) else None
+        arep_peers = [p for p in raw if isinstance(p, dict)] if isinstance(raw, list) else []
+    findings.append(checks.check_rdma_device_to_peer(rdma, arep_peers))
 
     service_installed = False
     try:
@@ -133,6 +145,13 @@ def run_doctor(
         except Exception:
             iperf_ok = False
     findings.append(checks.check_iperf(iperf_ok))
+
+    # arep keeps its own bench history; nudge (INFO) when it exists but went stale.
+    arep_bench = checks.check_arep_bench_history(
+        arep_history_age_days(ctx.clock.now()), stale_after_days=AREP_STALE_AFTER_DAYS
+    )
+    if arep_bench is not None:
+        findings.append(arep_bench)
 
     if include_host:
         from maccluster.services.doctor_host import (

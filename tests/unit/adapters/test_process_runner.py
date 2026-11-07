@@ -56,3 +56,12 @@ def test_resolve_iperf3_from_extra_dir(tmp_path):
     tool.chmod(0o755)
     runner = ProcessRunner(search_paths=("/nonexistent",), extra_paths=(str(tmp_path),))
     assert runner.resolve("iperf3") == str(tool)
+
+
+def test_resolve_arep_from_extra_dir_with_default_allowlist(tmp_path):
+    """arep installs to ~/.local/bin; the shared ctx.runner must find it unaided."""
+    tool = tmp_path / "arep"
+    tool.write_text("#!/bin/sh\n")
+    tool.chmod(0o755)
+    runner = ProcessRunner(search_paths=("/nonexistent",), extra_paths=(str(tmp_path),))
+    assert runner.resolve("arep") == str(tool)

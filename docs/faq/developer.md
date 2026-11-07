@@ -45,6 +45,26 @@ Do **not** set that env in production.
 
 Mutating path (`up` / `heal`) is **local Self only** via shared ensure plan + file lock. No remote write over SSH.
 
+### Sync transport ladder (`services/`)
+
+| Module | Role |
+|---|---|
+| `transport_ladder.py` | Pure decision logic: `probe_transports` (arep status / bridge ping / `.local` target), `choose_transports(probe, priority, override)`, `TransportFailed` |
+| `sync_transport.py` | Transfer stage: `select_transports` + `run_transfer_ladder` walk `rdma` → `tb` → `wifi`, emit `transport downgrade <from>→<to>: <reason>` (`downgrade_line`), return `TransferOutcome` |
+| `sync_rdma.py` | Rung `rdma`: manifest JSON-Lines → `arep xfer push\|pull --node <id> --manifest -` on stdin, progress JSON-Lines from stdout, exit ≠ 0 → `TransportFailed` |
+| `sync_replan.py` | After a partial rung: re-stat both sides for the planned rels only, re-run `plan_transfers` |
+
+`sync_service.sync_home` still does inventory + planning and only delegates the
+transfer; it must not grow. Config: `ClusterConfig.transport_priority`
+(`DEFAULT_TRANSPORT_PRIORITY = ("rdma", "tb", "wifi")` in `domain/models.py`),
+parsed/validated in `config/load.py`. CLI: `--transport` in `cli/parser.py`.
+Doctor: `checks.check_rdma_device_to_peer` → `rdma_no_device_to_peer` (WARN, not
+a cluster-degrading id). Both subprocess paths (`arep status --json`, `arep xfer`)
+are injectable, so `tests/unit/services/test_transport_ladder.py`,
+`test_sync_transport.py` and `test_sync_rdma.py` run without arep. The
+`arep xfer` contract is documented in
+[SYNC-HOME.md](../SYNC-HOME.md#the-arep-xfer-contract-rung-1).
+
 ## CLI surface (automation)
 
 | Command | Mutation | Typical exit |

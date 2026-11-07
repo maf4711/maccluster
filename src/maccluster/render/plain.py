@@ -152,11 +152,18 @@ def render_status(snap: HealthSnapshot) -> str:
         rtt = f" rtt={nh.rtt_ms:.1f}ms" if nh.rtt_ms is not None else ""
         how = f" via={sanitize(nh.notes)}" if nh.notes and nh.notes not in ("self",) else ""
         spd = f" {nh.link_speed_gbps:g}G" if nh.link_speed_gbps is not None else ""
+        is_self = nh.transport == "self" or (
+            snap.self_node_id is not None and nh.node.id == snap.self_node_id
+        )
+        tp = "" if is_self else f" transport={sanitize(nh.transport or 'unknown')}"
         lines.append(
             f"{mark} {nh.node.id:12} {str(nh.node.ip):15} "
             f"{reachability_symbol(nh.reachability)} {nh.reachability.value:7} "
-            f"{link_symbol(nh.link_state)} {nh.link_state.value}{spd}{rtt}{how}"
+            f"{link_symbol(nh.link_state)} {nh.link_state.value}{spd}{rtt}{how}{tp}"
         )
+        if not is_self and nh.transport_detail:
+            src = f"{sanitize(nh.transport_source)}: " if nh.transport_source else ""
+            lines.append(f"    transport {src}{sanitize(nh.transport_detail)}")
     if snap.exo is not None:
         lines.append(f"exo: {sanitize(snap.exo.summary)}")
         if snap.exo.instances_summary:
@@ -171,15 +178,23 @@ def render_topo(topo: Topology) -> str:
     lines = [f"topology complete={topo.complete}"]
     for lnk in topo.links:
         match = lnk.matched_node_id or "-"
+        by = f" by={sanitize(lnk.matched_by)}" if lnk.matched_node_id and lnk.matched_by else ""
         peer = sanitize(lnk.peer_hint) if lnk.peer_hint else "-"
         speed = f"{lnk.speed_gbps:g}G" if lnk.speed_gbps is not None else "-"
         lines.append(
             f"  receptacle {sanitize(lnk.local_receptacle)}: "
             f"{link_symbol(lnk.link_state)} {lnk.link_state.value} "
-            f"peer={peer} matched={match} speed={speed}"
+            f"peer={peer} matched={match}{by} speed={speed}"
         )
+        ids = []
         if lnk.domain_uuid:
-            lines.append(f"    domain={lnk.domain_uuid}")
+            ids.append(f"domain={sanitize(lnk.domain_uuid)}")
+        if lnk.peer_domain_uuid:
+            ids.append(f"peer_domain={sanitize(lnk.peer_domain_uuid)}")
+        if lnk.peer_uid:
+            ids.append(f"peer_uid={sanitize(lnk.peer_uid)}")
+        if ids:
+            lines.append("    " + " ".join(ids))
     if topo.unmatched_peers:
         lines.append("unmatched peers: " + ", ".join(sanitize(p) for p in topo.unmatched_peers))
     # Explicitly no cable routing advice (A-023)

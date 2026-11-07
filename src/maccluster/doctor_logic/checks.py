@@ -194,6 +194,45 @@ def check_rdma(rdma) -> DoctorFinding:
     return DoctorFinding("rdma", CheckSeverity.INFO, "RDMA status unknown", rdma.detail)
 
 
+def check_rdma_device_to_peer(rdma, arep_peers: list[dict]) -> DoctorFinding:
+    """WARN when the OS has RDMA on but arep sees no rdma-capable peer.
+
+    *arep_peers* is the ``peers`` list of ``arep status --json``; a peer
+    advertises a usable link device via ``transportCapable`` containing
+    ``"rdma"``. Nothing here enables RDMA — that is Recovery-OS only.
+    """
+    from maccluster.domain.models import RdmaStatus
+
+    if not isinstance(rdma, RdmaStatus) or rdma.enabled is not True:
+        return DoctorFinding(
+            "rdma_device_to_peer",
+            CheckSeverity.INFO,
+            "rdma peer path not assessed",
+            "rdma_ctl not enabled or unknown",
+        )
+    capable: list[str] = []
+    for peer in arep_peers or ():
+        if not isinstance(peer, dict):
+            continue
+        caps = peer.get("transportCapable")
+        names = [str(c).lower() for c in caps] if isinstance(caps, list) else []
+        if "rdma" in names:
+            capable.append(str(peer.get("displayName") or peer.get("fingerprint") or "?"))
+    if not capable:
+        return DoctorFinding(
+            "rdma_no_device_to_peer",
+            CheckSeverity.WARN,
+            "RDMA enabled but arep reports no rdma-capable peer",
+            f"arep peers={len(arep_peers or ())}; check TB link + pairing (arep status --json)",
+        )
+    return DoctorFinding(
+        "rdma_device_to_peer",
+        CheckSeverity.INFO,
+        f"rdma path to {len(capable)} peer(s): {', '.join(capable)}",
+        "",
+    )
+
+
 def check_heal_heartbeat(hb, *, service_installed: bool = False) -> DoctorFinding:
     from maccluster.domain.models import HealHeartbeat
 
@@ -253,6 +292,27 @@ def check_iperf(available: bool) -> DoctorFinding:
         CheckSeverity.INFO,
         "iperf3 not found (optional)",
         "brew install iperf3",
+    )
+
+
+def check_arep_bench_history(
+    age_days: float | None, *, stale_after_days: float = 7.0
+) -> DoctorFinding | None:
+    """arep's own bench history: INFO once it is stale, silent when there is none."""
+    if age_days is None:
+        return None
+    if age_days > stale_after_days:
+        return DoctorFinding(
+            "arep_bench",
+            CheckSeverity.INFO,
+            f"arep bench history stale ({age_days:.0f}d old)",
+            "refresh: arep bench --peer <node> --transport both",
+        )
+    return DoctorFinding(
+        "arep_bench",
+        CheckSeverity.OK,
+        f"arep bench history fresh ({age_days:.1f}d old)",
+        "",
     )
 
 
@@ -367,3 +427,74 @@ def check_ntp(snap, *, peer: bool = False) -> DoctorFinding:
             f"|offset| > {NTP_OFFSET_WARN_S:g}s",
         )
     return DoctorFinding(cid, CheckSeverity.OK, f"{snap.node_id} ntp offset {off:.3f}s", "")
+
+
+def check_power(snap, *, peer: bool = False) -> DoctorFinding:
+    """WARN when a node can doze mid-sync: sleep < 30 min (but not 0) or powernap on.
+
+    The regression class this guards: node-b stood at sleep=1, which parked the
+    node daily and broke the cluster. sleep=0 means "never sleeps" and is OK.
+    INFO when the node's settings could not be read.
+    """
+    from maccluster.constants import SLEEP_WARN_MIN_MINUTES
+    from maccluster.domain.models import HostSnapshot
+
+    if not isinstance(snap, HostSnapshot):
+        return DoctorFinding("power", CheckSeverity.INFO, "power not probed", "")
+    cid = _host_cid("power", snap.node_id, peer=peer)
+    if snap.error:
+        return DoctorFinding(
+            cid,
+            CheckSeverity.INFO,
+            f"{snap.node_id} power settings unreadable",
+            snap.error,
+        )
+    if snap.sleep_minutes is None and snap.powernap_enabled is None:
+        return DoctorFinding(
+            cid, CheckSeverity.INFO, f"{snap.node_id} power settings not reported", ""
+        )
+    problems: list[str] = []
+    if snap.sleep_minutes is not None and 0 < snap.sleep_minutes < SLEEP_WARN_MIN_MINUTES:
+        problems.append(f"sleep={snap.sleep_minutes}m < {SLEEP_WARN_MIN_MINUTES}m")
+    if snap.powernap_enabled:
+        problems.append("powernap=1")
+    sleep_txt = "n/a" if snap.sleep_minutes is None else str(snap.sleep_minutes)
+    nap_txt = "n/a" if snap.powernap_enabled is None else str(int(snap.powernap_enabled))
+    if problems:
+        return DoctorFinding(
+            cid,
+            CheckSeverity.WARN,
+            f"{snap.node_id} {', '.join(problems)}",
+            "node can doze mid-sync — on that Mac: sudo pmset -a sleep 0 powernap 0",
+        )
+    return DoctorFinding(
+        cid,
+        CheckSeverity.OK,
+        f"{snap.node_id} sleep={sleep_txt} powernap={nap_txt}",
+        "",
+    )
+
+
+def check_rdma_host(snap, *, peer: bool = False) -> DoctorFinding:
+    """Fleet-hop RDMA finding (per node_id). Self RDMA uses check_rdma instead."""
+    from maccluster.domain.models import HostSnapshot
+
+    if not isinstance(snap, HostSnapshot):
+        return DoctorFinding("rdma", CheckSeverity.INFO, "rdma not probed", "")
+    cid = _host_cid("rdma", snap.node_id, peer=peer)
+    if snap.error:
+        return DoctorFinding(
+            cid, CheckSeverity.WARN, f"host {snap.node_id} {snap.error}", snap.error
+        )
+    if not snap.rdma_tool_available:
+        return DoctorFinding(cid, CheckSeverity.INFO, f"{snap.node_id} rdma_ctl unavailable", "")
+    if snap.rdma_enabled is True:
+        return DoctorFinding(cid, CheckSeverity.OK, f"{snap.node_id} RDMA enabled", "")
+    if snap.rdma_enabled is False:
+        return DoctorFinding(
+            cid,
+            CheckSeverity.INFO,
+            f"{snap.node_id} RDMA disabled",
+            "enable only in Recovery OS: rdma_ctl enable (not via maccluster)",
+        )
+    return DoctorFinding(cid, CheckSeverity.INFO, f"{snap.node_id} RDMA status unknown", "")

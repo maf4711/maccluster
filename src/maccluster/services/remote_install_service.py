@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
+import re
+import shlex
 import shutil
 import subprocess
 import tempfile
-import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -23,67 +25,7 @@ from maccluster.cluster_ssh import (
 )
 from maccluster.errors import CliError
 from maccluster.services.config_service import load_and_bind_self
-
-REMOTE_INSTALL_SH = r"""
-set -euo pipefail
-export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
-WHEEL="$1"
-CFG="$2"
-PUBKEY="$3"
-
-echo "==> args wheel=$WHEEL cfg=$CFG pubkey=$PUBKEY"
-test -f "$WHEEL" || { echo "missing wheel"; exit 1; }
-test -f "$CFG" || { echo "missing config"; exit 1; }
-test -f "$PUBKEY" || { echo "missing pubkey"; exit 1; }
-
-echo "==> ensure pipx"
-if ! command -v pipx >/dev/null 2>&1; then
-  if command -v brew >/dev/null 2>&1; then
-    brew install pipx
-    pipx ensurepath || true
-  else
-    python3 -m pip install --user pipx
-    python3 -m pipx ensurepath || true
-  fi
-  export PATH="$HOME/.local/bin:$PATH"
-fi
-
-echo "==> pipx install $WHEEL"
-pipx install --force "$WHEEL"
-export PATH="$HOME/.local/bin:$PATH"
-hash -r || true
-maccluster --version
-
-echo "==> plant SSH pubkey for cluster remote-install"
-mkdir -p "$HOME/.ssh"
-/bin/chmod 700 "$HOME/.ssh"
-touch "$HOME/.ssh/authorized_keys"
-/bin/chmod 600 "$HOME/.ssh/authorized_keys"
-if ! /usr/bin/grep -qF "$(/usr/bin/awk '{print $2}' "$PUBKEY")" "$HOME/.ssh/authorized_keys" 2>/dev/null; then
-  /bin/cat "$PUBKEY" >> "$HOME/.ssh/authorized_keys"
-  echo "authorized_keys updated"
-else
-  echo "pubkey already present"
-fi
-
-echo "==> cluster config"
-mkdir -p "$HOME/.config/maccluster"
-/bin/cp "$CFG" "$HOME/.config/maccluster/cluster.toml"
-/bin/chmod 600 "$HOME/.config/maccluster/cluster.toml"
-maccluster config validate
-
-echo "==> bridge up (TB only) + heal service"
-# Never hang on interactive sudo — passwordless only
-if sudo -n true 2>/dev/null; then
-  sudo -n maccluster up || echo "warn: maccluster up failed"
-else
-  echo "warn: no passwordless sudo — run on peer: sudo maccluster up"
-fi
-maccluster service install || true
-maccluster doctor || true
-maccluster status || true
-echo "remote install complete on $(hostname)"
-"""
+from maccluster.services.remote_install_script import REMOTE_INSTALL_SH
 
 
 @dataclass(frozen=True)
@@ -157,7 +99,18 @@ def find_or_build_wheel(*, work: Path) -> Path:
             "--no-deps",
             str(root),
         ]
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=False,
+                stdin=subprocess.DEVNULL,
+                timeout=600,
+                env={**os.environ, "PIP_NO_INPUT": "1", "GIT_TERMINAL_PROMPT": "0"},
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise CliError(f"cannot build wheel: {exc}", exit_code=1) from exc
         if proc.returncode != 0:
             raise CliError(
                 f"cannot build wheel: {proc.stderr or proc.stdout}",
@@ -188,6 +141,9 @@ def remote_install(
     dry_run: bool = False,
     setup_ssh_config: bool = True,
     timeout: float = 600.0,
+    wheel_path: Path | None = None,
+    preflight_speedtest: bool = True,
+    preserve_config: bool = False,
 ) -> RemoteInstallResult:
     """Install current MacCluster onto peer via TB bridge SSH only."""
     cfg, self_node = load_and_bind_self(ctx)
@@ -223,37 +179,51 @@ def remote_install(
             )
 
     peer_ip = str(require_cluster_ip(peer_node.ip, subnet))
+    if peer_ip == self_ip:
+        raise CliError("remote-install target is this Mac; use update instead", exit_code=2)
     u = resolve_install_user(user, peer_node)
     target = cluster_target(u, peer_ip)
+
+    if dry_run:
+        return RemoteInstallResult(
+            peer_id=peer_node.id,
+            peer_ip=peer_ip,
+            bind_ip=self_ip,
+            ssh_target=target,
+            wheel=str(wheel_path) if wheel_path else "(build local wheel)",
+            ok=True,
+            message=f"dry-run: would install on {target} via BindAddress {self_ip}",
+        )
 
     if setup_ssh_config:
         write_cluster_ssh_config(self_ip=self_ip, subnet=subnet, user=u)
 
     # Startup cable + speed check (TB path grade; iperf if peer SSH allows)
-    try:
-        from maccluster.services.speedtest_service import (
-            format_speedtest_report,
-            run_speedtest,
-        )
-
-        st_peer = peer_node.id if not str(peer_node.id).startswith("ip-") else peer_ip
-        st = run_speedtest(
-            ctx,
-            peer=st_peer,
-            duration=3,
-            skip_iperf=False,
-            try_start_server=True,
-        )
-        # Always print cable grade before install (caller can log)
-        print(format_speedtest_report(st), flush=True)
-        if not st.good_enough:
-            print(
-                "warning: TB cable path below ideal (want ≥20–40 Gb/s). "
-                "Install continues; fix cable for full mesh performance.",
-                flush=True,
+    if preflight_speedtest:
+        try:
+            from maccluster.services.speedtest_service import (
+                format_speedtest_report,
+                run_speedtest,
             )
-    except Exception as exc:
-        print(f"warning: speedtest preflight skipped: {exc}", flush=True)
+
+            st_peer = peer_node.id if not str(peer_node.id).startswith("ip-") else peer_ip
+            st = run_speedtest(
+                ctx,
+                peer=st_peer,
+                duration=3,
+                skip_iperf=False,
+                try_start_server=True,
+            )
+            # Always print cable grade before install (caller can log)
+            print(format_speedtest_report(st), flush=True)
+            if not st.good_enough:
+                print(
+                    "warning: TB cable path below ideal (want ≥20–40 Gb/s). "
+                    "Install continues; fix cable for full mesh performance.",
+                    flush=True,
+                )
+        except Exception as exc:
+            print(f"warning: speedtest preflight skipped: {exc}", flush=True)
 
     abs_ssh = ctx.runner.resolve("ssh")
     abs_scp = ctx.runner.resolve("scp")
@@ -281,7 +251,9 @@ def remote_install(
 
     with tempfile.TemporaryDirectory(prefix="maccluster-remote-") as tmp:
         work = Path(tmp)
-        wheel = find_or_build_wheel(work=work)
+        wheel = Path(wheel_path).resolve() if wheel_path else find_or_build_wheel(work=work)
+        if not wheel.is_file():
+            raise CliError(f"wheel missing: {wheel}", exit_code=2)
         cfg_path = ctx.config_path
         if copy_config and not Path(cfg_path).is_file():
             raise CliError(f"config missing: {cfg_path}", exit_code=2)
@@ -291,81 +263,97 @@ def remote_install(
         script = work / "remote_install_peer.sh"
         script.write_text(REMOTE_INSTALL_SH.lstrip(), encoding="utf-8")
 
-        if dry_run:
+        create = ctx.runner.run(
+            ssh_bind_argv(
+                abs_ssh,
+                bind_ip=self_ip,
+                peer_ip=peer_ip,
+                user=u,
+                remote=("/usr/bin/mktemp -d /tmp/maccluster-install.XXXXXXXX",),
+            ),
+            timeout=30.0,
+        )
+        remote_dir = create.stdout.strip()
+        if create.returncode != 0 or not re.fullmatch(
+            r"/tmp/maccluster-install\.[A-Za-z0-9]+", remote_dir
+        ):
+            raise CliError("cannot create private peer install directory", exit_code=1)
+        try:
+            files = {
+                wheel: f"{remote_dir}/{wheel.name}",
+                pub_file: f"{remote_dir}/cluster.pub",
+                script: f"{remote_dir}/install.sh",
+            }
+            remote_cfg = "-"
+            if copy_config:
+                remote_cfg = f"{remote_dir}/cluster.toml"
+                files[Path(cfg_path)] = remote_cfg
+            for local, remote in files.items():
+                r = ctx.runner.run(
+                    scp_bind_argv(
+                        abs_scp,
+                        bind_ip=self_ip,
+                        local_path=local,
+                        peer_ip=peer_ip,
+                        remote_path=remote,
+                        user=u,
+                        connect_timeout=15,
+                    ),
+                    timeout=timeout,
+                )
+                if r.returncode != 0:
+                    raise CliError(
+                        f"scp failed for {local.name}: {(r.stderr or r.stdout)[:300]}", exit_code=1
+                    )
+            with wheel.open("rb") as fh:
+                digest = hashlib.file_digest(fh, "sha256").hexdigest()
+            remote_cmd = shlex.join(
+                [
+                    "/bin/bash",
+                    f"{remote_dir}/install.sh",
+                    f"{remote_dir}/{wheel.name}",
+                    remote_cfg,
+                    f"{remote_dir}/cluster.pub",
+                    digest,
+                    "1" if preserve_config else "0",
+                ]
+            )
+            run = ctx.runner.run(
+                ssh_bind_argv(
+                    abs_ssh,
+                    bind_ip=self_ip,
+                    peer_ip=peer_ip,
+                    user=u,
+                    connect_timeout=15,
+                    remote=(remote_cmd,),
+                ),
+                timeout=timeout,
+            )
+            log = ((run.stdout or "") + "\n" + (run.stderr or "")).strip()
             return RemoteInstallResult(
                 peer_id=peer_node.id,
                 peer_ip=peer_ip,
                 bind_ip=self_ip,
                 ssh_target=target,
                 wheel=str(wheel),
-                ok=True,
-                message=f"dry-run: would install {wheel.name} on {target} via BindAddress {self_ip}",
+                ok=run.returncode == 0,
+                message="ok"
+                if run.returncode == 0
+                else f"remote install failed rc={run.returncode}",
+                log=log[-4000:],
             )
-
-        remote_dir = f"/tmp/maccluster-install-{int(time.time())}"
-        # Single remote argv — OpenSSH joins multiple args with spaces (breaks bash -lc)
-        ctx.runner.run(
-            ssh_bind_argv(
-                abs_ssh,
-                bind_ip=self_ip,
-                peer_ip=peer_ip,
-                user=u,
-                remote=(f"/bin/mkdir -p {remote_dir}",),
-            ),
-            timeout=30.0,
-        )
-
-        files = {
-            wheel: f"{remote_dir}/{wheel.name}",
-            Path(cfg_path): f"{remote_dir}/cluster.toml",
-            pub_file: f"{remote_dir}/cluster.pub",
-            script: f"{remote_dir}/install.sh",
-        }
-        for local, remote in files.items():
-            r = ctx.runner.run(
-                scp_bind_argv(
-                    abs_scp,
-                    bind_ip=self_ip,
-                    local_path=local,
-                    peer_ip=peer_ip,
-                    remote_path=remote,
-                    user=u,
-                    connect_timeout=15,
-                ),
-                timeout=timeout,
-            )
-            if r.returncode != 0:
-                raise CliError(
-                    f"scp failed for {local.name}: {(r.stderr or r.stdout)[:300]}",
-                    exit_code=1,
+        finally:
+            # Cleanup failure must not hide the original install result.
+            try:
+                ctx.runner.run(
+                    ssh_bind_argv(
+                        abs_ssh,
+                        bind_ip=self_ip,
+                        peer_ip=peer_ip,
+                        user=u,
+                        remote=(f"/bin/rm -rf -- {shlex.quote(remote_dir)}",),
+                    ),
+                    timeout=30.0,
                 )
-
-        remote_cmd = (
-            f"chmod +x {remote_dir}/install.sh && "
-            f"bash {remote_dir}/install.sh "
-            f"{remote_dir}/{wheel.name} {remote_dir}/cluster.toml {remote_dir}/cluster.pub; "
-            f"ec=$?; rm -rf {remote_dir}; exit $ec"
-        )
-        run = ctx.runner.run(
-            ssh_bind_argv(
-                abs_ssh,
-                bind_ip=self_ip,
-                peer_ip=peer_ip,
-                user=u,
-                connect_timeout=15,
-                remote=(remote_cmd,),
-            ),
-            timeout=timeout,
-        )
-        log = ((run.stdout or "") + "\n" + (run.stderr or "")).strip()
-        ok = run.returncode == 0
-        return RemoteInstallResult(
-            peer_id=peer_node.id,
-            peer_ip=peer_ip,
-            bind_ip=self_ip,
-            ssh_target=target,
-            wheel=str(wheel),
-            ok=ok,
-            message="ok" if ok else f"remote install failed rc={run.returncode}",
-            log=log[-4000:],
-        )
+            except Exception:
+                pass

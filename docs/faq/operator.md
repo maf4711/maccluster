@@ -97,6 +97,20 @@ To avoid saturating the fabric (for example during live work), set `MACCLUSTER_B
 
 Optional and **off by default** (`ssh_probes_enabled = false`). Status/monitor work with local ping only.
 
+### Which transport did my sync use?
+
+Every sync (`sync home`, `sync dev`, `pull`, `push`, `delta --apply`) walks a per-peer ladder: **`rdma`** (autoreplikator `arep xfer`, RDMA on the Thunderbolt link) → **`tb`** (ssh/ditto over the bridge IP) → **`wifi`** (ssh/ditto via `host.local`). The peer row prints `transport=<rung>`; a fallback prints exactly
+
+```text
+transport downgrade rdma→tb: <reason>
+```
+
+and continues with the remaining files. Order: `transport_priority = ["rdma", "tb", "wifi"]` in `cluster.toml` (default). Force one rung with `--transport rdma|tb|wifi` (no downgrade; unavailable → peer fails with the reason). `arep` is optional — without it the ladder starts at `tb`. Details: [SYNC-HOME.md](../SYNC-HOME.md#transport-ladder-rdma--tb--wifi).
+
+### `doctor` says `rdma_no_device_to_peer`?
+
+`rdma_ctl status` reports RDMA **enabled**, but `arep status --json` lists no peer with `rdma` in `transportCapable` — arep has no link device pointing straight at a paired peer. Check the TB cable/link (`maccluster tb`, `maccluster topo`) and pairing (`arep pair`, `arep status --json`). The finding is advisory (WARN, exit code unchanged); syncs simply skip the `rdma` rung. With RDMA off or `rdma_ctl` missing the finding reads `rdma peer path not assessed` and arep is not called at all. MacCluster never toggles `rdma_ctl` (Recovery-OS only).
+
 ## Troubleshooting
 
 | Symptom | Check |
@@ -107,6 +121,10 @@ Optional and **off by default** (`ssh_probes_enabled = false`). Status/monitor w
 | `up` exit 3 | Bridge/IP may be OK; cable/link missing — check `maccluster tb` |
 | Peers always DOWN | `up` on **each** node; same subnet; TB cable; firewall allowing ping |
 | LaunchAgent not recovering IP | Expected without root — run `sudo maccluster heal` |
+| Sync always `transport=tb`, never `rdma` | `arep status --json`: peer must be `trusted` with `rdma` in `transportCapable`; `doctor` → `rdma_no_device_to_peer` |
+| `transport downgrade rdma→tb: …` on every run | arep aborted (`error` event / exit ≠ 0 / timeout) — reason is in the line; `arep status` shows the last downgrade |
+| `--transport rdma` fails with `unavailable: …` | Forced rung has no fallback by design; drop the flag or fix the reason shown |
+| `config validate` exit 2 on `transport_priority` | Array of `rdma`/`tb`/`wifi` only, non-empty, no duplicates |
 
 ## Where to get help
 

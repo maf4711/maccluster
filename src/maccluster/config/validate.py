@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from maccluster.constants import (
     MAX_NODES,
     MIN_HEAL_INTERVAL_S,
@@ -57,16 +59,7 @@ def assign_roles(cfg: ClusterConfig, identity: HostIdentity) -> tuple[ClusterCon
     nodes = tuple(
         n.with_role(NodeRole.SELF if n.id == self_node.id else NodeRole.PEER) for n in cfg.nodes
     )
-    new_cfg = ClusterConfig(
-        schema_version=cfg.schema_version,
-        name=cfg.name,
-        subnet=cfg.subnet,
-        bridge_interface=cfg.bridge_interface,
-        nodes=nodes,
-        heal_interval_seconds=cfg.heal_interval_seconds,
-        ssh_probes_enabled=cfg.ssh_probes_enabled,
-        created_at=cfg.created_at,
-        updated_at=cfg.updated_at,
-    )
+    # replace() keeps every other field (incl. transport_priority) intact.
+    new_cfg = replace(cfg, nodes=nodes)
     self_with_role = self_node.with_role(NodeRole.SELF)
     return new_cfg, self_with_role
