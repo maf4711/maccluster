@@ -232,7 +232,7 @@ def run(
     """One docsync run over every include root and peer. `api` is injectable for tests."""
     if api is None:
         from docsync import api  # noqa: PLC0415 — optional engine
-    import docsync
+    version = getattr(api, "__version__", None) or docsync_version() or "?"
 
     def log(*parts):
         prog.note(" ".join(str(p) for p in parts))
@@ -258,9 +258,7 @@ def run(
         log=log,
         state_dir=state_dir,
     )
-    prog.note(
-        f"engine docsync {docsync.__version__}: {len(req.roots)} root(s) × {len(specs)} peer(s)"
-    )
+    prog.note(f"engine docsync {version}: {len(req.roots)} root(s) × {len(specs)} peer(s)")
     res = api.sync(req)
     for line in res.report.render().splitlines():
         prog.note(line)
@@ -275,7 +273,7 @@ def run(
     return SyncHomeResult(
         local_home=str(local_home),
         dry_run=dry_run or compare_only,
-        strategy=f"docsync {docsync.__version__} three-way ({POLICY_MAP[conflict_policy]})",
+        strategy=f"docsync {version} three-way ({POLICY_MAP[conflict_policy]})",
         peers=results,
         excludes=tuple(excludes),
         includes=tuple(includes),
