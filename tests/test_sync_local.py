@@ -432,3 +432,13 @@ class PlanOutputTests(unittest.TestCase):
         lines.clear()
         _print_plan(plan, lines.append, limit=None)
         self.assertEqual(len(lines), 51)
+
+
+class DryRunBytesTests(unittest.TestCase):
+    setUp, tearDown, sync = LocalSyncTests.setUp, LocalSyncTests.tearDown, LocalSyncTests.sync
+
+    def test_dry_run_counts_bytes_of_mixed_case_names(self):
+        touch(self.b / "Rechnung März.PDF", "x" * 3000, self.now)
+        touch(self.a / "Upper/Case.TXT", "y" * 1000, self.now)
+        rep = self.sync(dry=True)
+        self.assertEqual((rep.pulled_bytes, rep.pushed_bytes), (3000, 1000))

@@ -165,7 +165,7 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
         if bar:
             bar.finish(st["bytes"], st["files"])
         rep.pushed_files = len(plan.push) if dry else st["files"]
-        rep.pushed_bytes = _bytes_of(local, [p for p in plan.push if p in local]) if dry else st["bytes"]
+        rep.pushed_bytes = _bytes_of(local, map(fold, plan.push)) if dry else st["bytes"]  # keys are folded
         rep.wire_sent += st["sent"]
         rep.wire_received += st["received"]
         rep.retries += st.get("retries", 0)
@@ -182,7 +182,7 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
         if bar:
             bar.finish(st["bytes"], st["files"])
         rep.pulled_files = len(plan.pull) if dry else st["files"]
-        rep.pulled_bytes = _bytes_of(remote, [p for p in plan.pull if p in remote]) if dry else st["bytes"]
+        rep.pulled_bytes = _bytes_of(remote, map(fold, plan.pull)) if dry else st["bytes"]
         rep.wire_sent += st["sent"]
         rep.wire_received += st["received"]
         rep.retries += st.get("retries", 0)
