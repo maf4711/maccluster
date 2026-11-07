@@ -59,6 +59,18 @@ path = "~/Documents"
 
 Each peer needs Remote Login enabled and your ssh key in its `authorized_keys`
 (`ssh-copy-id user@host`). `docsync discover` lists Macs advertising ssh via Bonjour.
+If none of a peer's `hosts` answers, docsync browses Bonjour for an `_ssh` instance with
+the same base name and resolves it — macOS re-advertises Macs as `NAME-2930.local`,
+`NAME-3000.local`, … after reboots, so static names alone are not enough.
+
+## iCloud "Desktop & Documents"
+
+If `~/Documents` is managed by iCloud, most files are *evicted* (dataless: logical size
+on disk, no content). Reading them through rsync would download everything. docsync
+therefore hides evicted files on **both** sides for the run: they are never pulled,
+never counted as deleted, and their base entry survives. The report shows them as
+`cloud-only`. `docsync doctor` warns when the folder is iCloud-managed; Macs on the same
+Apple ID are already synced by iCloud and docsync only moves what iCloud has not.
 
 ## Install
 
