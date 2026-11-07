@@ -460,3 +460,8 @@ class DryRunBytesTests(unittest.TestCase):
         rep = self.sync(dry=True)
         self.assertEqual((rep.pulled_bytes, rep.pushed_bytes), (3000, 1000))
 
+
+try:  # DeadlineTests lives in its own module to keep this file short; collected from here
+    from tests.deadline_cases import DeadlineTests  # noqa: F401
+except ImportError:
+    from deadline_cases import DeadlineTests  # noqa: F401

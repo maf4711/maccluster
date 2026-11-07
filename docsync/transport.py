@@ -188,6 +188,19 @@ def _run_rsync_once(src: str, dst: str, paths: list[str], ssh_cmd: list[str] | N
         os.unlink(lst)
 
 
+def _test_hang() -> None:
+    """Test hook only: DOCSYNC_TEST_HANG=1 makes the listing block forever inside a child process
+    (like a stuck ssh); any other value is a marker file that hangs one listing and is removed."""
+    flag = os.environ.get("DOCSYNC_TEST_HANG", "")
+    if not flag or (flag != "1" and not os.path.exists(flag)):
+        return
+    if flag != "1":
+        os.unlink(flag)
+    subprocess.run(["sleep", "86400"])
+    import threading
+    threading.Event().wait()
+
+
 class LocalTransport:
     """Peer is a directory on this machine."""
 
@@ -221,6 +234,7 @@ class LocalTransport:
         return self.label
 
     def manifest(self, excludes: list[str], dataless: set[str] | None = None) -> Manifest:
+        _test_hang()
         return scan(self.root, excludes, dataless)
 
     def push(self, local_root: Path, paths: list[str], dry: bool, verbose: bool, progress=None,
