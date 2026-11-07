@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# docsync — thin shim so the repo checkout works from PATH without installing.
+HERE="$(cd "$(dirname "$(readlink "${BASH_SOURCE[0]}" || echo "${BASH_SOURCE[0]}")")/.." && pwd)"
+exec python3 "$HERE/bin/docsync-launchd.py" "$@"

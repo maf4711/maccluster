@@ -1,0 +1,115 @@
+"""End-to-end: two directory trees synced through LocalTransport (real rsync)."""
+import os
+import tempfile
+import time
+import unittest
+from pathlib import Path
+
+from docsync.config import Config
+from docsync.session import base_file, run_peer
+from docsync.transport import LocalTransport
+
+
+def touch(p: Path, text: str, mtime: int):
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(text)
+    os.utime(p, (mtime, mtime))
+
+
+class LocalSyncTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        base = Path(self.tmp.name)
+        self.a, self.b, self.state = base / "A" / "Documents", base / "B" / "Documents", base / "state"
+        self.a.mkdir(parents=True)
+        self.b.mkdir(parents=True)
+        self.cfg = Config(path=str(self.a), trash=False)
+        self.t = LocalTransport(self.b)
+        self.now = int(time.time()) - 100
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def sync(self, dry=False):
+        return run_peer(self.cfg, "b", self.t, dry=dry, state_dir=self.state, log=lambda *a: None)
+
+    def test_first_sync_merges_and_reports(self):
+        touch(self.a / "only-a.txt", "A" * 100, self.now)
+        touch(self.b / "sub dir/only-b.txt", "B" * 2048, self.now)
+        rep = self.sync()
+        self.assertTrue(rep.ok, rep.error)
+        self.assertTrue(rep.first_sync)
+        self.assertEqual((rep.pushed_files, rep.pulled_files), (1, 1))
+        self.assertEqual(rep.pushed_bytes, 100)
+        self.assertEqual(rep.pulled_bytes, 2048)
+        self.assertTrue((self.b / "only-a.txt").exists())
+        self.assertTrue((self.a / "sub dir/only-b.txt").exists())
+        self.assertTrue(base_file("b", self.state).exists())
+        self.assertIn("pushed", rep.render())
+        self.assertIn("KB", rep.render())
+
+    def test_dry_run_writes_nothing(self):
+        touch(self.a / "x.txt", "x", self.now)
+        rep = self.sync(dry=True)
+        self.assertTrue(rep.dry)
+        self.assertEqual(rep.pushed_files, 1)
+        self.assertFalse((self.b / "x.txt").exists())
+        self.assertFalse(base_file("b", self.state).exists())
+
+    def test_delete_propagates_after_base(self):
+        touch(self.a / "gone.txt", "g", self.now)
+        touch(self.a / "stay.txt", "s", self.now)
+        self.sync()
+        (self.b / "gone.txt").unlink()  # deleted on the peer
+        rep = self.sync()
+        self.assertEqual(rep.deleted_local, 1)
+        self.assertFalse((self.a / "gone.txt").exists())
+        self.assertTrue((self.a / "stay.txt").exists())
+        (self.a / "stay.txt").unlink()  # deleted here
+        rep = self.sync()
+        self.assertEqual(rep.deleted_remote, 1)
+        self.assertFalse((self.b / "stay.txt").exists())
+
+    def test_edit_after_sync_flows_newest(self):
+        touch(self.a / "doc.txt", "v1", self.now)
+        self.sync()
+        touch(self.b / "doc.txt", "v2-remote", self.now + 10)
+        rep = self.sync()
+        self.assertEqual(rep.pulled_files, 1)
+        self.assertEqual((self.a / "doc.txt").read_text(), "v2-remote")
+
+    def test_conflict_keeps_both_copies_on_both_sides(self):
+        touch(self.a / "doc.txt", "v1", self.now)
+        self.sync()
+        touch(self.a / "doc.txt", "local-edit", self.now + 5)
+        touch(self.b / "doc.txt", "remote-edit-newer", self.now + 10)
+        rep = self.sync()
+        self.assertEqual(len(rep.conflicts), 1)
+        path, winner, copy = rep.conflicts[0]
+        self.assertEqual(winner, "remote")
+        self.assertIn(".conflict-", copy)
+        for root in (self.a, self.b):
+            self.assertEqual((root / "doc.txt").read_text(), "remote-edit-newer")
+            self.assertEqual((root / copy).read_text(), "local-edit")
+        self.assertTrue(self.sync().ok)  # converged: next run is a no-op
+        self.assertEqual(self.sync().transferred_files, 0)
+
+    def test_trash_instead_of_unlink(self):
+        home = Path(self.tmp.name) / "A"
+        self.cfg.trash = True
+        touch(self.a / "t.txt", "t", self.now)
+        self.sync()
+        (self.b / "t.txt").unlink()
+        import docsync.session as s
+        orig = s.Path.home
+        s.Path.home = staticmethod(lambda: home)
+        try:
+            self.sync()
+        finally:
+            s.Path.home = orig
+        trashed = list((home / ".Trash").rglob("t.txt"))
+        self.assertEqual(len(trashed), 1)
+
+
+if __name__ == "__main__":
+    unittest.main()
