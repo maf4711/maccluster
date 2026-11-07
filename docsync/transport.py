@@ -184,11 +184,21 @@ def remove_local(root: Path, home: Path, paths: list[str], stamp: str, use_trash
             full.unlink()
 
 
+def remote_path(path: str) -> str:
+    """Shell expression for a peer path. '~/Documents' must become "$HOME"/Documents — a
+    shlex-quoted '~/Documents' is a literal directory named '~' (which check() once created)."""
+    if path == "~":
+        return '"$HOME"'
+    if path.startswith("~/"):
+        return '"$HOME"/' + shlex.quote(path[2:])
+    return shlex.quote(path)
+
+
 def remote_remove_script(root: str, paths: list[str], stamp: str, use_trash: bool) -> str:
     """Shell script that trashes (or unlinks) paths below root on the peer.
     Quoting rule: every path is a single shlex-quoted token; "$T" is concatenated to it
     unquoted-adjacent ("$T"/'a b.gz'), never nested inside double quotes."""
-    lines = ["set -e", f"cd {shlex.quote(root)}"]
+    lines = ["set -e", f"cd {remote_path(root)}"]
     if use_trash:
         lines.append(f'T="$HOME/.Trash/docsync-{stamp}"')
     for p in paths:
@@ -226,13 +236,14 @@ class RemoteTransport:
 
     def check(self) -> str:
         t0 = time.monotonic()
-        res = self.ssh(f"mkdir -p {shlex.quote(self.path)} && hostname -s && test -d {shlex.quote(self.path)}", timeout=20)
+        rp = remote_path(self.path)
+        res = self.ssh(f"mkdir -p {rp} && hostname -s && test -d {rp}", timeout=20)
         if res.returncode != 0:
             raise TransportError(res.stderr.strip().splitlines()[-1] if res.stderr.strip() else f"ssh rc={res.returncode}")
         return f"{res.stdout.strip()} ({(time.monotonic() - t0) * 1000:.0f} ms)"
 
     def manifest(self, excludes: list[str], dataless: set[str] | None = None) -> Manifest:
-        q = shlex.quote(self.path)
+        q = remote_path(self.path)
         res = self.ssh(f"command -v python3 >/dev/null 2>&1 && python3 - {q}", stdin=LISTER_PY, timeout=600)
         if res.returncode != 0:
             res = self.ssh(LISTER_SH.format(root=q), timeout=600)
@@ -256,7 +267,7 @@ class RemoteTransport:
     def rename(self, src: str, dst: str, dry: bool) -> None:
         if dry:
             return
-        cmd = (f"cd {shlex.quote(self.path)} && mkdir -p {shlex.quote(os.path.dirname(dst) or '.')} "
+        cmd = (f"cd {remote_path(self.path)} && mkdir -p {shlex.quote(os.path.dirname(dst) or '.')} "
                f"&& mv -f {shlex.quote(src)} {shlex.quote(dst)}")
         res = self.ssh(cmd)
         if res.returncode != 0:

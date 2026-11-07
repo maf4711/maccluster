@@ -278,3 +278,15 @@ class RemoteRemoveScriptTests(unittest.TestCase):
             self.assertFalse(f.exists())
             self.assertTrue((Path(d) / ".Trash/docsync-T1/_Archiv/2026/a b's 2.tar.conflict-x.gz").exists())
             self.assertNotIn("\"$T/", script)
+
+
+class RemotePathTests(unittest.TestCase):
+    def test_tilde_expands_via_home(self):
+        import subprocess
+        from docsync.transport import remote_path
+        self.assertEqual(remote_path("~/Documents"), '"$HOME"/Documents')
+        self.assertEqual(remote_path("~/My Docs"), '"$HOME"/\'My Docs\'')
+        self.assertEqual(remote_path("/Volumes/X/Docs"), "/Volumes/X/Docs")
+        self.assertEqual(remote_path("~"), '"$HOME"')
+        out = subprocess.run(["sh", "-c", f"echo {remote_path('~/Documents')}"], env={"HOME": "/h"}, capture_output=True, text=True).stdout.strip()
+        self.assertEqual(out, "/h/Documents")
