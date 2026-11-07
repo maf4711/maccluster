@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import getpass
 import os
+import sys
 from dataclasses import replace
 from pathlib import Path
 
@@ -116,21 +117,25 @@ def _sync_docsync(
         peer_limit=kw.get("peer_limit"),
     )
     via = "wifi" if kw.get("transport") == "wifi" or (kw.get("via") or "tb") == "wifi" else "tb"
-    result = sync_docsync.run(
-        prog=prog,
-        local_home=local_home,
-        remote_home=remote_home,
-        peers=peers,
-        self_ip=str(self_node.ip),
-        via=via,
-        target=target,
-        includes=includes,
-        excludes=excludes,
-        conflict_policy=policy,
-        dry_run=bool(kw.get("dry_run")),
-        compare_only=bool(kw.get("compare_only")),
-        default_user=user,
-        force_deletes=force_deletes,
+    result = run_with_deadline(
+        prog,
+        kw.get("timeout"),
+        lambda: sync_docsync.run(
+            prog=prog,
+            local_home=local_home,
+            remote_home=remote_home,
+            peers=peers,
+            self_ip=str(self_node.ip),
+            via=via,
+            target=target,
+            includes=includes,
+            excludes=excludes,
+            conflict_policy=policy,
+            dry_run=bool(kw.get("dry_run")),
+            compare_only=bool(kw.get("compare_only")),
+            default_user=user,
+            force_deletes=force_deletes,
+        ),
     )
     if kw.get("write_log", True) and not result.dry_run:
         try:
@@ -138,3 +143,43 @@ def _sync_docsync(
         except Exception as exc:  # a log problem never fails the sync
             prog.note(f"warning: run log not written: {exc}")
     return result
+
+
+def _load_watchdog(prog):
+    """docsync's process watchdog (docsync-lan >= 1.2), or None with a note for older engines."""
+    try:
+        from docsync import watchdog  # noqa: PLC0415 — optional engine
+    except ImportError:
+        prog.note(f"docsync {sync_docsync.docsync_version() or '?'} has no watchdog; no deadline")
+        return None
+    return watchdog
+
+
+def run_with_deadline(prog, timeout: float | None, fn):
+    """Run `fn` with the whole process bounded by `timeout` seconds (default TIMEOUT_SYNC).
+    On expiry this process's rsync/ssh children are ended and the process exits 4, which also
+    releases the docsync run lock (2026-11-07: a launchd sync slept 12 min holding it)."""
+    from maccluster.constants import TIMEOUT_SYNC
+
+    seconds = float(timeout or TIMEOUT_SYNC)
+    wd = _load_watchdog(prog)
+    if wd is None:
+        return fn()
+
+    def expire() -> None:
+        try:
+            print(
+                f"maccluster: deadline of {seconds:g} s exceeded — ending this sync (exit {wd.EXIT_DEADLINE})",
+                file=sys.stderr,
+                flush=True,
+            )
+        except Exception:  # noqa: BLE001 — a broken pipe must not stop the exit
+            pass
+        wd.kill_descendants()
+        os._exit(wd.EXIT_DEADLINE)
+
+    wd.arm(seconds, expire)
+    try:
+        return fn()
+    finally:
+        wd.disarm()

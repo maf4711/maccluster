@@ -380,3 +380,92 @@ def test_sync_dev_defaults_to_ditto(monkeypatch):
     assert reasons and "git" in reasons[0]
     assert sd.resolve_engine("auto", reasons)[0] == "ditto"
     assert sd.ditto_only_reasons(**base, target="home") == []
+
+
+# ── deadline: docsync.watchdog armed around the docsync run ─────────────────
+
+
+class _FakeWatchdog:
+    EXIT_DEADLINE = 4
+
+    def __init__(self):
+        self.calls: list[tuple] = []
+
+    def arm(self, seconds, on_expire):
+        self.calls.append(("arm", seconds))
+        return True
+
+    def disarm(self):
+        self.calls.append(("disarm",))
+
+    def kill_descendants(self, grace=1.0):
+        self.calls.append(("kill",))
+
+
+def test_watchdog_armed_and_disarmed_with_default_timeout(monkeypatch):
+    from maccluster.constants import TIMEOUT_SYNC
+    from maccluster.services import sync_engine
+
+    wd = _FakeWatchdog()
+    monkeypatch.setattr(sync_engine, "_load_watchdog", lambda prog: wd)
+    out = sync_engine.run_with_deadline(_Prog(), None, lambda: "result")
+    assert out == "result"
+    assert wd.calls == [("arm", TIMEOUT_SYNC), ("disarm",)]
+
+
+def test_watchdog_disarmed_when_the_run_raises(monkeypatch):
+    from maccluster.services import sync_engine
+
+    wd = _FakeWatchdog()
+    monkeypatch.setattr(sync_engine, "_load_watchdog", lambda prog: wd)
+
+    def boom():
+        raise CliError("peer failed", exit_code=1)
+
+    with pytest.raises(CliError):
+        sync_engine.run_with_deadline(_Prog(), 120.0, boom)
+    assert wd.calls == [("arm", 120.0), ("disarm",)]
+
+
+def test_no_watchdog_runs_without_deadline(monkeypatch):
+    import builtins
+
+    from maccluster.services import sync_engine
+
+    real_import = builtins.__import__
+
+    def no_watchdog(name, *a, **k):
+        if name == "docsync.watchdog" or (name == "docsync" and a and "watchdog" in (a[2] or ())):
+            raise ImportError("no watchdog")
+        return real_import(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", no_watchdog)
+    monkeypatch.setattr(sd, "docsync_version", lambda: "1.1.3")
+    prog = _Prog()
+    assert sync_engine.run_with_deadline(prog, 60.0, lambda: 7) == 7
+    assert "docsync 1.1.3 has no watchdog; no deadline" in prog.notes
+
+
+def test_deadline_subprocess_exits_4(tmp_path):
+    """Real docsync.watchdog: a run that sleeps 30 s with a 2 s timeout ends the process with 4."""
+    import subprocess
+    import sys
+    import time
+
+    pytest.importorskip("docsync.watchdog")
+    code = (
+        "import time\n"
+        "from maccluster.services import sync_engine\n"
+        "class P:\n"
+        "    def note(self, t): print(t)\n"
+        "sync_engine.run_with_deadline(P(), 2.0, lambda: time.sleep(30))\n"
+    )
+    t0 = time.monotonic()
+    src = str(Path(__file__).resolve().parents[3] / "src")  # this checkout, not the installed copy
+    env = {**__import__("os").environ, "PYTHONPATH": src}
+    r = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, timeout=25, env=env
+    )
+    assert r.returncode == 4, r.stdout + r.stderr
+    assert "deadline of 2 s exceeded" in r.stderr
+    assert time.monotonic() - t0 < 15
