@@ -162,7 +162,6 @@ if __name__ == "__main__":
 
 class ParallelTests(unittest.TestCase):
     def test_two_peers_in_parallel(self):
-        import io
         from docsync.session import run_many
         with tempfile.TemporaryDirectory() as d:
             base = Path(d)
@@ -259,7 +258,7 @@ class ReliabilityTests(unittest.TestCase):
 
 class SharedScanTests(unittest.TestCase):
     def test_run_many_scans_local_once_and_streams_large_transfers(self):
-        from docsync import manifest, session, transport
+        from docsync import manifest, session
         with tempfile.TemporaryDirectory() as d:
             base = Path(d)
             a, b, c = base / "A", base / "B", base / "C"
@@ -289,11 +288,133 @@ class SharedScanTests(unittest.TestCase):
             self.assertEqual(rb.streams, 4)
             self.assertTrue(all((a / f"big{i}.bin").exists() for i in range(20)))
             # base of peer b must know the pulled files (touched-path refresh), and from-a.txt
-            mb = manifest.load(base / "state" / "base-b.json")
+            mb = manifest.load(session.base_file("b", base / "state"))
             self.assertIn("big0.bin", mb)
             self.assertIn("from-a.txt", mb)
             # peer c's base must NOT contain big*.bin pulled from b (they still have to flow to c next run)
-            mc = manifest.load(base / "state" / "base-c.json")
+            mc = manifest.load(session.base_file("c", base / "state"))
             self.assertNotIn("big0.bin", mc)
             reps2 = session.run_many(cfg, [("c", LocalTransport(c))], parallel=False, state_dir=base / "state", log=lambda *x: None)
             self.assertEqual(reps2[0].pushed_files, 20)
+
+
+def _has_tool(name):
+    import shutil
+    return shutil.which(name) is not None
+
+
+class RootsFidelitySafetyNetTests(unittest.TestCase):
+    setUp, tearDown, sync = LocalSyncTests.setUp, LocalSyncTests.tearDown, LocalSyncTests.sync
+
+    def test_two_roots_two_blocks_two_bases(self):
+        from docsync.config import Root
+        from docsync.report import RunReport
+        from docsync.session import run_roots
+        base = Path(self.tmp.name)
+        a2, b2 = base / "A" / "Desktop", base / "B" / "Desktop"
+        a2.mkdir(); b2.mkdir()
+        touch(self.a / "doc.txt", "d", self.now)
+        touch(a2 / "desk.txt", "x", self.now)
+        cfg = Config(path=str(self.a), trash=False,
+                     roots=[Root("documents", str(self.a), legacy=True), Root("desktop", str(a2))])
+        peer_dirs = {"documents": self.b, "desktop": b2}
+        reps = run_roots(cfg, cfg.effective_roots(), lambda r: [("b", LocalTransport(peer_dirs[r.name]))],
+                         state_dir=self.state, log=lambda *x: None)
+        self.assertEqual([(r.root, r.peer, r.pushed_files) for r in reps], [("documents", "b", 1), ("desktop", "b", 1)])
+        self.assertTrue((b2 / "desk.txt").exists() and (self.b / "doc.txt").exists())
+        self.assertTrue(base_file("b", self.state, "documents").exists())
+        self.assertTrue(base_file("b", self.state, "desktop").exists())
+        run = RunReport(); run.peers += reps
+        text = run.render()
+        self.assertIn("── b [documents]", text)
+        self.assertIn("── b [desktop]", text)
+        self.assertIn("2 transferred", text)
+
+    def test_legacy_base_is_migrated(self):
+        touch(self.a / "x.txt", "x", self.now)
+        self.sync()
+        new = base_file("b", self.state)
+        new.rename(self.state / "base-b.json")  # pretend 0.9 wrote it
+        rep = self.sync()
+        self.assertTrue(new.exists())
+        self.assertFalse((self.state / "base-b.json").exists())
+        self.assertEqual((rep.pushed_files, rep.pulled_files, rep.unchanged), (0, 0, 1))
+
+    @unittest.skipUnless(_has_tool("xattr"), "xattr tool missing")
+    def test_xattr_and_acl_survive(self):
+        import subprocess
+        f = self.a / "tagged.pdf"
+        touch(f, "pdf", self.now)
+        subprocess.run(["xattr", "-w", "com.example.docsync", "kept", str(f)], check=True)
+        acl = subprocess.run(["chmod", "+a", "everyone allow read", str(f)]).returncode == 0
+        os.utime(f, (self.now, self.now))
+        rep = self.sync()
+        self.assertTrue(rep.ok, rep.error)
+        dst = self.b / "tagged.pdf"
+        self.assertEqual(subprocess.run(["xattr", "-p", "com.example.docsync", str(dst)],
+                                        capture_output=True, text=True).stdout.strip(), "kept")
+        if acl:
+            self.assertIn("everyone allow read", subprocess.run(["ls", "-le", str(dst)], capture_output=True, text=True).stdout)
+
+    def test_overwrite_by_pull_is_backed_up(self):
+        touch(self.a / "doc.txt", "old-local", self.now)
+        self.sync()
+        touch(self.b / "doc.txt", "new-from-peer", self.now + 50)
+        rep = self.sync()
+        self.assertEqual(rep.pulled_files, 1)
+        self.assertEqual(rep.safetynet_files, 1)
+        self.assertIn("backed up before overwrite", rep.render())
+        saved = list((self.a / ".docsync-safetynet").glob("*/doc.txt"))
+        self.assertEqual(len(saved), 1)
+        self.assertEqual(saved[0].read_text(), "old-local")
+        self.assertEqual((self.a / "doc.txt").read_text(), "new-from-peer")
+        # the backup never shows up in a manifest, so it never syncs
+        self.assertFalse((self.b / ".docsync-safetynet").exists())
+        self.assertEqual(self.sync().transferred_files, 0)
+
+    def test_overwrite_by_push_is_backed_up_on_the_peer(self):
+        touch(self.a / "doc.txt", "v1", self.now)
+        self.sync()
+        touch(self.a / "doc.txt", "v2-local", self.now + 50)
+        rep = self.sync()
+        self.assertEqual((rep.pushed_files, rep.safetynet_files), (1, 1))
+        saved = list((self.b / ".docsync-safetynet").glob("*/doc.txt"))
+        self.assertEqual(saved[0].read_text(), "v1")
+
+    def test_safetynet_disabled(self):
+        self.cfg.safetynet = False
+        touch(self.a / "doc.txt", "a", self.now)
+        self.sync()
+        touch(self.b / "doc.txt", "b", self.now + 50)
+        self.assertEqual(self.sync().safetynet_files, 0)
+        self.assertFalse((self.a / ".docsync-safetynet").exists())
+
+    def test_missing_root_fails_and_is_not_created(self):
+        self.cfg.path = str(Path(self.tmp.name) / "nope")
+        rep = self.sync()
+        self.assertFalse(rep.ok)
+        self.assertIn("root missing", rep.error)
+        self.assertFalse((Path(self.tmp.name) / "nope").exists())
+
+    def test_failing_backup_aborts_before_rsync(self):
+        from docsync import transport
+        touch(self.a / "doc.txt", "old", self.now)
+        self.sync()
+        touch(self.b / "doc.txt", "new", self.now + 50)
+        sn = self.a / ".docsync-safetynet"
+        sn.mkdir(exist_ok=True)
+        os.chmod(sn, 0o500)
+        called = {"n": 0}
+        real = transport._run_rsync_once
+        def spy(*a, **k):
+            called["n"] += 1
+            return real(*a, **k)
+        transport._run_rsync_once = spy
+        try:
+            rep = self.sync()
+        finally:
+            transport._run_rsync_once = real
+            os.chmod(sn, 0o700)
+        self.assertFalse(rep.ok)
+        self.assertEqual(called["n"], 0)
+        self.assertEqual((self.a / "doc.txt").read_text(), "old")

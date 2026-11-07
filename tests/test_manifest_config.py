@@ -420,7 +420,7 @@ class AdvisorTests(unittest.TestCase):
         self.assertIn("- a/doc.conflict-T-h.gz  (2,500 Bytes", p)
 
     def test_cli_falls_back_when_model_unavailable(self):
-        import io, contextlib, os
+        import io, contextlib
         from docsync import advisor, cli
         orig = (advisor.availability, cli.load_config, cli.STATE_DIR)
         advisor.availability = lambda: (False, "device not eligible")
@@ -439,3 +439,125 @@ class AdvisorTests(unittest.TestCase):
         self.assertIn("rule-based fallback", buf.getvalue())
         self.assertIn("device not eligible", buf.getvalue())
         self.assertIn("f.conflict-T-h.txt", buf.getvalue())
+
+
+class RootsConfigTests(unittest.TestCase):
+    def test_legacy_path_is_root_documents(self):
+        cfg = config.parse_config('path = "~/Docs"\n[[peers]]\nname = "a"\nhosts = ["h"]\npath = "~/PeerDocs"\n')
+        roots = cfg.effective_roots()
+        self.assertEqual([(r.name, r.path, r.legacy) for r in roots], [("documents", "~/Docs", True)])
+        self.assertEqual(cfg.peer_path(cfg.peers[0], roots[0]), "~/PeerDocs")
+
+    def test_roots_parse_render_roundtrip(self):
+        text = ('path = "~/Documents"\n[[roots]]\nname = "desktop"\npath = "~/Desktop"\npeer_path = "~/Desk2"\n'
+                'excludes = ["*.mov"]\n[[peers]]\nname = "a"\nhosts = ["h"]\n')
+        cfg = config.parse_config(text)
+        again = config.parse_config(config.render_config(cfg))
+        self.assertEqual([r.name for r in again.effective_roots()], ["documents", "desktop"])
+        d = again.root("desktop")
+        self.assertEqual((d.peer_path, d.excludes), ("~/Desk2", ["*.mov"]))
+        self.assertIn(".docsync*", again.for_root(d).excludes)
+        self.assertEqual(again.peer_path(again.peers[0], d), "~/Desk2")
+
+    def test_roots_without_top_level_path(self):
+        cfg = config.parse_config('[[roots]]\nname = "fonts"\npath = "~/Library/Fonts"\n')
+        self.assertEqual([r.name for r in cfg.effective_roots()], ["fonts"])
+
+    def test_bad_roots(self):
+        for bad in ('[[roots]]\nname = "x y"\npath = "p"\n', '[[roots]]\nname = "x"\n',
+                    '[[roots]]\nname = "x"\npath = "a"\n[[roots]]\nname = "x"\npath = "b"\n'):
+            with self.assertRaises(ValueError):
+                config.parse_config(bad)
+
+    def test_safetynet_settings(self):
+        cfg = config.parse_config('safetynet = false\nsafetynet_keep = 3\nsafetynet_max_age_days = 7\nsafetynet_max_gb = 1.5\n')
+        self.assertFalse(cfg.safetynet)
+        self.assertEqual(cfg.safetynet_policy(), (3, 7.0, int(1.5 * 1024**3)))
+
+
+class SafetyNetRetentionTests(unittest.TestCase):
+    def _mk(self, base, days_ago, size, now):
+        import time as _t
+        name = _t.strftime("%Y%m%dT%H%M%SZ", _t.gmtime(now - days_ago * 86400))
+        d = Path(base) / name / "Documents"
+        d.mkdir(parents=True)
+        (d / "f.bin").write_bytes(b"x" * size)
+        return Path(base) / name
+
+    def test_count_age_size_and_newest_kept(self):
+        from docsync import safetynet
+        now = 1_800_000_000
+        with tempfile.TemporaryDirectory() as d:
+            runs = [self._mk(d, i, 10, now) for i in range(8)]
+            self.assertEqual(safetynet.prune(d, 5, None, None, now), 3)
+            self.assertTrue(runs[0].exists() and not runs[7].exists())
+        with tempfile.TemporaryDirectory() as d:
+            new, old = self._mk(d, 40, 10, now), self._mk(d, 60, 10, now)
+            self.assertEqual(safetynet.prune(d, 5, 14, None, now), 1)
+            self.assertTrue(new.exists() and not old.exists())  # newest survives although older than 14 d
+        with tempfile.TemporaryDirectory() as d:
+            runs = [self._mk(d, i, 1000, now) for i in range(4)]
+            self.assertEqual(safetynet.prune(d, 5, None, 2500, now), 2)
+            self.assertEqual(safetynet.usage(d), [(runs[0].name, 1000), (runs[1].name, 1000)])
+        with tempfile.TemporaryDirectory() as d:
+            big = self._mk(d, 0, 5000, now)
+            self.assertEqual(safetynet.prune(d, 5, None, 100, now), 0)
+            self.assertTrue(big.exists())
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "notes").mkdir()
+            self.assertEqual(safetynet.prune(d, 0, 0, 0, now), 0)
+            self.assertTrue((Path(d) / "notes").exists())
+
+    def test_prune_script_runs_standalone(self):
+        import subprocess
+        from docsync import safetynet
+        now = 1_800_000_000
+        with tempfile.TemporaryDirectory() as d:
+            for i in range(7):
+                self._mk(d, i, 10, now)
+            out = subprocess.run(["python3", "-", d, "5", "-1", "-1", str(now)], input=safetynet.PRUNE_PY,
+                                 text=True, capture_output=True).stdout
+            self.assertIn("REMOVED 2", out)
+
+    def test_remote_backup_script_quoting_and_output(self):
+        import subprocess
+        from docsync import safetynet
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "a b").mkdir()
+            (Path(d) / "a b" / "it's.txt").write_text("hello")
+            script = safetynet.remote_backup_script(d, ["a b/it's.txt", "missing.txt"], "20261107T120000Z")
+            res = subprocess.run(["sh", "-s"], input=script, text=True, capture_output=True)
+            self.assertEqual(res.returncode, 0, res.stderr)
+            self.assertEqual(safetynet.parse_backup_output(res.stdout), (1, 5))
+            self.assertEqual((Path(d) / ".docsync-safetynet/20261107T120000Z/a b/it's.txt").read_text(), "hello")
+
+
+class FidelityTests(unittest.TestCase):
+    PROBE = ("PATH /opt/homebrew/bin/rsync\nrsync  version 3.5.2  protocol version 33\n    ACLs,\n    xattrs, crtimes\nEND\n"
+             "PATH /usr/bin/rsync\nopenrsync: protocol version 29\nEND\n")
+
+    def test_probe_and_choose(self):
+        from docsync import fidelity
+        entries = fidelity.parse_probe(self.PROBE)
+        self.assertEqual(entries[1], ("/usr/bin/rsync", set()))
+        path, flags, warn = fidelity.choose({"xattrs", "acls", "crtimes"}, entries)
+        self.assertEqual(path, "/opt/homebrew/bin/rsync")
+        self.assertIn("-X", flags); self.assertIn("-A", flags); self.assertIn("--crtimes", flags)
+        self.assertIn("--filter=-x com.apple.provenance", flags)
+        self.assertEqual(warn, "")
+
+    def test_openrsync_only_peer_warns(self):
+        from docsync import fidelity
+        path, flags, warn = fidelity.choose({"xattrs", "acls", "crtimes"}, [("/usr/bin/rsync", set())])
+        self.assertEqual(flags, [])
+        self.assertEqual(warn, "peer rsync /usr/bin/rsync lacks acls/crtimes/xattrs — synced without them")
+        self.assertIn("this Mac's rsync lacks xattrs", fidelity.choose({"acls", "crtimes"}, fidelity.parse_probe(self.PROBE))[2])
+
+    def test_probe_script_sees_capabilities_beyond_line_six(self):
+        import subprocess
+        from docsync import fidelity
+        entries = fidelity.parse_probe(subprocess.run(["sh", "-c", fidelity.PROBE_SH], text=True, capture_output=True).stdout)
+        best = max(entries, key=lambda e: len(e[1]))
+        if best[0].startswith("/opt/homebrew") or best[0].startswith("/usr/local"):
+            self.assertEqual(best[1], {"xattrs", "acls", "crtimes"})
+        self.assertEqual(fidelity.choose(set(), [])[2][:25], "peer rsync not found in /")

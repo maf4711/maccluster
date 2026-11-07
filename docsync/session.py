@@ -8,15 +8,24 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from docsync import engine, manifest
-from docsync.config import STATE_DIR, Config
+from docsync import engine, manifest, safetynet
+from docsync.config import STATE_DIR, Config, Root
 from docsync.progress import Bar
 from docsync.report import PeerReport
 from docsync.transport import TransportError, remove_local
 
 
-def base_file(peer_name: str, state_dir: Path = STATE_DIR) -> Path:
-    return state_dir / f"base-{peer_name}.json"
+def base_file(peer_name: str, state_dir: Path = STATE_DIR, root: str = "documents") -> Path:
+    return state_dir / f"base-{root}-{peer_name}.json"
+
+
+def _migrate_base(peer_name: str, state_dir: Path, root: str) -> None:
+    """0.x kept one base per peer (base-<peer>.json); it belongs to the root "documents"."""
+    if root != "documents":
+        return
+    legacy, new = state_dir / f"base-{peer_name}.json", base_file(peer_name, state_dir, root)
+    if legacy.exists() and not new.exists():
+        legacy.rename(new)
 
 
 def _bytes_of(m: manifest.Manifest, paths) -> int:
@@ -40,15 +49,23 @@ def scan_local(cfg: Config):
 
 def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbose: bool = False,
              state_dir: Path = STATE_DIR, log=print, progress: bool = False,
-             force_deletes: bool = False, progress_stream=None, local_source=None) -> PeerReport:
+             force_deletes: bool = False, progress_stream=None, local_source=None,
+             root_name: str = "documents") -> PeerReport:
     """local_source: callable returning (manifest, cloud_set); when given, the remote listing is
     requested first and the local scan result fetched afterwards (they overlap in run_many)."""
-    rep = PeerReport(peer=peer_name, dry=dry)
+    rep = PeerReport(peer=peer_name, dry=dry, root=root_name)
     local_root = cfg.local_root
-    local_root.mkdir(parents=True, exist_ok=True)
+    if not local_root.is_dir():  # never create a root: a missing one is a typo or an unmounted volume
+        rep.ok, rep.error = False, f"root missing: {local_root}"
+        rep.finish()
+        return rep
+    bfile = base_file(peer_name, state_dir, root_name)
     try:
+        _migrate_base(peer_name, state_dir, root_name)
         t0 = time.monotonic()
         rep.host = transport.check()
+        if hasattr(transport, "prepare"):
+            rep.warnings += transport.prepare()
         rep.phase("connect", t0)
 
         t0 = time.monotonic()
@@ -79,7 +96,7 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
         for h in hidden:
             local.pop(h, None)
             remote.pop(h, None)
-        old_base_raw = manifest.load(base_file(peer_name, state_dir))
+        old_base_raw = manifest.load(bfile)
         old_base = None if old_base_raw is None else {fold(k): v for k, v in old_base_raw.items()}
         rep.first_sync = old_base is None
         base = None if old_base is None else {k: v for k, v in old_base.items() if k not in hidden}
@@ -122,6 +139,20 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
                 continue
             rep.conflicts.append((path, winner, copy))
         rep.phase("conflicts", t0)
+
+        if not dry and cfg.safetynet and hasattr(transport, "backup"):
+            t0 = time.monotonic()
+            try:  # retention on the peer side first, so a full SafetyNet never blocks a backup
+                transport.prune_safetynet(cfg.safetynet_policy())
+            except Exception as e:  # noqa: BLE001 — retention problems are warnings, not failures
+                rep.warnings.append(f"safetynet prune on peer skipped: {e}")
+            sn_stamp = safetynet.stamp_now()
+            over_local = [p for p in plan.pull if fold(p) in local]
+            over_remote = [p for p in plan.push if fold(p) in remote]
+            n1, b1 = safetynet.backup_local(local_root, over_local, sn_stamp)  # raises → nothing overwritten
+            n2, b2 = transport.backup(over_remote, sn_stamp)
+            rep.safetynet_files, rep.safetynet_bytes = n1 + n2, b1 + b2
+            rep.phase("safetynet", t0)
 
         sizes_local = {local_name.get(k, k): v[1] for k, v in local.items()}
         sizes_remote = {remote_name.get(k, k): v[1] for k, v in remote.items()}
@@ -173,7 +204,7 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
                 for k, v in old_base_raw.items():
                     if fold(k) in hidden:
                         new_base[k] = v
-            manifest.save(base_file(peer_name, state_dir), new_base,
+            manifest.save(bfile, new_base,
                           meta={"peer": peer_name, "host": rep.host, "synced_at": datetime.now().isoformat()})
     except (TransportError, OSError) as e:
         rep.ok, rep.error = False, str(e)
@@ -212,6 +243,11 @@ def run_many(cfg: Config, jobs: list[tuple[str, object]], *, parallel: bool = Tr
 
     names = [n for n, _ in jobs]
     display = MultiDisplay(names) if (parallel and progress and len(jobs) > 1) else None
+    if not kw.get("dry") and cfg.safetynet and cfg.local_root.is_dir():
+        try:  # local retention once per root and run (peers prune their side in run_peer)
+            safetynet.prune(str(cfg.local_root / safetynet.SN_DIR), *cfg.safetynet_policy())
+        except Exception:  # noqa: BLE001
+            pass
     scan_pool = ThreadPoolExecutor(max_workers=1)
     local_future = scan_pool.submit(scan_local, cfg)  # one local walk, overlapping the remote listings
     local_source = local_future.result
@@ -237,6 +273,15 @@ def run_many(cfg: Config, jobs: list[tuple[str, object]], *, parallel: bool = Tr
         scan_pool.shutdown(wait=False)
     if display:
         display.close()
+    return reps
+
+
+def run_roots(cfg: Config, roots: list[Root], jobs_for_root, **kw) -> list[PeerReport]:
+    """Every root, one after another; within a root all peers in parallel (run_many).
+    jobs_for_root(root) → [(peer_name, transport)] built with that root's peer path."""
+    reps: list[PeerReport] = []
+    for root in roots:
+        reps += run_many(cfg.for_root(root), jobs_for_root(root), root_name=root.name, **kw)
     return reps
 
 
