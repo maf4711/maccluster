@@ -74,7 +74,9 @@ def _run_rsync(src: str, dst: str, paths: list[str], ssh_cmd: list[str] | None,
         return {"files": 0, "bytes": 0, "sent": 0, "received": 0, "skipped": 0}
     lst = _files_from(paths)
     try:
-        cmd = [rsync_bin(), "-a", "--from0", f"--files-from={lst}", "--partial",
+        # --partial-dir: an interrupted transfer never leaves a truncated file under its final
+        # name (the next run would then see a "conflict"); .docsync-partial is in the default excludes.
+        cmd = [rsync_bin(), "-a", "--from0", f"--files-from={lst}", "--partial-dir=.docsync-partial",
                "--no-human-readable", "--stats"]
         if progress is not None and not dry:
             cmd.append("--info=progress2")
