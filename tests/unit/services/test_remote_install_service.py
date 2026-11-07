@@ -46,3 +46,19 @@ def test_reverse_iperf_remote_cmd_targets_self_bind():
     assert "iperf3 -c 10.42.0.1 -t 3 -J" in cmd
     assert ".local/bin" in cmd  # user-local installs (no admin Homebrew)
     assert "exit 66" in cmd  # distinguishable "no iperf3 on peer"
+
+
+def test_last_error_line_picks_the_reason():
+    from maccluster.services.remote_install_service import _last_error_line
+
+    log = "==> args wheel=x\n==> verify wheel\nremote install: installation lock in progress\n"
+    assert _last_error_line(log) == "remote install: installation lock in progress"
+    assert _last_error_line("") == "no output"
+    assert _last_error_line("a\nb\n") == "b"
+
+
+def test_install_lock_waits_a_minute():
+    from maccluster.services.remote_install_script import REMOTE_INSTALL_SH
+
+    assert "MACCLUSTER_INSTALL_LOCK_WAIT" in REMOTE_INSTALL_SH
+    assert "'60'" in REMOTE_INSTALL_SH  # default: wait a minute for automation/other installs

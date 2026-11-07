@@ -40,6 +40,18 @@ class RemoteInstallResult:
     log: str = ""
 
 
+def _last_error_line(log: str) -> str:
+    """The line that says why the peer script stopped (its errors are short echo lines)."""
+    lines = [ln.strip() for ln in log.splitlines() if ln.strip()]
+    for ln in reversed(lines):
+        low = ln.lower()
+        if any(
+            w in low for w in ("error", "fail", "mismatch", "missing", "refusing", "lock", "denied")
+        ):
+            return ln[:200]
+    return lines[-1][:200] if lines else "no output"
+
+
 def resolve_install_user(user: str | None, peer_node) -> str:
     """SSH user for the peer: explicit --user, else user from the node's
     ssh_target in cluster.toml, else local $USER."""
@@ -375,7 +387,7 @@ def remote_install(
                 ok=run.returncode == 0,
                 message=f"ok; {engine_note}"
                 if run.returncode == 0
-                else f"remote install failed rc={run.returncode}",
+                else f"remote install failed rc={run.returncode}: {_last_error_line(log)}",
                 log=log[-4000:],
             )
         finally:

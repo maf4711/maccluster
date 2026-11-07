@@ -14,7 +14,9 @@ try:
     fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
     if not stat.S_ISREG(os.fstat(fd).st_mode):
         raise ValueError('installation lock must be a regular file')
-    deadline = time.monotonic() + 1.0
+    # Automation and other installs share this lock; wait for them instead of failing
+    # after one second (node-b 2026-11-07: rc=1 with no message, retry succeeded).
+    deadline = time.monotonic() + float(os.environ.get('MACCLUSTER_INSTALL_LOCK_WAIT', '60'))
     while True:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -22,7 +24,7 @@ try:
         except BlockingIOError:
             if time.monotonic() >= deadline:
                 raise ValueError('installation lock in progress') from None
-            time.sleep(0.05)
+            time.sleep(0.25)
     os.fchmod(fd, 0o600)
     os.ftruncate(fd, 0)
     os.write(fd, f'{os.getpid()}\n{time.time()}\n'.encode())

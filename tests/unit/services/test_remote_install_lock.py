@@ -14,7 +14,7 @@ from maccluster.services.remote_install_script import REMOTE_INSTALL_SH, _locked
 def run_script(home, body, *args):
     return subprocess.run(
         ["/bin/bash", "-c", _locked_script(body), "test", *args],
-        env={**os.environ, "HOME": str(home)},
+        env={**os.environ, "HOME": str(home), "MACCLUSTER_INSTALL_LOCK_WAIT": "1"},
         capture_output=True,
         text=True,
         timeout=10,
