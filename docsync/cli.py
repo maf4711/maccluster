@@ -179,13 +179,21 @@ def cmd_speedtest(a) -> int:
                 continue
             targets = [(host, via)]
         for host, via in targets:
+            try:  # a .local name may resolve onto the Thunderbolt bridge (mDNS runs there too)
+                ip = socket.gethostbyname(host)
+            except OSError:
+                ip = host
+            if ip != host:
+                state = discover.is_tb_host(ip, discover.tb_networks(), discover.cluster_tb_subnet())
+                via = "Thunderbolt" if state == "active" else "LAN"
+                host = f"{host} ({ip})"
             if via == "Thunderbolt" and tb_speed:
                 via = f"Thunderbolt {tb_speed} Gb/s"
-            pings = [m for m in (discover.ping(host) for _ in range(3)) if m is not None]
+            pings = [m for m in (discover.ping(ip) for _ in range(3)) if m is not None]
             ping_ms = sum(pings) / len(pings) if pings else None
             print(f"── {p.name}  {host} via {via}  … testing {a.seconds:.0f}s per direction", flush=True)
-            t = RemoteTransport(p.userhost(host), p.path)
-            r = speedtest.run(p.name, host, via, p.userhost(host), t.ssh_cmd, a.seconds, ping_ms,
+            t = RemoteTransport(p.userhost(ip), p.path)
+            r = speedtest.run(p.name, host, via, p.userhost(ip), t.ssh_cmd, a.seconds, ping_ms,
                               skip_tcp=a.ssh_only, skip_ssh=a.tcp_only)
             results.append(r)
             print(r.render())

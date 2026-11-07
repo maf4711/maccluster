@@ -174,7 +174,12 @@ def run_many(cfg: Config, jobs: list[tuple[str, object]], *, parallel: bool = Tr
 
     def one(name, tr):
         transport = tr() if callable(tr) and not hasattr(tr, "check") else tr
-        plog = (lambda *a: log(f"[{name}]", *a)) if display is None else (lambda *a: display.update(name, f"   {name:<10}" + " ".join(str(x) for x in a)))
+        def plog(*a, _name=name):
+            msg = " ".join(str(x) for x in a)
+            if display is None:
+                log(msg if msg.startswith(f"[{_name}]") else f"[{_name}] {msg}")
+            else:
+                display.update(_name, f"   {_name:<10}" + msg.replace(f"[{_name}] ", ""))
         return run_peer(cfg, name, transport, state_dir=state_dir, log=plog, progress=progress,
                         progress_stream=display.slot(name) if display else None, **kw)
 

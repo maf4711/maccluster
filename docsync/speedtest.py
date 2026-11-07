@@ -74,6 +74,9 @@ def _random_block() -> bytes:
 
 
 def tcp_test(ssh_cmd: list[str], userhost: str, host: str, secs: float) -> tuple[float, float]:
+    """host may be 'name (ip)' — connect to the ip."""
+    if host.endswith(")") and " (" in host:
+        host = host.rsplit(" (", 1)[1][:-1]
     """Start the sink/source server on the peer over ssh, then push and pull over a raw socket."""
     port = random.randint(47000, 47999)
     proc = subprocess.Popen([*ssh_cmd, userhost, f"python3 - {port} {secs}"], text=True,
