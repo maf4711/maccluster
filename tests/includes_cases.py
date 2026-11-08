@@ -228,9 +228,14 @@ class IncludesTests(_Trees):
         os.symlink(target, self.a / "skills")
         os.symlink(target / "s.md", self.a / "CLAUDE.md")
         inc = ["skills/**", "skills", "CLAUDE.md"]
-        self.assertEqual(manifest.scan(self.a, [], includes=inc), {})
-        res = run_lister(self.a, inc)
-        self.assertEqual((res.returncode, res.stdout), (0, ""))
+        links: set[str] = set()
+        self.assertEqual(manifest.scan(self.a, [], includes=inc, links=links), {})
+        self.assertEqual(links, {"skills", "CLAUDE.md"})
+        res = run_lister(self.a, inc)  # symlinks are reported as -3 markers only (1.3.2), never listed
+        self.assertEqual((res.returncode, res.stdout), (0, "0\t-3\tskills\x000\t-3\tCLAUDE.md\x00"))
+        links = set()
+        self.assertEqual(manifest.parse_lines(res.stdout, [], includes=inc, links=links), {})
+        self.assertEqual(links, {"skills", "CLAUDE.md"})
 
     def test_no_match_no_delete(self):
         touch(self.a / "CLAUDE.md", "a", self.now)
@@ -298,7 +303,9 @@ class IncludesTests(_Trees):
         self.assertIsNone(Root("documents", "~/Documents").includes)
         old, new = run_lister(self.a, source=LISTER_PY_120), run_lister(self.a)
         self.assertEqual((old.returncode, new.returncode), (0, 0), new.stderr)
-        self.assertEqual(old.stdout, new.stdout)
+        marker = "0\t-3\tlink\0"  # 1.3.2: the symlink is reported (name only); all else byte-identical
+        self.assertIn(marker, new.stdout)
+        self.assertEqual(old.stdout, new.stdout.replace(marker, ""))
         ex = [".docsync*", ".DS_Store"]
         self.assertEqual(manifest.scan(self.a, ex), manifest.parse_lines(old.stdout, ex))
         self.assertEqual(len(manifest.scan(self.a, ex)), 6)

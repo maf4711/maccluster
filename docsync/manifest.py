@@ -159,11 +159,13 @@ def include_filter(includes: list[str] | None, icase: bool = False):
 
 
 def scan(root: Path, patterns: list[str], dataless: set[str] | None = None,
-         includes: list[str] | None = None, denied: set[str] | None = None, icase: bool = False) -> Manifest:
-    """Walk root, return manifest of regular files (symlinks skipped).
+         includes: list[str] | None = None, denied: set[str] | None = None, icase: bool = False,
+         links: set[str] | None = None) -> Manifest:
+    """Walk root, return manifest of regular files (symlinks skipped, never followed).
     Cloud-only (dataless) files are left out of the manifest and added to `dataless`.
     With `includes`, only matching files are listed, directories no pattern can reach are never
-    entered, and files on the deny list are added to `denied` instead of the manifest."""
+    entered, and files on the deny list are added to `denied` instead of the manifest.
+    Symlinks (to dirs, to files, dangling) the walk meets are added to `links`."""
     out: Manifest = {}
     root = root.expanduser()
     if not root.is_dir():
@@ -175,20 +177,30 @@ def scan(root: Path, patterns: list[str], dataless: set[str] | None = None,
         keep = []
         for d in dirnames:
             rel = f"{rel_dir}/{d}" if rel_dir else d
-            if not excluded(rel, patterns) and not os.path.islink(os.path.join(dirpath, d)) \
-                    and (inc is None or inc.descend(rel)):
+            if excluded(rel, patterns):
+                continue
+            if os.path.islink(os.path.join(dirpath, d)):
+                if links is not None and (inc is None or inc.descend(rel) or inc.wants(rel)):
+                    links.add(norm(rel))
+            elif inc is None or inc.descend(rel):
                 keep.append(d)
         dirnames[:] = keep
         for f in filenames:
             rel = f"{rel_dir}/{f}" if rel_dir else f
-            if excluded(rel, patterns) or (inc is not None and not inc.wants(rel)):
+            if excluded(rel, patterns):
                 continue
             full = os.path.join(dirpath, f)
+            if os.path.islink(full):  # file or dangling link: may sit where an include expects a dir
+                if links is not None and (inc is None or inc.wants(rel) or inc.descend(rel)):
+                    links.add(norm(rel))
+                continue
+            if inc is not None and not inc.wants(rel):
+                continue
             try:
                 st = os.lstat(full)
             except OSError:
                 continue
-            if not os.path.isfile(full) or os.path.islink(full):
+            if not os.path.isfile(full):
                 continue
             if inc is not None and inc.denied(rel):
                 if denied is not None:
@@ -203,12 +215,14 @@ def scan(root: Path, patterns: list[str], dataless: set[str] | None = None,
 
 
 def parse_lines(text: str, patterns: list[str], dataless: set[str] | None = None,
-                includes: list[str] | None = None, denied: set[str] | None = None, icase: bool = False) -> Manifest:
+                includes: list[str] | None = None, denied: set[str] | None = None, icase: bool = False,
+                links: set[str] | None = None) -> Manifest:
     """Parse 'mtime<TAB>size<TAB>relpath' records (remote lister output).
     Records are NUL-separated (python lister) or newline-separated (stat fallback).
     size == -1 marks a cloud-only file: kept out of the manifest, added to `dataless`.
     With `includes`: size == -2 marks a file the peer's lister denied, and the allowlist and deny
-    list are applied again here (to `denied`, never to the manifest)."""
+    list are applied again here (to `denied`, never to the manifest).
+    size == -3 marks a symlink on the peer (name only): added to `links`, never to the manifest."""
     out: Manifest = {}
     inc = include_filter(includes, icase)
     records = text.split("\0") if "\0" in text else text.splitlines()
@@ -221,6 +235,10 @@ def parse_lines(text: str, patterns: list[str], dataless: set[str] | None = None
             continue
         rel = norm(rel[2:] if rel.startswith("./") else rel)
         if excluded(rel, patterns):
+            continue
+        if size == "-3":
+            if links is not None and (inc is None or inc.wants(rel) or inc.descend(rel)):
+                links.add(rel)
             continue
         if inc is not None:
             if not inc.wants(rel):
@@ -254,23 +272,32 @@ def save(file: Path, manifest: Manifest, meta: dict | None = None) -> None:
 
 # Remote lister: runs under `python3 - <root> [icase|case include ...]` on the peer; prints
 # mtime\tsize\trelpath NUL-terminated (file names may contain newlines). With includes, only matching
-# files are listed and denied ones are reported as size -2 (name only).
+# files are listed and denied ones are reported as size -2 (name only). Symlinks (never followed)
+# are reported as size -3 (name only), so the coordinator keeps every write away from them.
 LISTER_PY = FILTER_PY + "\nDENY = %r\n" % (list(DENY_PATTERNS),) + r'''
 import os, sys
 root = os.path.expanduser(sys.argv[1])
 inc = Filter(sys.argv[3:], DENY, sys.argv[2] == "icase") if len(sys.argv) > 2 else None
 out = sys.stdout
 for dirpath, dirnames, filenames in os.walk(root):
-    dirnames[:] = [d for d in dirnames if not os.path.islink(os.path.join(dirpath, d))]
+    rd = os.path.relpath(dirpath, root)
+    rd = "" if rd == "." else rd + "/"
+    links = set(d for d in dirnames if os.path.islink(os.path.join(dirpath, d)))
+    for d in sorted(links):
+        if inc is None or inc.descend(rd + d) or inc.wants(rd + d):
+            out.write("0\t-3\t%s\0" % (rd + d))
+    dirnames[:] = [d for d in dirnames if d not in links]
     if inc is not None:
-        rd = os.path.relpath(dirpath, root)
-        rd = "" if rd == "." else rd + "/"
         dirnames[:] = [d for d in dirnames if inc.descend(rd + d)]
     for f in filenames:
         full = os.path.join(dirpath, f)
+        if os.path.islink(full):
+            if inc is None or inc.wants(rd + f) or inc.descend(rd + f):
+                out.write("0\t-3\t%s\0" % (rd + f))
+            continue
         if inc is not None and not inc.wants(os.path.relpath(full, root)):
             continue
-        if os.path.islink(full) or not os.path.isfile(full):
+        if not os.path.isfile(full):
             continue
         try:
             st = os.lstat(full)
@@ -284,8 +311,10 @@ for dirpath, dirnames, filenames in os.walk(root):
         out.write("%d\t%d\t%s\0" % (int(st.st_mtime), size, rel))
 '''
 
-# Fallback when the peer has no python3: BSD stat (macOS), then GNU stat.
+# Fallback when the peer has no python3: BSD stat (macOS), then GNU stat; then symlinks as -3 markers
+# (find never follows them, so nothing below a symlinked dir is listed).
 LISTER_SH = (
     'cd {root} && ( find . -type f -exec stat -f "%m%t%z%t%N" {{}} + 2>/dev/null '
-    '|| find . -type f -exec stat -c "%Y%t%s%t%n" {{}} + )'
+    '|| find . -type f -exec stat -c "%Y%t%s%t%n" {{}} + ) '
+    '&& find . -type l -exec printf "0\\t-3\\t%s\\n" {{}} +'
 )

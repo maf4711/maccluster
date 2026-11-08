@@ -245,9 +245,10 @@ class LocalTransport:
         return self.label
 
     def manifest(self, excludes: list[str], dataless: set[str] | None = None,
-                 includes: list[str] | None = None, denied: set[str] | None = None, icase: bool = False) -> Manifest:
+                 includes: list[str] | None = None, denied: set[str] | None = None, icase: bool = False,
+                 links: set[str] | None = None) -> Manifest:
         _test_hang()
-        return scan(self.root, excludes, dataless, includes, denied, icase)
+        return scan(self.root, excludes, dataless, includes, denied, icase, links)
 
     def push(self, local_root: Path, paths: list[str], dry: bool, verbose: bool, progress=None,
              sizes: dict[str, int] | None = None, streams: int = 1) -> dict[str, int]:
@@ -383,7 +384,8 @@ class RemoteTransport:
                               lock.peer_lock_command(remote_path(self.path), cap)])
 
     def manifest(self, excludes: list[str], dataless: set[str] | None = None,
-                 includes: list[str] | None = None, denied: set[str] | None = None, icase: bool = False) -> Manifest:
+                 includes: list[str] | None = None, denied: set[str] | None = None, icase: bool = False,
+                 links: set[str] | None = None) -> Manifest:
         q = remote_path(self.path)
         if includes is not None:  # the allowlist runs on the peer: no LISTER_SH fallback (it lists everything)
             args = " ".join(shlex.quote(p) for p in ["icase" if icase else "case", *includes])
@@ -393,13 +395,13 @@ class RemoteTransport:
                 raise TransportError("includes need python3 on the peer")
             if res.returncode != 0:
                 raise TransportError(f"remote listing failed: {res.stderr.strip()[-400:]}")
-            return parse_lines(res.stdout, excludes, dataless, includes, denied, icase)
+            return parse_lines(res.stdout, excludes, dataless, includes, denied, icase, links)
         res = self.ssh(f"command -v python3 >/dev/null 2>&1 && python3 - {q}", stdin=LISTER_PY, timeout=600)
         if res.returncode != 0:
             res = self.ssh(LISTER_SH.format(root=q), timeout=600)
             if res.returncode != 0:
                 raise TransportError(f"remote listing failed: {res.stderr.strip()[-400:]}")
-        return parse_lines(res.stdout, excludes, dataless)
+        return parse_lines(res.stdout, excludes, dataless, links=links)
 
     def push(self, local_root: Path, paths: list[str], dry: bool, verbose: bool, progress=None,
              sizes: dict[str, int] | None = None, streams: int = 1) -> dict[str, int]:

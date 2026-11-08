@@ -478,3 +478,8 @@ try:  # IncludesTests and IncludesConfigTests (per-root allowlists): same patter
 except ImportError:
     from includes_cases import IncludesConfigTests, IncludesTests
 COLLECTED_FROM_INCLUDES = (IncludesConfigTests, IncludesTests)
+try:  # SymlinkTests (symlinks are never written through, replaced or deleted): same pattern
+    from tests.symlink_cases import SymlinkTests
+except ImportError:
+    from symlink_cases import SymlinkTests
+COLLECTED_FROM_SYMLINKS = (SymlinkTests,)

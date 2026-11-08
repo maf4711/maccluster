@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import os
 import socket
 import time
@@ -41,18 +42,34 @@ def _fold(cfg: Config):
 
 
 def scan_local(cfg: Config):
-    """(manifest, cloud-only set, denied set) of the local tree — shared between peers in run_many."""
+    """(manifest, cloud-only set, denied set, symlink set) of the local tree — shared between peers in run_many."""
     cloud: set[str] = set()
     denied: set[str] = set()
-    m = manifest.scan(cfg.local_root, cfg.excludes, cloud, cfg.includes, denied, cfg.case_insensitive)
-    return m, cloud, denied
+    links: set[str] = set()
+    m = manifest.scan(cfg.local_root, cfg.excludes, cloud, cfg.includes, denied, cfg.case_insensitive, links)
+    return m, cloud, denied, links
+
+
+def _under(key: str, links: set[str]) -> bool:
+    """key is a symlink or lies below one (any path component)."""
+    parts = key.split("/")
+    return any("/".join(parts[:i]) in links for i in range(1, len(parts) + 1))
+
+
+def _takes_links(fn) -> bool:
+    params = inspect.signature(fn).parameters.values()
+    return any(p.name == "links" or p.kind is inspect.Parameter.VAR_KEYWORD for p in params)
+
+
+def _symlink_skips(keys: set[str], links: set[str]) -> set[str]:
+    return {k for k in keys if _under(k, links)} if links else set()
 
 
 def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbose: bool = False,
              state_dir: Path = STATE_DIR, log=print, progress: bool = False,
              force_deletes: bool = False, progress_stream=None, local_source=None,
              root_name: str = "documents", on_progress=None, root_locks: lock.RootLocks | None = None) -> PeerReport:
-    """local_source: callable returning scan_local's (manifest, cloud_set, denied_set); when given, the remote listing is
+    """local_source: callable returning scan_local's (manifest, cloud, denied, links); when given, the remote listing is
     requested first and the local scan result fetched afterwards (they overlap in run_many).
     root_locks: the run's root locks (run_many shares one); dry runs take none."""
     rep = PeerReport(peer=peer_name, dry=dry, root=root_name)
@@ -83,14 +100,20 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
         cloud_remote: set[str] = set()
         log(f"[{peer_name}] listing remote tree…")
         denied_remote: set[str] = set()
+        links_remote: set[str] = set()
         # roots without includes keep the 1.2.0 transport call (other transports need not know includes)
-        remote = transport.manifest(cfg.excludes, cloud_remote, **(
-            {} if cfg.includes is None else {"includes": cfg.includes, "denied": denied_remote, "icase": cfg.case_insensitive}))
+        kw = {} if cfg.includes is None else {"includes": cfg.includes, "denied": denied_remote, "icase": cfg.case_insensitive}
+        if _takes_links(transport.manifest):
+            kw["links"] = links_remote
+        else:
+            rep.warnings.append(f"peer symlink protection unavailable for {type(transport).__name__}")
+            log(f"[{peer_name}] {rep.warnings[-1]}")
+        remote = transport.manifest(cfg.excludes, cloud_remote, **kw)
         if local_source is None:
             log(f"[{peer_name}] listing local tree…")
-            local_pre, cloud_local, denied_local = scan_local(cfg)
+            local_pre, cloud_local, denied_local, links_local = scan_local(cfg)
         else:
-            local_pre, cloud_local, denied_local = local_source()
+            local_pre, cloud_local, denied_local, links_local = local_source()
         local = dict(local_pre)
         rep.phase("list", t0)
         rep.local_files, rep.local_bytes = len(local), _bytes_of(local, local)
@@ -107,13 +130,24 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
         # Cloud-only (iCloud-evicted) files are invisible to this run on BOTH sides and in the
         # base, so they are never downloaded, never "deleted", and their base entry survives.
         hidden = {fold(h) for h in cloud_local | cloud_remote}
-        for h in hidden:
-            local.pop(h, None)
-            remote.pop(h, None)
         old_base_raw = manifest.load(bfile)
         old_base = None if old_base_raw is None else {fold(k): v for k, v in old_base_raw.items()}
+        # A symlink on either side (and everything below it) is out of this run too: rsync would
+        # replace it or write through it. Never a deletion. Unlike cloud-only files its base entries
+        # are dropped, so removing the link later pulls the files back instead of deleting them.
+        linked: set[str] = set()
+        keys = set(local) | set(remote) | set(old_base or {})
+        for node, links in ((socket.gethostname().split(".")[0], links_local), (peer_name, links_remote)):
+            skip = _symlink_skips(keys - hidden - linked, {fold(manifest.norm(x)) for x in links})
+            if skip:
+                rep.warnings.append(f"skipped (symlink on {node}): {len(skip)} path(s)")
+                log(f"[{peer_name}] skipped (symlink on {node}): {len(skip)} path(s)")
+                linked |= skip
+        for h in hidden | linked:
+            local.pop(h, None)
+            remote.pop(h, None)
         rep.first_sync = old_base is None
-        base = None if old_base is None else {k: v for k, v in old_base.items() if k not in hidden}
+        base = None if old_base is None else {k: v for k, v in old_base.items() if k not in hidden | linked}
         plan = engine.plan(local, remote, base, cfg.conflict_policy)
         # back to real spellings: push/delete-local use ours, pull/delete-remote use theirs
         plan.push = [local_name.get(p, p) for p in plan.push]
@@ -224,7 +258,7 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
             # out of this peer's base on purpose — they must still flow to this peer next time.
             after = _refresh(local_root, local_pre,
                              set(plan.push) | set(plan.pull) | set(plan.delete_local) | {c for _, _, c in rep.conflicts})
-            new_base = engine.merged_base({k: v for k, v in after.items() if fold(k) not in hidden})
+            new_base = engine.merged_base({k: v for k, v in after.items() if fold(k) not in hidden | linked})
             if old_base_raw:  # keep what we knew about cloud-only files
                 for k, v in old_base_raw.items():
                     if fold(k) in hidden:

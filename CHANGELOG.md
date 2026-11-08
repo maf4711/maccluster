@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.3.2 — unreleased
+
+- Symlink guard (incident 2026-11-08: the first `llm-claude` sync on node-c replaced the symlink
+  `~/.claude/projects/-Users-a321-Developer/memory` → dotfiles with a real directory). docsync no
+  longer writes through, replaces or deletes a symlink on either side, and never writes into a
+  path with a symlinked component on the receiving side. Such paths (the symlink itself and
+  everything below it, on both sides) are left out of the run, reported as
+  `skipped (symlink on <node>): <n> path(s)` and never count as a deletion. Everything else
+  syncs normally.
+- The local scan and both peer listers (LISTER_PY, still Python 3.9, and the `find`/`stat`
+  fallback) report symlinks (to dirs, to files, dangling) as name-only `-3` records. Listings of
+  trees without symlinks are byte-identical to 1.3.1.
+- No rsync flag changes: `--keep-dirlinks` would write through a receiver's dir symlink into its
+  target, and the plan never contains a path below a symlink, so rsync never meets one.
+- Base entries below a skipped symlink are dropped (cloud-only files keep theirs): removing the
+  link later pulls the files back instead of deleting them on the peer.
+- A transport whose `manifest()` takes neither `links` nor `**kw` gets the warning
+  `peer symlink protection unavailable for <transport>` instead of silently losing the guard.
+- Known limit: a root that is itself a symlink (e.g. `~/.claude -> elsewhere`) is still followed.
+
 ## 1.3.1 — 2026-11-08
 
 - rsync's stdout/stderr pipes are closed and rsync is reaped on every exit path (no more
