@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.3.2 — unreleased
+## 1.3.2 — 2026-11-08
 
 - Symlink guard (incident 2026-11-08: the first `llm-claude` sync on node-c replaced the symlink
   `~/.claude/projects/-Users-a321-Developer/memory` → dotfiles with a real directory). docsync no
