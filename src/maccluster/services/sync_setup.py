@@ -147,7 +147,7 @@ def _write_script(text: str, stamp: str) -> str:
     return (
         f'set -e; f={CONFIG}; mkdir -p "$(dirname "$f")"\n'
         f'if [ -f "$f" ]; then cp -p "$f" "$f.bak-{stamp}"; fi\n'
-        f"printf %s '{b64}' | /usr/bin/base64 -D > \"$f.tmp\"\n"
+        f"printf %s '{b64}' | /usr/bin/base64 --decode > \"$f.tmp\"\n"
         'mv "$f.tmp" "$f"\n'
     )
 
