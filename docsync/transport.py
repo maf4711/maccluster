@@ -6,6 +6,7 @@ RemoteTransport = ssh + rsync.  LocalTransport = a directory on this machine
 
 from __future__ import annotations
 
+import contextvars
 import os
 import re
 import shlex
@@ -16,7 +17,7 @@ import threading
 import time
 from pathlib import Path
 
-from docsync import lock, watchdog
+from docsync import lock, watchdog, xferwatch
 from docsync.transport_base import rsync_bin  # noqa: F401 — re-exported
 from docsync.manifest import LISTER_PY, LISTER_SH, Manifest, parse_lines, scan
 
@@ -109,8 +110,8 @@ def run_rsync_streams(src: str, dst: str, paths: list[str], sizes: dict[str, int
     def one(i: int):
         cb = (lambda ln, _i=i: progress(ln, _i)) if progress else None
         return _run_rsync(src, dst, chunks[i], ssh_cmd, dry, verbose, cb, extra)
-    with ThreadPoolExecutor(max_workers=len(chunks)) as ex:
-        results = list(ex.map(one, range(len(chunks))))
+    with ThreadPoolExecutor(max_workers=len(chunks)) as ex:  # each stream keeps the caller's xferwatch.Watch
+        results = [f.result() for f in [ex.submit(contextvars.copy_context().run, one, i) for i in range(len(chunks))]]
     total = {"files": 0, "bytes": 0, "sent": 0, "received": 0, "skipped": 0, "retries": 0, "errors": [], "streams": len(chunks)}
     for st in results:
         for k in ("files", "bytes", "sent", "received", "skipped", "retries"):
@@ -143,7 +144,7 @@ def _run_rsync_once(src: str, dst: str, paths: list[str], ssh_cmd: list[str] | N
     `progress` is a callable fed with every rsync stdout line (for the progress bar)."""
     if not paths:
         return {"files": 0, "bytes": 0, "sent": 0, "received": 0, "skipped": 0}
-    lst = _files_from(paths)
+    lst, proc = _files_from(paths), None
     try:
         # --partial-dir: an interrupted transfer never leaves a truncated file under its final
         # name (the next run would then see a "conflict"); .docsync-partial is in the default excludes.
@@ -160,6 +161,7 @@ def _run_rsync_once(src: str, dst: str, paths: list[str], ssh_cmd: list[str] | N
         cmd += [src, dst]
         proc = subprocess.Popen(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 errors="replace", bufsize=1)
+        xferwatch.track(proc)
         out_lines: list[str] = []
         buf = ""
         while True:  # progress2 lines end in \r, stats lines in \n
@@ -192,6 +194,8 @@ def _run_rsync_once(src: str, dst: str, paths: list[str], ssh_cmd: list[str] | N
             stats["errors"] = errs[:5]
         return stats
     finally:
+        if proc is not None:
+            xferwatch.untrack(proc)
         os.unlink(lst)
 
 

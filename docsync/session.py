@@ -8,7 +8,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from docsync import engine, lock, manifest, safetynet
+from docsync import engine, lock, manifest, safetynet, xferwatch
 from docsync.config import STATE_DIR, Config, Root
 from docsync.progress import Bar
 from docsync.report import PeerReport
@@ -180,7 +180,7 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
         _guard(peer_lock)
         t0 = time.monotonic()
         bar = _bar(progress and not dry, "push →", plan.push, local, progress_stream, multi=streams > 1)
-        st = transport.push(local_root, sorted(plan.push), dry, verbose,
+        st = _transfer(peer_lock, transport.push, local_root, sorted(plan.push), dry, verbose,
                             _feeder(bar, on_progress, peer_name, root_name, "push", _bytes_of(local, map(fold, plan.push))),
                             sizes=sizes_local, streams=streams)
         if bar:
@@ -197,7 +197,7 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
         _guard(peer_lock)
         t0 = time.monotonic()
         bar = _bar(progress and not dry, "pull ←", plan.pull, remote, progress_stream, multi=streams > 1)
-        st = transport.pull(local_root, sorted(plan.pull), dry, verbose,
+        st = _transfer(peer_lock, transport.pull, local_root, sorted(plan.pull), dry, verbose,
                             _feeder(bar, on_progress, peer_name, root_name, "pull", _bytes_of(remote, map(fold, plan.pull))),
                             sizes=sizes_remote, streams=streams)
         rep.streams = max(rep.streams, st.get("streams", 1))
@@ -254,10 +254,27 @@ class _Busy(Exception):
     """The root lock of this pair is held by another run."""
 
 
+LOCK_LOST = "peer lock lost (sleep or link down) — base not written"
+
+
 def _guard(peer_lock) -> None:
     """Before every write phase: the peer must still hold our lock (a sleep or a dead link frees it)."""
     if peer_lock is not None and not peer_lock.held():
-        raise TransportError("peer lock lost (sleep or link down) — base not written")
+        raise TransportError(LOCK_LOST)
+
+
+def _transfer(peer_lock, fn, *args, **kw) -> dict:
+    """transport.push/pull under an xferwatch.Watch: losing the peer lock mid-transfer ends its rsyncs
+    and fails the peer with LOCK_LOST, even when the transfer itself got through."""
+    with xferwatch.Watch(peer_lock) as w:
+        try:
+            st = fn(*args, **kw)
+        except TransportError:
+            if not w.lost:
+                raise
+    if w.lost:
+        raise TransportError(LOCK_LOST)
+    return st
 
 
 def _feeder(bar, cb, peer: str, root: str, phase: str, total: int):

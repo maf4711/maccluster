@@ -7,6 +7,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -270,6 +271,90 @@ class PeerLockTests(unittest.TestCase):
         self.assertIn("peer lock lost", rep.error)
         self.assertEqual(list(self.sa.glob("base-*")), [])
         self.assertFalse((self.b / "x.txt").exists())
+
+    def test_lock_lost_mid_transfer_ends_rsync(self):
+        from docsync import lock, session, transport
+        touch(self.a / "x.txt")
+        real_bin = transport.rsync_bin
+        stub, pidf, real_rsync = self.sa.parent / "rsync-stub.py", self.sa.parent / "stub.pid", real_bin()
+        stub.write_text(f"#!{sys.executable}\nimport os, sys, time\n"  # peer b's transfer hangs, peer c's is real
+                        f"if any({str(self.b)!r} in a for a in sys.argv):\n"
+                        f"    open({str(pidf)!r}, 'w').write(str(os.getpid())); time.sleep(10)\n"
+                        f"else:\n    os.execv({real_rsync!r}, [{real_rsync!r}, *sys.argv[1:]])\n")
+        stub.chmod(0o755)
+        locks, times = [], []
+        real_keep = lock.PeerLock.keep_alive
+
+        def keep(pl):  # remember peer b's lock so the test can stop its heartbeat
+            real_keep(pl)
+            locks.append(pl)
+
+        def lose():  # once b's rsync runs: stop the heartbeat (a sleeping Mac), time until rsync is gone
+            while not pidf.exists() or not pidf.read_text():
+                time.sleep(0.02)
+            pid = int(pidf.read_text())
+            next(pl for pl in locks if str(self.b) in " ".join(pl.argv))._stop.set()
+            t0 = time.monotonic()
+            while time.monotonic() - t0 < 12:
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.05)
+            times.append(time.monotonic() - t0)
+        old = os.environ.get("DOCSYNC_LOCK_HEARTBEAT_S")
+        os.environ["DOCSYNC_LOCK_HEARTBEAT_S"] = "1"
+        lock.PeerLock.keep_alive, transport.rsync_bin = keep, lambda: str(stub)
+        watcher = threading.Thread(target=lose, daemon=True)
+        watcher.start()
+        try:
+            rb, rc = session.run_many(self.cfg, [("b", self.remote(self.b, self.sb)), ("c", self.remote(self.c, self.sc))],
+                                      state_dir=self.sa, log=lambda *a: None)
+        finally:
+            lock.PeerLock.keep_alive, transport.rsync_bin = real_keep, real_bin
+            if old is None:
+                os.environ.pop("DOCSYNC_LOCK_HEARTBEAT_S", None)
+            else:
+                os.environ["DOCSYNC_LOCK_HEARTBEAT_S"] = old
+        watcher.join(15)
+        (gone,) = times
+        self.assertLess(gone, 4.0, "the transfer must end within 2 heartbeats of losing the lock")
+        self.assertFalse(rb.ok)
+        self.assertIn("peer lock lost", rb.error)
+        self.assertFalse(session.base_file("b", self.sa).exists())
+        self.assertTrue(rc.ok, rc.error)
+        self.assertEqual(rc.pushed_files, 1)
+        self.assertTrue((self.c / "x.txt").exists() and session.base_file("c", self.sa).exists())
+
+    def test_watch_kill_deadline_is_shared(self):
+        from docsync import xferwatch
+        stubborn = "import signal, sys, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); print(1, flush=True); time.sleep(30)"
+        procs = [subprocess.Popen([sys.executable, "-c", stubborn], stdout=subprocess.PIPE) for _ in range(2)]
+        for p in procs:
+            p.stdout.readline()  # SIGTERM is ignored from here on
+        t0 = time.monotonic()
+        xferwatch.end_all(procs, 1.0)
+        for p in procs:
+            p.wait(5)
+            p.stdout.close()
+        self.assertLess(time.monotonic() - t0, 1.5, "two SIGTERM-proof streams must both end within one shared grace")
+        self.assertEqual([p.returncode for p in procs], [-signal.SIGKILL] * 2)
+
+    def test_watch_fails_closed_when_held_raises(self):
+        import contextlib, io
+        from docsync import xferwatch
+
+        class Broken:
+            def held(self):
+                raise OSError("boom")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), xferwatch.Watch(Broken()) as w:
+            t0 = time.monotonic()
+            while not w.lost and time.monotonic() - t0 < 5:
+                time.sleep(0.02)
+        self.assertTrue(w.lost)
+        self.assertEqual(err.getvalue().count("\n"), 1)
+        self.assertIn("treated as lost", err.getvalue())
 
     def test_local_root_busy_wording(self):
         from docsync import lock
