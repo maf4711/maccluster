@@ -125,14 +125,6 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class DiscoverTests(unittest.TestCase):
-    def test_base_name_strips_boot_suffixes(self):
-        from docsync.discover import base_name
-        for h in ("CM-KWFVR7JGW3-3000.local", "CM-KWFVR7JGW3 (891)", "cm-kwfvr7jgw3.local", "CM-KWFVR7JGW3"):
-            self.assertEqual(base_name(h), "cm-kwfvr7jgw3", h)
-        self.assertEqual(base_name("mbpM5MaxMF-2.local"), "mbpm5maxmf")
-
-
 class ProgressTests(unittest.TestCase):
     def test_parse_progress2_line(self):
         from docsync.progress import parse_progress
@@ -157,110 +149,6 @@ class ProgressTests(unittest.TestCase):
         self.assertIn("12.34MB/s", text)
         self.assertIn("100%", text)
         self.assertTrue(text.endswith("\n"))
-
-
-class ThunderboltTests(unittest.TestCase):
-    def test_is_tb_host(self):
-        import ipaddress
-        from docsync.discover import is_tb_host
-        active = [ipaddress.IPv4Network("10.42.0.0/24")]
-        conf = ipaddress.IPv4Network("10.42.0.0/24")
-        self.assertEqual(is_tb_host("10.42.0.1", active, conf), "active")
-        self.assertEqual(is_tb_host("10.42.0.1", [], conf), "down")
-        self.assertEqual(is_tb_host("169.254.31.43", [], None), "down")
-        self.assertEqual(is_tb_host("192.168.178.94", active, conf), "")
-        self.assertEqual(is_tb_host("mini.local", active, conf), "")
-
-    def test_order_hosts_tb_first_dead_last(self):
-        import ipaddress
-        from docsync import discover
-        orig = (discover.tb_networks, discover.cluster_tb_subnet)
-        discover.tb_networks = lambda: [ipaddress.IPv4Network("10.42.0.0/24")]
-        discover.cluster_tb_subnet = lambda: ipaddress.IPv4Network("10.42.0.0/24")
-        try:
-            got = discover.order_hosts(["mini.local", "169.254.9.9", "10.42.0.1"])
-        finally:
-            discover.tb_networks, discover.cluster_tb_subnet = orig
-        self.assertEqual(got, [("10.42.0.1", "Thunderbolt"), ("mini.local", "LAN"),
-                               ("169.254.9.9", "Thunderbolt (link down)")])
-
-
-class ThunderboltProfilerTests(unittest.TestCase):
-    SAMPLE = """Thunderbolt/USB4:
-
-    Thunderbolt/USB4 Bus 1:
-
-      Vendor Name: Apple Inc.
-      Device Name: MacBook Pro
-      UID: 0x05AC20D5BAF28991
-      Port:
-          Status: No device connected
-          Link Status: 0x100
-          Speed: Up to 120 Gb/s
-          Receptacle: 2
-
-    Thunderbolt/USB4 Bus 0:
-
-      Vendor Name: Apple Inc.
-      Device Name: MacBook Pro
-      UID: 0x05AC20D5BAF28990
-      Port:
-          Status: Device connected
-          Link Status: 0x2
-          Speed: Up to 40 Gb/s
-          Receptacle: 1
-          Micro Firmware Version: 0.0.0
-
-        Mac mini:
-
-          Vendor Name: Apple Inc.
-          Device Name: Mac16,11
-          Device ID: 0xA
-          Domain UUID: 4EDF8877-19BE-4DA4-A094-EFB6847D77E6
-          Services:
-            Internet Protocol:
-              Protocol ID: 1
-"""
-
-    def test_ports_speed_and_device(self):
-        from docsync.thunderbolt import TBState, parse_profiler_text
-        ports = parse_profiler_text(self.SAMPLE)
-        self.assertEqual(len(ports), 2)
-        idle, up = ports
-        self.assertFalse(idle.connected)
-        self.assertEqual((idle.speed_gbps, idle.receptacle), (120, "2"))
-        self.assertTrue(up.connected)
-        self.assertEqual((up.speed_gbps, up.receptacle, up.device, up.device_model), (40, "1", "Mac mini", "Mac16,11"))
-        self.assertEqual(up.device_domain, "4EDF8877-19BE-4DA4-A094-EFB6847D77E6")
-        st = TBState(ports=ports, active_ifaces={"bridge0": ["10.42.0.3"]})
-        self.assertTrue(st.link_up)
-        self.assertEqual(st.label(), "Thunderbolt 40 Gb/s")
-        self.assertEqual(TBState(ports=ports).label(), "Thunderbolt cable attached, bridge has no IP")
-        self.assertEqual(TBState(ports=[idle], interfaces=["bridge0"]).label(), "no Thunderbolt link")
-
-
-class SketchTests(unittest.TestCase):
-    def test_remote_parse_and_sketch_marks_front_ports_and_free_tb(self):
-        from docsync import tbsketch
-        out = "Mac16,11\n=== TB\n" + ThunderboltProfilerTests.SAMPLE + "=== BRIDGE\n\tinet 10.42.0.2 netmask 0xffffff00 broadcast 10.42.0.255\n\tstatus: active\n"
-        model, st = tbsketch.parse_remote(out)
-        self.assertEqual(model, "Mac16,11")
-        self.assertEqual(st.active_ifaces, {"bridge0": ["10.42.0.2"]})
-        sk = tbsketch.sketch_mac("node-b", model, st, highlight_free=True)
-        self.assertIn("Mac mini (M4 Pro)", sk)
-        self.assertIn("TB1: ", sk)
-        self.assertIn("Mac mini", sk)
-        self.assertIn("40 Gb/s", sk)
-        self.assertIn("TB2: free ◀ plug here", sk)
-        self.assertIn("front: (USB-C ✗ no TB)  (USB-C ✗ no TB)", sk)
-        self.assertIn("bridge0: 10.42.0.2", sk)
-
-    def test_wrong_right_sketch(self):
-        from docsync import tbsketch
-        sk = tbsketch.sketch_wrong_right("mbp", "node-b", "Mac16,11")
-        self.assertIn("✗ wrong", sk)
-        self.assertIn("node-b FRONT port", sk)
-        self.assertIn("node-b BACK port (TB1-3)", sk)
 
 
 class RemoteRemoveScriptTests(unittest.TestCase):
@@ -308,40 +196,6 @@ class SpeedtestTests(unittest.TestCase):
         self.assertIn("TCP raw", txt)
         self.assertIn("Gb/s", txt)
         self.assertIn("fastest: node-a", txt)
-
-
-class MacosTests(unittest.TestCase):
-    def test_pmset_parse(self):
-        from docsync.macos import parse_pmset_batt
-        self.assertFalse(parse_pmset_batt("Now drawing from 'AC Power'\n -InternalBattery-0 (id=1)\t100%; charged"))
-        self.assertTrue(parse_pmset_batt("Now drawing from 'Battery Power'\n -InternalBattery-0 (id=1)\t83%; discharging"))
-        self.assertIsNone(parse_pmset_batt(""))
-
-    def test_agent_plist_has_watchpaths_and_lints(self):
-        import shutil, subprocess
-        from docsync.agent import plist_xml
-        xml = plist_xml(900, "/x/docsync-launchd.py", "/Users/me/Documents")
-        self.assertIn("<key>WatchPaths</key><array><string>/Users/me/Documents</string></array>", xml)
-        self.assertIn("<string>--from-agent</string>", xml)
-        self.assertNotIn("WatchPaths", plist_xml(900, "/x/e.py", None))
-        if shutil.which("plutil"):
-            with tempfile.TemporaryDirectory() as d:
-                f = Path(d) / "t.plist"
-                f.write_text(xml)
-                self.assertEqual(subprocess.run(["plutil", "-lint", str(f)], capture_output=True).returncode, 0)
-
-    def test_agent_plist_has_max_runtime(self):
-        from docsync.agent import plist_xml
-        self.assertIn("<string>--max-runtime</string><string>1800</string>", plist_xml(900, "/x/e.py", None))
-
-    def test_run_report_notable(self):
-        from docsync.report import PeerReport, RunReport
-        r = RunReport()
-        self.assertEqual(r.notable(), "")
-        p = PeerReport(peer="x"); p.conflicts.append(("a", "remote", "a.conflict")); p.deletes_skipped = 30
-        q = PeerReport(peer="y"); q.ok = False
-        r.peers += [p, q]
-        self.assertEqual(r.notable(), "failed: y; 1 conflict; 30 deletions held back")
 
 
 class PerformanceTests(unittest.TestCase):
@@ -580,3 +434,12 @@ class LaunchdEnvironmentTests(unittest.TestCase):
     def test_plist_path_has_sbin(self):
         from docsync.agent import plist_xml
         self.assertIn(":/usr/sbin:/sbin<", plist_xml(60, "/x.py"))
+
+
+try:  # Thunderbolt/Sketch/Discover and macOS cases live in their own modules to keep this file short
+    from tests.macos_cases import MacosTests
+    from tests.tb_cases import DiscoverTests, SketchTests, ThunderboltProfilerTests, ThunderboltTests
+except ImportError:
+    from macos_cases import MacosTests
+    from tb_cases import DiscoverTests, SketchTests, ThunderboltProfilerTests, ThunderboltTests
+COLLECTED_FROM_CASES = (DiscoverTests, MacosTests, SketchTests, ThunderboltProfilerTests, ThunderboltTests)
