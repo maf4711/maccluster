@@ -17,8 +17,14 @@ from maccluster.cluster_ssh import node_ssh_user
 from maccluster.domain.enums import CheckSeverity, ReachabilityState
 from maccluster.domain.models import DoctorFinding, Node
 from maccluster.services.sync_setup import DOTFILES_STATUS
-from maccluster.services.sync_setup_agent import AGENT_LABEL
-from maccluster.services.sync_setup_remote import NodeShell, script
+from maccluster.services.sync_setup_agent import (
+    AGENT_LABEL,
+    MIN_DOCSYNC,
+    foreign_version,
+    parse_agent,
+    parse_version,
+)
+from maccluster.services.sync_setup_remote import PY_FIND, NodeShell, script
 
 SUCCESS_WARN_S = 2 * 3600
 _BLOCK = re.compile(r"^=== (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\s*$", re.M)
@@ -28,9 +34,12 @@ _SUCCESS = re.compile(r"peers\s+[1-9]\d* ok, 0 failed(?!.*busy)")
 
 def _doctor_script(node_id: str) -> str:
     return (
+        PY_FIND + 'echo "py=$py"\n'
+        '[ -n "$py" ] && echo "pyver=$("$py" -m docsync --version 2>/dev/null | head -1)"\n'
         f'if out=$(launchctl print "gui/$(id -u)/{AGENT_LABEL}" 2>/dev/null); then\n'
         "  echo agent=loaded\n"
         "  echo \"$out\" | sed -n 's/^[[:space:]]*last exit code = \\(.*\\)$/exit=\\1/p' | head -1\n"
+        '  echo "== agent"; printf \'%s\\n\' "$out"; echo "== end"\n'
         "else echo agent=missing; fi\n"
         "dotstate() {\n" + DOTFILES_STATUS + "}\n"
         'st=$(dotstate); echo "dotfiles=$st"\n'
@@ -121,6 +130,29 @@ def _assess(out: str, now: datetime) -> tuple[list[str], bool]:
     return parts, warn
 
 
+def _agent_program(sh: NodeShell, out: str) -> tuple[list[str], bool]:
+    """Warnings when com.a321.docsync runs another program than maccluster's docsync, or a
+    docsync older than 1.3.0 (which ignores root `includes`)."""
+    section = _section(out, "agent")
+    if section is None:
+        return [], False
+    st = parse_agent(f"plist=1\npy={_kv(out, 'py')}\n{section}")
+    min_shown = ".".join(str(x) for x in MIN_DOCSYNC)
+    if st.own:
+        shown, ver = parse_version(_kv(out, "pyver"))
+        if ver and ver < MIN_DOCSYNC:
+            return [f"agent docsync {shown} < {min_shown}"], True
+        return [], False
+    parts = [f"agent runs {st.program}, not maccluster's docsync — run maccluster sync setup"]
+    try:
+        shown, ver = parse_version(f"docsync {foreign_version(sh, st)}")
+    except Exception:  # an unreadable version is no reason to fail the finding
+        shown, ver = "?", ()
+    if ver and ver < MIN_DOCSYNC:
+        parts.append(f"agent docsync {shown} < {min_shown}")
+    return parts, True
+
+
 def sync_findings(
     ctx, cfg, self_node: Node, *, peer_states: dict[str, ReachabilityState]
 ) -> list[DoctorFinding]:
@@ -160,6 +192,9 @@ def sync_findings(
             )
             continue
         parts, warn = _assess(res.stdout or "", now)
+        agent_parts, agent_warn = _agent_program(sh, res.stdout or "")
+        parts[1:1] = agent_parts
+        warn |= agent_warn
         sev = CheckSeverity.WARN if warn else CheckSeverity.OK
         findings.append(DoctorFinding("sync", sev, f"{node.id} " + ", ".join(parts)))
     return findings

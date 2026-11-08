@@ -18,8 +18,9 @@ from maccluster.services.sync_docsync import _hosts
 PROBE_TIMEOUT_S = 5
 
 # The interpreter next to the `maccluster` command (as `inject_script` finds it), else the two
-# venv layouts maccluster is installed with: pipx and the remote-install venv.
-PY_RESOLVE = (
+# venv layouts maccluster is installed with: pipx and the remote-install venv. PY_FIND leaves
+# $py empty when there is none (doctor); PY_RESOLVE then stops the script.
+PY_FIND = (
     'export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH"\n'
     'py=""\n'
     "if cli=$(command -v maccluster 2>/dev/null); then\n"
@@ -30,8 +31,8 @@ PY_RESOLVE = (
     '"$HOME/.local/share/maccluster/venv/bin/python"; do\n'
     '  [ -z "$py" ] && [ -x "$c" ] && py="$c"\n'
     "done\n"
-    '[ -n "$py" ] || { echo "no maccluster python on this Mac"; exit 127; }\n'
 )
+PY_RESOLVE = PY_FIND + '[ -n "$py" ] || { echo "no maccluster python on this Mac"; exit 127; }\n'
 
 
 def script(op: str, body: str, *, python: bool = False) -> str:

@@ -22,7 +22,7 @@
   is removed only after the docsync agent is confirmed loaded. An old peer whose hosts match a
   cluster node under another name skips the node (`peer <old> would be renamed to <id>`).
 - `doctor`: finding `sync` per node — agent loaded and last exit code, age of the last
-  successful docsync run (warning above 2 h; dry-run and all-busy reports do not count), the stored `icloud-<node>.json` result and the
+  successful docsync run (warning above 2 h; dry-run and all-busy reports do not count), a warning when `com.a321.docsync` runs another program than maccluster's docsync or a docsync < 1.3.0, the stored `icloud-<node>.json` result and the
   `~/dotfiles` state. An unreachable peer is a warning and never changes doctor's exit code.
 - Deadline expiry writes every thread stack to `~/Library/Logs/maccluster/deadline-<UTC stamp>.txt`
   (docsync `watchdog.dump_stacks`, else `faulthandler`) before exit 4; stderr names the file.

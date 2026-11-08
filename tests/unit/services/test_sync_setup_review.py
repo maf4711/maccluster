@@ -230,3 +230,32 @@ def test_lock_probe_reads_the_holder_without_taking_the_lock(tmp_path, monkeypat
     out = run()
     assert out.startswith("busy:") and f"pid {os.getpid()}" in out
     assert lock.read_text().startswith(str(os.getpid()))
+
+
+def test_generated_scripts_parse_in_bash(monkeypatch):
+    """Every generated script is valid bash (`set -n`: parsed, nothing executed)."""
+    from maccluster.services import sync_setup, sync_setup_agent
+    from maccluster.services.sync_setup_doctor import _doctor_script
+    from maccluster.services.sync_setup_remote import PY_RESOLVE
+
+    def bash_only(argv, *a, **k):
+        assert list(argv)[:2] == ["/bin/bash", "-c"], argv
+        return REAL_POPEN(argv, *a, **k)
+
+    monkeypatch.setattr(subprocess, "Popen", bash_only)
+    monkeypatch.setattr(subprocess, "run", REAL_RUN)
+    bodies = [
+        PY_RESOLVE,
+        _doctor_script("node-a"),
+        sync_setup.DOCSYNC_PROBE,
+        sync_setup.LOCK_PROBE,
+        sync_setup.DOTFILES_STATUS,
+        sync_setup._write_script("x = 1\n", "20261108T010000Z"),
+        sync_setup_agent.AGENT_STATUS,
+        sync_setup_agent.OTHER_DOCSYNCS,
+        sync_setup_agent.SYNC_HOME_STATUS,
+        sync_setup_agent.SYNC_HOME_REMOVE,
+    ]
+    for body in bodies:
+        res = subprocess.run(["/bin/bash", "-c", "set -n\n" + body], capture_output=True, text=True)
+        assert res.returncode == 0, (res.stderr, body)

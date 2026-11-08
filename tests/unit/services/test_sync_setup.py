@@ -14,7 +14,7 @@ from types import SimpleNamespace
 
 import pytest
 import sync_setup_fakes as fakes
-from sync_setup_fakes import LEGACY_CONFIG, THREE_NODES, FakeCluster
+from sync_setup_fakes import FOREIGN_ARGS, FOREIGN_PY, LEGACY_CONFIG, THREE_NODES, FakeCluster
 
 from maccluster.errors import CliError
 from maccluster.ports.process import ProcessResult
@@ -230,7 +230,14 @@ def test_python_resolver_covers_both_venv_layouts():
 
 
 # (e) ─────────────────────────────────────────────────────────────────────────────────────────
-def _doctor_out(node: str, *, success_age_h: float, now: datetime) -> str:
+def _doctor_out(
+    node: str,
+    *,
+    success_age_h: float,
+    now: datetime,
+    args: list[str] | None = None,
+    pyver: str = "1.3.0",
+) -> str:
     ts = (now - timedelta(hours=success_age_h)).astimezone().strftime("%Y-%m-%d %H:%M:%S")
     later = (now - timedelta(minutes=5)).astimezone().strftime("%Y-%m-%d %H:%M:%S")
     checked = int(now.timestamp()) - 600
@@ -239,7 +246,9 @@ def _doctor_out(node: str, *, success_age_h: float, now: datetime) -> str:
         '"roots": {"documents": {"ok": true, "dd": true}}}'
     )
     return (
-        "agent=loaded\nexit=0\ndotfiles=clean\nahead_behind=0\t0\n"
+        f"py={fakes.OWN_PY}\npyver=docsync {pyver}\nagent=loaded\nexit=0\n"
+        f"== agent\n{fakes.agent_print(args or fakes.OWN_ARGS)}== end\n"
+        "dotfiles=clean\nahead_behind=0\t0\n"
         f"== history\n\n=== {ts}\n══ TOTAL\n   peers        2 ok, 0 failed\n"
         f"\n=== {later}\n══ TOTAL\n   peers        1 ok, 1 failed\n== end\n"
         f"== icloud\n{icloud}\n== end\n"
@@ -427,3 +436,52 @@ def test_cli_dispatch_prints_one_line_per_node(fake_ctx, cluster, capsys):
     out = capsys.readouterr().out.splitlines()
     assert len(out) == 1 and out[0].startswith("node-b ")
     assert all(x.writes == 0 for x in cluster.nodes.values())
+
+
+def test_doctor_warns_about_a_foreign_or_old_agent(fake_ctx, cluster, monkeypatch):
+    from maccluster.doctor_logic.report import build_report
+    from maccluster.domain.enums import CheckSeverity, ReachabilityState
+    from maccluster.services.config_service import load_and_bind_self
+    from maccluster.services.sync_setup_doctor import sync_findings
+
+    cfg_dir = Path.home() / ".config" / "docsync"
+    cfg_dir.mkdir(parents=True)
+    (cfg_dir / "config.toml").write_text(LEGACY_CONFIG)
+    now = fake_ctx.clock.now()
+    outputs = {
+        "node-a": _doctor_out("node-a", success_age_h=0.1, now=now, args=FOREIGN_ARGS),
+        "node-b": _doctor_out("node-b", success_age_h=0.1, now=now, pyver="1.2.0"),
+        "node-c": _doctor_out("node-c", success_age_h=0.1, now=now),
+    }
+    versions = []
+
+    def run(argv, *, timeout=15.0, check=False):
+        full = tuple(argv)
+        text = " ".join(full)
+        name = cluster._target(full)
+        if "# op:agent-version" in text:
+            versions.append(name)
+            assert FOREIGN_PY in text and "--version" in text
+            return ProcessResult(full, 0, "docsync 1.2.0\n", "")
+        assert "# op:doctor" in text
+        return ProcessResult(full, 0, outputs[name], "")
+
+    monkeypatch.setattr(cluster, "run", run)
+    cfg, self_node = load_and_bind_self(fake_ctx)
+    states = {"node-b": ReachabilityState.UP, "node-c": ReachabilityState.UP}
+    by = {
+        f.summary.split()[0]: f for f in sync_findings(fake_ctx, cfg, self_node, peer_states=states)
+    }
+    a = by["node-a"]
+    assert a.severity == CheckSeverity.WARN
+    assert (
+        f"agent runs {FOREIGN_PY}, not maccluster's docsync — run maccluster sync setup"
+        in a.summary
+    )
+    assert "agent docsync 1.2.0 < 1.3.0" in a.summary
+    assert versions == ["node-a"]
+    assert by["node-b"].severity == CheckSeverity.WARN
+    assert "agent docsync 1.2.0 < 1.3.0" in by["node-b"].summary
+    assert "agent runs" not in by["node-b"].summary
+    assert by["node-c"].severity == CheckSeverity.OK
+    assert build_report(list(by.values())).exit_code == 0
