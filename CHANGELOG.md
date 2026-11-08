@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.8.0 — 2026-11-08
+
+Rollout: install together with docsync-lan >= 1.3.0 on every node (`MACCLUSTER_SRC=~/Developer/maccluster maccluster remote-install <ip>`), then `maccluster sync setup --dry-run`, then `maccluster sync setup`.
 
 ### Added
 - `maccluster sync setup [--dry-run] [--node NAME]`: from any one Mac, gives every node of
