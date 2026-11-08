@@ -159,30 +159,31 @@ def _run_rsync_once(src: str, dst: str, paths: list[str], ssh_cmd: list[str] | N
         if ssh_cmd:
             cmd += ["-e", " ".join(shlex.quote(c) for c in ssh_cmd)]
         cmd += [src, dst]
-        proc = subprocess.Popen(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                errors="replace", bufsize=1)
-        xferwatch.track(proc)
-        out_lines: list[str] = []
-        buf = ""
-        while True:  # progress2 lines end in \r, stats lines in \n
-            chunk = proc.stdout.read(512)
-            if not chunk:
-                break
-            buf += chunk
-            while True:
-                i = min([j for j in (buf.find("\r"), buf.find("\n")) if j >= 0], default=-1)
-                if i < 0:
+        # context manager: stdout/stderr are closed and rsync reaped on every exit path
+        with subprocess.Popen(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              errors="replace", bufsize=1) as proc:
+            xferwatch.track(proc)
+            out_lines: list[str] = []
+            buf = ""
+            while True:  # progress2 lines end in \r, stats lines in \n
+                chunk = proc.stdout.read(512)
+                if not chunk:
                     break
-                line, buf = buf[:i], buf[i + 1:]
-                if progress is not None:
-                    progress(line)
-                if verbose and line and "%" not in line:
-                    print(line)
-                out_lines.append(line)
-        if buf:
-            out_lines.append(buf)
-        stderr = proc.stderr.read()
-        rc = proc.wait()
+                buf += chunk
+                while True:
+                    i = min([j for j in (buf.find("\r"), buf.find("\n")) if j >= 0], default=-1)
+                    if i < 0:
+                        break
+                    line, buf = buf[:i], buf[i + 1:]
+                    if progress is not None:
+                        progress(line)
+                    if verbose and line and "%" not in line:
+                        print(line)
+                    out_lines.append(line)
+            if buf:
+                out_lines.append(buf)
+            stderr = proc.stderr.read()
+            rc = proc.wait()
         stdout = "\n".join(out_lines)
         # 23/24: some files vanished or could not be read (iCloud/other sync in flight) — report, don't abort
         if rc not in (0, 23, 24):

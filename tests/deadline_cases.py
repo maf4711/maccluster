@@ -117,17 +117,28 @@ class DeadlineTests(unittest.TestCase):
         self.assertIn("deadline of 2 s exceeded", self.history())
         self.assertTrue(list(self.state.glob("base-*")), "the second run should complete")
 
+    def wait_for_hung_listing(self, p, timeout=60):
+        """Poll until the watch's forked run has started the `sleep` that hangs its listing (it is in
+        the watch's own process group). Waits on that real condition, not a fixed delay; the timeout is
+        generous for a loaded host, and the wait fails early if the watch exits."""
+        import subprocess
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if p.poll() is not None:
+                self.fail(f"watch exited early (rc={p.returncode}): {p.stderr.read()}")
+            # pgrep, not watchdog.descendants: a full `ps -A` can outlast its 5 s timeout under load
+            if subprocess.run(["pgrep", "-g", str(p.pid), "-x", "sleep"], capture_output=True).returncode == 0:
+                return
+            time.sleep(0.2)
+        self.fail(f"no hung listing child in watch process group {p.pid} within {timeout} s")
+
     def test_watch_ctrl_c_exits_130_quietly(self):
         import signal
-        from docsync import watchdog
         p = self.spawn(["watch", "--interval", "1", "--max-runtime", "0"], hang="1", start_new_session=True)
-        t0 = time.monotonic()
         try:  # wait for the forked run and its hung listing child, then Ctrl-C the process group
-            while len(watchdog.descendants(p.pid)) < 2 and time.monotonic() - t0 < 15:
-                time.sleep(0.1)
-            self.assertGreaterEqual(len(watchdog.descendants(p.pid)), 2)
+            self.wait_for_hung_listing(p)
             os.killpg(p.pid, signal.SIGINT)
-            _, err = p.communicate(timeout=10)
+            _, err = p.communicate(timeout=60)
         finally:
             if p.poll() is None:
                 os.killpg(p.pid, signal.SIGKILL)
