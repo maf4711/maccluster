@@ -11,9 +11,9 @@ import sys
 import time
 from pathlib import Path
 
-from docsync import __version__, advisor, agent, api, cli_tools, lock, macos, thunderbolt, watchdog
-from docsync.config import (CONFIG_FILE, MACCLUSTER_CONFIG, STATE_DIR, Config, Peer, add_llm_roots, load_config,
-                            local_hostnames, peers_from_maccluster, save_config)
+from docsync import __version__, advisor, agent, api, cli_tools, icloud, lock, macos, thunderbolt, watchdog
+from docsync.config import (CONFIG_FILE, DEFAULT_EXCLUDES, MACCLUSTER_CONFIG, STATE_DIR, Config, Peer, add_llm_roots,
+                            load_config, local_hostnames, peers_from_maccluster, save_config)
 from docsync.hosts import resolve, resolve_peer, select_peers
 from docsync.manifest import scan
 from docsync.report import RunReport, fmt_bytes
@@ -89,6 +89,40 @@ def cmd_status(a) -> int:
     m = scan(cfg.local_root, cfg.excludes)
     print(f"{cfg.local_root}: {len(m):,} files, {fmt_bytes(sum(v[1] for v in m.values()))}")
     return cmd_peers(a)
+
+
+def _icloud_local_roots(specs: list[str] | None) -> list[tuple[str, Path, list[str]]]:
+    """--root NAME=PATH (what a coordinator sends), --root NAME (from the config), else the config's
+    roots or, on a peer without a config, ~/Documents and ~/Desktop."""
+    try:
+        cfg = load_config()
+    except FileNotFoundError:
+        cfg = None
+    excludes = list(cfg.excludes if cfg else DEFAULT_EXCLUDES)
+    if not specs:
+        if cfg is None:
+            return [(n, Path(p).expanduser(), excludes) for n, p in icloud.DEFAULT_ROOTS]
+        return [(r.name, cfg.for_root(r).local_root, cfg.for_root(r).excludes) for r in cfg.effective_roots()]
+    out = []
+    for spec in specs:
+        name, eq, path = spec.partition("=")
+        if not eq and cfg is not None:
+            r = cfg.root(name)
+            out.append((r.name, cfg.for_root(r).local_root, cfg.for_root(r).excludes))
+        else:
+            out.append((name, Path(path or dict(icloud.DEFAULT_ROOTS).get(name, f"~/{name}")).expanduser(), excludes))
+    return out
+
+
+def cmd_icloud_check(a) -> int:
+    if a.local:
+        rep = icloud.local_report(_icloud_local_roots(a.root))
+    else:
+        cfg = load_config()
+        rep = icloud.check(cfg, roots=[cfg.root(n) for n in a.root] if a.root else None,
+                           log=(lambda *x: None) if a.json else print)
+    print(json.dumps(rep.to_dict(), ensure_ascii=False) if a.json else rep.render())
+    return rep.exit_code
 
 
 def _roots(cfg: Config, names: list[str] | None):
@@ -327,6 +361,11 @@ def build_parser() -> argparse.ArgumentParser:
                   ).set_defaults(fn=cmd_roots_add_llm)
     sub.add_parser("peers", help="peers, reachability, last sync").set_defaults(fn=cmd_peers)
     sub.add_parser("status", help="local tree size + peers").set_defaults(fn=cmd_status)
+    s = sub.add_parser("icloud-check", help="iCloud Desktop & Documents: on, uploaded and identical on every node?")
+    s.add_argument("--root", action="append", metavar="NAME", help="only this root (repeatable; NAME=PATH with --local)")
+    s.add_argument("--json", action="store_true", help="one JSON object instead of the table")
+    s.add_argument("--local", action="store_true", help="this Mac only (what a peer answers to the check)")
+    s.set_defaults(fn=cmd_icloud_check)
     cli_tools.register(sub)
 
     for name, dry, help_ in (("sync", False, "sync with peers (bidirectional) and print the report"),

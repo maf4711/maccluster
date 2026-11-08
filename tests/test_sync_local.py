@@ -469,6 +469,10 @@ try:  # PeerLockTests and DeadlineStackTests: same pattern
     from tests.peerlock_cases import DeadlineStackTests, PeerLockTests  # noqa: F401
 except ImportError:
     from peerlock_cases import DeadlineStackTests, PeerLockTests  # noqa: F401
+try:  # ICloudCheckTests: same pattern
+    from tests.icloud_cases import ICloudCheckTests  # noqa: F401
+except ImportError:
+    from icloud_cases import ICloudCheckTests  # noqa: F401
 try:  # IncludesTests and IncludesConfigTests (per-root allowlists): same pattern
     from tests.includes_cases import IncludesConfigTests, IncludesTests
 except ImportError:

@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from docsync import lock, watchdog
+from docsync import icloud, lock, watchdog
 from docsync.config import DEFAULT_EXCLUDES, STATE_DIR, Config, Peer, Root
 from docsync.report import RunReport
 
@@ -132,25 +132,35 @@ def sync(req: SyncRequest) -> SyncResult:
             return SyncResult(RunReport(), error=lock.busy_message(state_dir))
     try:
         roots = cfg.effective_roots()
+        covered = []  # unreachable peers whose root the last icloud-check passed on both sides
+        me = icloud.node_name() if any(p.host is None for p in req.peers) else ""
 
         def jobs_for_root(root: Root):
             jobs = []
             for p in req.peers:
                 peer = Peer(p.name, p.hosts_tried or ([p.host] if p.host else []), p.user)
                 if p.host is None:
-                    jobs.append((p.name, Unreachable(peer)))
+                    if icloud.covered(state_dir, me, p.name, root.name):
+                        covered.append(icloud.covered_report(p.name, root.name))
+                    else:
+                        jobs.append((p.name, Unreachable(peer)))
                     continue
                 path = p.paths.get(root.name) or root.peer_path or root.path
                 jobs.append((p.name, transport_for(peer, p.host, path, bind=p.bind_ip)))
             return jobs
 
-        reps = run_roots(cfg, roots, jobs_for_root, state_dir=state_dir, parallel=req.parallel,
+        plan = {r.name: jobs_for_root(r) for r in roots}
+        active = [r for r in roots if plan[r.name]]
+        reps = run_roots(cfg, active, lambda r: plan[r.name], state_dir=state_dir, parallel=req.parallel,
                          max_workers=req.max_workers, log=req.log or (lambda *a: None), dry=req.dry_run,
                          verbose=req.verbose, progress=req.terminal_progress, force_deletes=req.force_deletes,
-                         on_progress=req.progress, max_runtime=req.max_runtime)
+                         on_progress=req.progress, max_runtime=req.max_runtime) if active else []
     finally:
         if fh is not None:
             fh.close()
+    if covered:  # back into root, then peer order
+        r_ix, p_ix = {r.name: i for i, r in enumerate(roots)}, {p.name: i for i, p in enumerate(req.peers)}
+        reps = sorted(reps + covered, key=lambda rep: (r_ix.get(rep.root, 0), p_ix.get(rep.peer, 0)))
     run = RunReport(started=started)
     vias = {p.name: p.via for p in req.peers}
     for rep in reps:

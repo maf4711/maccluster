@@ -245,6 +245,37 @@ never counted as deleted, and their base entry survives. The report shows them a
 `cloud-only`. `docsync doctor` warns when the folder is iCloud-managed; Macs on the same
 Apple ID are already synced by iCloud and docsync only moves what iCloud has not.
 
+`docsync icloud-check` shows whether iCloud really carries every root on every node:
+
+```
+node-c  documents  dd: on  not uploaded: 0  stuck: up 0 / down 0
+node-c  desktop  dd: on  not uploaded: 0  stuck: up 0 / down 0
+node-a  desktop  dd: off
+node-b  documents  dd: off
+iCloud: NOT complete — enable Desktop & Documents on node-a, node-b (System Settings › Apple ID › iCloud Drive)
+```
+
+- `dd` is on when the folder carries the `com.apple.file-provider-domain-id` attribute. A root that
+  is on for some nodes and off for others fails; one that is off everywhere is `docsync only`.
+- `not uploaded` counts files iCloud has not uploaded and that changed more than 15 min ago (a
+  small Swift helper reads URL resource values, skipping excluded subtrees; built with `swiftc` on
+  first use). `stuck` counts failed items in `brctl status` below that folder: `up` = uploads failing
+  for more than 15 min (fails the check), `down` = evicted files that could not be downloaded
+  (reported only, no data at risk). Output it does not understand is `unknown`.
+- Parity, for roots on everywhere: the same paths on every node (a cloud-only file counts as
+  present), the same size and an mtime within 2 s where two nodes hold a file locally, no iCloud
+  duplicate `<name> 2.<ext>` of the same size next to `<name>.<ext>`. The first 20 problems are listed
+  (`missing`, `differs`, `icloud duplicate`).
+- Peers answer for themselves: `ssh <peer> sh -s` runs `docsync icloud-check --local --json` with
+  `docsync` from the peer's PATH (extended by `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`)
+  or the Python next to `maccluster`. A docsync without the command or reporting a version below
+  1.3.0 shows `docsync too old on <peer>`. Only metadata is read: no file contents, no downloads,
+  no iCloud setting is changed.
+- Exit 0 complete, 1 not. The result is saved per node in `~/.local/state/docsync/icloud-<node>.json`.
+  When no host of a peer answers during a sync and the last check (at most 24 h old) passed that
+  root on both sides, the peer reads `unreachable — covered by iCloud` and counts as ok: Thunderbolt
+  first, then LAN, then iCloud.
+
 ## Install
 
 ```

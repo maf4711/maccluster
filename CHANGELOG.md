@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- `docsync icloud-check [--root NAME] [--json]`: per node and root whether iCloud "Desktop &
+  Documents" is on, how many files are not uploaded after 15 min and how many `brctl` uploads
+  (fail) and downloads (reported) are stuck, plus cross-node parity (paths, size/mtime, iCloud ` 2`
+  duplicates); exit 1 when not complete.
+  Peers are probed with their own docsync (`icloud-check --local --json`); results are stored in
+  `<state dir>/icloud-<node>.json`. An unreachable peer whose root passed the last check (<= 24 h)
+  on both sides is reported as `unreachable — covered by iCloud` and no longer fails the sync.
 - Per-root `includes` allowlist (root-anchored globs, `*`/`?` stop at `/`, `**` = any depth) in the
   local scan, the remote lister and `parse_lines`; non-matching directories are never entered.
   Such roots drop `DENY_PATTERNS` files (`.credentials.json`, `auth.json`, `*.pem`, `.env`, …) on
