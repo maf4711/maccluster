@@ -261,9 +261,12 @@ def test_doctor_sync_finding(fake_ctx, cluster, monkeypatch):
         "node-c": _doctor_out("node-c", success_age_h=0.2, now=now),
     }
 
+    timeouts = []
+
     def run(argv, *, timeout=15.0, check=False):
         full = tuple(argv)
         cluster.calls.append(full)
+        timeouts.append(timeout)
         assert "# op:doctor" in " ".join(full)
         name = cluster._target(full)
         return ProcessResult(full, 0, outputs[name], "")
@@ -282,6 +285,7 @@ def test_doctor_sync_finding(fake_ctx, cluster, monkeypatch):
     assert "unreachable" in by["node-b"].summary
     assert by["node-c"].severity == CheckSeverity.OK
     assert build_report(findings).exit_code == 0
+    assert timeouts and max(timeouts) <= 10  # peers are read one after the other
     assert not any("node-b" in a or "10.42.0.2" in a for c in cluster.calls for a in c)
 
 

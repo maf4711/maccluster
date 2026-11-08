@@ -48,23 +48,27 @@ DOCSYNC_PROBE = (
     '"$py" -m docsync icloud-check --help >/dev/null 2>&1 && echo "icloud-check ok"\n'
     "exit 0\n"
 )
+# Read-only: never take the flock (an agent run starting that moment would fail LOCK_NB and
+# exit 3). Busy = run.lock names a pid that is alive; docsync's busy_text words it when present.
 LOCK_PROBE = """"$py" - <<'PY'
-import fcntl, os
+import os
 from pathlib import Path
 p = Path(os.environ.get("DOCSYNC_STATE_DIR", "~/.local/state/docsync")).expanduser() / "run.lock"
-if not p.exists():
+try:
+    pid = int(p.read_text(errors="replace").split("\\n", 1)[0])
+except (OSError, ValueError):
     print("free"); raise SystemExit
-with open(p, "a+") as fh:
-    try:
-        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        try:
-            from docsync import lock
-            print("busy:", lock.busy_text(lock.read_holder(p)))
-        except Exception:
-            print("busy: another run is in progress")
-    else:
-        print("free")
+try:
+    os.kill(pid, 0)
+except (ProcessLookupError, OverflowError):  # no such process: a stale record
+    print("free"); raise SystemExit
+except PermissionError:  # alive, owned by another user
+    pass
+try:
+    from docsync import lock
+    print("busy:", lock.busy_text(lock.read_holder(p)))
+except Exception:
+    print(f"busy: another run is in progress (pid {pid})")
 PY
 """
 GIT_ENV = (

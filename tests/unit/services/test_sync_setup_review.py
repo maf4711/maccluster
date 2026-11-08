@@ -193,3 +193,40 @@ def test_generated_bash_runs_for_real(tmp_path, monkeypatch):
     assert bash(status) == "clean"
     (home / "dotfiles" / "f").write_text("changed\n")
     assert bash(status) == "dirty"
+
+
+def test_lock_probe_reads_the_holder_without_taking_the_lock(tmp_path, monkeypatch):
+    """Real bash + python: free without a record or with a dead pid, busy with a live pid,
+    and the probe never calls flock."""
+    import os
+    import sys
+
+    from maccluster.services.sync_setup import LOCK_PROBE
+    from maccluster.services.sync_setup_remote import script
+
+    assert "flock" not in LOCK_PROBE
+
+    def bash_only(argv, *a, **k):
+        assert list(argv)[:2] == ["/bin/bash", "-c"], argv
+        return REAL_POPEN(argv, *a, **k)
+
+    monkeypatch.setattr(subprocess, "Popen", bash_only)
+    monkeypatch.setattr(subprocess, "run", REAL_RUN)
+    state = tmp_path / "state"
+    state.mkdir()
+    env = {"HOME": str(tmp_path), "PATH": "/usr/bin:/bin", "DOCSYNC_STATE_DIR": str(state)}
+    probe = f"py={sys.executable}\n" + script("lock", LOCK_PROBE)
+
+    def run() -> str:
+        res = subprocess.run(["/bin/bash", "-c", probe], env=env, capture_output=True, text=True)
+        assert res.returncode == 0, res.stderr
+        return res.stdout.strip()
+
+    assert run() == "free"
+    lock = state / "run.lock"
+    lock.write_text("99999999\n1762560000\ndocsync sync --all\n")
+    assert run() == "free"
+    lock.write_text(f"{os.getpid()}\n1762560000\ndocsync sync --all\n")
+    out = run()
+    assert out.startswith("busy:") and f"pid {os.getpid()}" in out
+    assert lock.read_text().startswith(str(os.getpid()))

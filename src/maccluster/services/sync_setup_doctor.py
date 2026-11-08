@@ -148,7 +148,7 @@ def sync_findings(
         sh = NodeShell(ctx, node, str(self_node.ip), host=host, user=node_ssh_user(node))
         err = ""
         try:
-            res = sh.run(script("doctor", _doctor_script(node.id)), timeout=20)
+            res = sh.run(script("doctor", _doctor_script(node.id)), timeout=10)
         except Exception as exc:  # a runner error is a finding, not a doctor crash
             res, err = None, str(exc)
         if res is None or res.returncode != 0:
