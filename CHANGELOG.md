@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased
+## 1.3.0 — 2026-11-08
+
+Rollout:
+- Install 1.3.0 on the nodes only together with the maccluster release that passes `max_runtime`
+  to `api.SyncRequest`; otherwise the peer lock caps at 1800 s + 60 s and maccluster syncs longer
+  than 31 min abort with `peer lock lost (sleep or link down) — base not written`.
+- Never write `llm-*` roots (or any root with `includes`) on a node with docsync < 1.3.0: older
+  versions ignore `includes` and would sync all of `~/.claude`, `~/.codex`, `~/.gemini`,
+  credentials included. Upgrade every node first.
 
 - `docsync icloud-check [--root NAME] [--json]`: per node and root whether iCloud "Desktop &
   Documents" is on, how many files are not uploaded after 15 min and how many `brctl` uploads
