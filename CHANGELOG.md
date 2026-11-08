@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.3 — unreleased
+
+- Peer lock: default heartbeat 30 s (was 10 s) and ssh `ServerAliveInterval=30`. Under heavy load
+  (load 15–20, clamscan; process starts stalled up to 27 s on 2026-11-08) long syncs were aborted
+  after 3–4 min with `peer lock lost` although both Macs were up. Now the client gives up after
+  60 s without an ack and the peer helper frees the lock after 90 s of silence (the client still
+  stops first); an ended ssh session still frees the lock at once (EOF).
+
 ## 1.3.2 — 2026-11-08
 
 - Symlink guard (incident 2026-11-08: the first `llm-claude` sync on node-c replaced the symlink

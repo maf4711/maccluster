@@ -10,6 +10,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from docsync.config import Config
@@ -218,7 +219,7 @@ class PeerLockTests(unittest.TestCase):
         os.environ["DOCSYNC_LOCK_HEARTBEAT_S"] = "1"
         try:
             pl = self.remote(self.b, self.sb).root_lock()
-            self.assertIn("ServerAliveInterval=10", pl.argv)
+            self.assertIn("ServerAliveInterval=30", pl.argv)
             self.assertIn("ControlMaster=no", pl.argv)
             try:
                 long_cmd = ("é" * 2500).encode()  # 5000 bytes: the helper cuts the record at 4096
@@ -348,7 +349,8 @@ class PeerLockTests(unittest.TestCase):
             def held(self):
                 raise OSError("boom")
         err = io.StringIO()
-        with contextlib.redirect_stderr(err), xferwatch.Watch(Broken()) as w:
+        with mock.patch.dict(os.environ, {"DOCSYNC_LOCK_HEARTBEAT_S": "1"}), \
+                contextlib.redirect_stderr(err), xferwatch.Watch(Broken()) as w:
             t0 = time.monotonic()
             while not w.lost and time.monotonic() - t0 < 5:
                 time.sleep(0.02)

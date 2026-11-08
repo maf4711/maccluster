@@ -34,7 +34,7 @@ BULK_SSH_OPTS = SSH_OPTS + [
 ]
 # Root-lock helper (lock.PEERLOCK_PY): its own connection, so a dead link is noticed within 30 s
 # instead of hiding behind a shared ControlMaster.
-LOCK_SSH_OPTS = ["-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=3",
+LOCK_SSH_OPTS = ["-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=3",
                  "-o", "ControlMaster=no", "-o", "ControlPath=none"]
 NO_PYTHON_RC = 97              # includes listing: the peer has no python3
 STREAM_MIN_FILES = 16          # below this a single rsync stream is used

@@ -211,7 +211,7 @@ class LockUnavailable(Exception):
 
 def heartbeat_s() -> float:
     try:
-        return max(0.05, float(os.environ.get("DOCSYNC_LOCK_HEARTBEAT_S", "10")))
+        return max(0.05, float(os.environ.get("DOCSYNC_LOCK_HEARTBEAT_S", "30")))
     except ValueError:
         return 10.0
 
