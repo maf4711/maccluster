@@ -23,6 +23,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from docsync import probe
 from docsync.config import MACCLUSTER_CONFIG, STATE_DIR, Config, Peer, Root
 from docsync.icloud_parity import parity
 from docsync.manifest import excluded, norm, scan
@@ -51,21 +52,6 @@ ITEM_START_RE = re.compile(r"\n\s*r:\d+ i:<")
 PART_RE = re.compile(r"\n\s*>\s*")
 AGE_RE = re.compile(r"last:([0-9.]+)(ms|s|m|h|d) ago")
 AGE_UNIT = {"ms": 0.001, "s": 1, "m": 60, "h": 3600, "d": 86400}
-
-# Runs on the peer under /bin/sh: its own docsync, else the interpreter maccluster runs on.
-PROBE_SH = r'''
-PATH=/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH; export PATH
-if command -v docsync >/dev/null 2>&1; then set -- docsync
-else
-  set --
-  m=$(command -v maccluster 2>/dev/null) && m=$(realpath "$m" 2>/dev/null || readlink -f "$m" 2>/dev/null || echo "$m")
-  for py in "${m%/*}/python" "$HOME/.local/pipx/venvs/maccluster/bin/python" "$HOME/.local/share/maccluster/venv/bin/python"; do
-    if [ -x "$py" ] && "$py" -c "import docsync" 2>/dev/null; then set -- "$py" -m docsync; break; fi
-  done
-  [ $# -gt 0 ] || { echo "docsync not found on this Mac" >&2; exit 127; }
-fi
-'''
-
 
 # ── facts about this Mac ────────────────────────────────────────────────────
 
@@ -342,14 +328,6 @@ def local_report(roots: list[tuple[str, Path, list[str]]]) -> ICloudReport:
     return ICloudReport(rows=local_rows(node_name(), roots))
 
 
-def _transport(p, path: str, ssh_cmd):
-    from docsync.hosts import transport_for
-    t = transport_for(Peer(p.name, [p.host], p.user), p.host, path, bind=p.bind_ip)
-    if ssh_cmd is not None and hasattr(t, "ssh_cmd"):
-        t.ssh_cmd = ssh_cmd(p.name)
-    return t
-
-
 def probe_peer(p, roots: list[tuple[str, str, list[str]]], ssh_cmd=None) -> list[Row]:
     """The peer's own `icloud-check --local --json`, rows renamed to the peer's name here."""
     def every(state: str) -> list[Row]:
@@ -358,24 +336,22 @@ def probe_peer(p, roots: list[tuple[str, str, list[str]]], ssh_cmd=None) -> list
     too_old = f"docsync too old on {p.name} (needs {MIN_PEER_VERSION})"
     if p.host is None:
         return every("unreachable")
-    t = _transport(p, roots[0][1], ssh_cmd)
+    t = probe.transport(p, roots[0][1], ssh_cmd)
     if not hasattr(t, "ssh"):  # a directory on this Mac
         return local_rows(p.name, [(name, t.root, ex) for name, _, ex in roots])
     args = " ".join("--root " + shlex.quote(f"{name}={path}") for name, path, _ in roots)
     try:
-        res = t.ssh("/bin/sh -s", stdin=PROBE_SH + f'"$@" icloud-check --local --json {args}\n', timeout=900)
+        res = probe.run(t, f"icloud-check --local --json {args}", timeout=900)
     except subprocess.TimeoutExpired:
         return every("error: no answer within 900 s")
-    if res.returncode != 0 and "invalid choice" in res.stderr:  # argparse of a docsync before 1.3.0
+    if probe.unknown_command(res):  # a docsync before 1.3.0
         return every(too_old)
     try:
-        data = json.loads(res.stdout.strip().splitlines()[-1])
+        data = probe.last_json(res.stdout)
         got = {d["root"]: d for d in data["nodes"]}
-    except (ValueError, KeyError, IndexError, TypeError, AttributeError):
-        if res.returncode == 255:
-            return every("unreachable")
-        return every(f"error: {(res.stderr.strip().splitlines() or ['rc=%d' % res.returncode])[-1][:120]}")
-    if _version(data.get("version")) < _version(MIN_PEER_VERSION):
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return every("unreachable" if res.returncode == 255 else f"error: {probe.error_text(res)}")
+    if probe.version(data.get("version")) < probe.version(MIN_PEER_VERSION):
         return every(too_old)
     rows = []
     for name, _, _ in roots:
@@ -386,12 +362,6 @@ def probe_peer(p, roots: list[tuple[str, str, list[str]]], ssh_cmd=None) -> list
             rows.append(Row(p.name, name, d.get("dd"), d.get("not_uploaded"), d.get("stuck"), d.get("stuck_down"),
                             "" if d.get("state", "ok") == "ok" else str(d["state"])))
     return rows
-
-
-def _version(text) -> tuple[int, ...]:
-    """'1.3.0' -> (1, 3, 0); missing or unreadable -> () (older than every release)."""
-    nums = re.findall(r"\d+", text) if isinstance(text, str) else []
-    return tuple(int(n) for n in nums[:3])
 
 
 def peer_specs(cfg: Config, roots: list[Root], log) -> list:
@@ -438,7 +408,7 @@ def _root_parity(cfg: Config, root: Root, me: str, peers: list, spec: dict, rep:
         cloud: set[str] = set()
         path = next(pth for n, pth, _ in spec[p.name] if n == root.name)
         try:
-            return p.name, (_transport(p, path, ssh_cmd).manifest(rc.excludes, cloud, rc.includes), cloud)
+            return p.name, (probe.transport(p, path, ssh_cmd).manifest(rc.excludes, cloud, rc.includes), cloud)
         except (TransportError, OSError, subprocess.SubprocessError, ValueError) as e:  # that node's problem
             return p.name, e
     cloud_here: set[str] = set()

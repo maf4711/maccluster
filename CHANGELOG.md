@@ -2,6 +2,32 @@
 
 ## 1.3.3 — unreleased
 
+- `docsync monitor [--once] [--json] [--interval SEC] [--local]` (incident 2026-11-08: with the
+  agents paused on all three Macs, syncs kept running from an unknown caller and nothing showed
+  it). One row per node (this Mac and every peer): launchd agent (loaded, state, last exit,
+  `<python> -m docsync` or foreign program, interval, `--max-runtime`), the run/root lock holders
+  that are alive, the last run and the age of the last success from `history.log`, open conflict
+  copies, deadline dumps of the last 24 h and the last iCloud check. FAIL/WARN alerts, exit 1 on
+  any FAIL. Peers answer through `monitor --local --json` over ssh; a peer without the command
+  shows `docsync too old on <peer> (needs 1.3.3)`. Read-only. JSON schema in the README.
+- Every monitor alert has a stable `code` and `data` (15 codes, table in the README), computed by
+  the pure `docsync.monitor_alerts.alerts()` that `heal` will reuse.
+- The agent is the node's own when it runs `<python> -m docsync` with an existing interpreter whose
+  docsync is at least the monitor's version; otherwise `agent_foreign` with `reason` `shim`,
+  `missing interpreter` or `old <v>` (below `AGENT_MIN_VERSION` 1.3.2).
+- No false FAIL from a peer: exit 2 with failed peers is `peer_failed` (WARN), and staleness counts
+  the last run where this node synced with at least one peer. A fresh install is `never_synced`
+  (WARN) for 2 × interval + 30 min. Success is read from the parsed TOTAL counts only (ok ≥ 1,
+  failed = 0, busy allowed). The monitor is bounded to about 45 s (probe 45 s, ssh ConnectTimeout 5 s,
+  ping 2 s, conflict scan 20 s).
+- `sync`/`plan --from-heal`: the origin line reads `agent=heal`; such runs count as runs and raise no
+  `non_agent_run`. The agent's exit 2 is judged by its own last run (newest `agent=yes` block), so a
+  later clean heal or manual sync does not turn a peer failure into `agent_exit`.
+- Every `sync`/`plan` writes `origin: <argv> | parent <ppid> <parent command> | agent=<yes|no>`
+  into its `history.log` block, and after the `deadline … exceeded` event.
+- The ssh probe of `icloud-check` (PROBE_SH and its helpers) moved to `docsync/probe.py`, shared
+  with `monitor`; `docsync conflicts` and `monitor` share one conflict scan.
+||||||| 42c2ed3
 - Peer lock: default heartbeat 30 s (was 10 s) and ssh `ServerAliveInterval=30`. Under heavy load
   (load 15–20, clamscan; process starts stalled up to 27 s on 2026-11-08) long syncs were aborted
   after 3–4 min with `peer lock lost` although both Macs were up. Now the client gives up after

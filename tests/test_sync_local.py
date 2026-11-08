@@ -483,3 +483,4 @@ try:  # SymlinkTests (symlinks are never written through, replaced or deleted): 
 except ImportError:
     from symlink_cases import SymlinkTests
 COLLECTED_FROM_SYMLINKS = (SymlinkTests,)
+from tests.monitor_cases import MonitorHealthTests as MonitorHealthTests, MonitorTests as MonitorTests  # docsync monitor

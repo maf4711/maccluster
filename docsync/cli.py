@@ -11,7 +11,8 @@ import sys
 import time
 from pathlib import Path
 
-from docsync import __version__, advisor, agent, api, cli_tools, icloud, lock, macos, thunderbolt, watchdog
+from docsync import (__version__, advisor, agent, api, cli_tools, icloud, lock, macos, monitor, monitor_report,
+                     thunderbolt, watchdog)
 from docsync.config import (CONFIG_FILE, DEFAULT_EXCLUDES, MACCLUSTER_CONFIG, STATE_DIR, Config, Peer, add_llm_roots,
                             load_config, local_hostnames, peers_from_maccluster, save_config)
 from docsync.hosts import resolve, resolve_peer, select_peers
@@ -175,7 +176,7 @@ def cmd_sync(a, dry: bool) -> int:
     print(run.render())
     if getattr(a, "json", False):
         print(json.dumps(result.to_dict(), ensure_ascii=False))
-    _append_log(run)
+    _append_log(run, _origin(a))
     if not dry and not getattr(a, "no_notify", False):
         note = run.notable()
         if note:
@@ -199,16 +200,24 @@ def _max_runtime(text: str) -> float:
     return value
 
 
-def _deadline_exceeded(seconds: float) -> None:
+def _origin(a) -> str:
+    """Who started this run (one line for history.log); taken once, when the run begins."""
+    if not getattr(a, "origin", None):
+        a.origin = monitor.origin_line(from_agent=getattr(a, "from_agent", False),
+                                       from_heal=getattr(a, "from_heal", False))
+    return a.origin
+
+
+def _deadline_exceeded(seconds: float, origin: str = "") -> None:
     """Watchdog callback (runs in its thread): leave a trace, kill our rsync/ssh children, exit 4.
     os._exit skips cleanup on purpose — a hung thread must not keep the process (and the lock) alive."""
     msg = f"deadline of {seconds:g} s exceeded"
     try:  # where it hung: every thread's stack, before the children (rsync, ssh) are killed
         stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
         dump = watchdog.dump_stacks(watchdog.log_dir() / f"deadline-{stamp}.txt")
-        _append_text(f"{msg} — thread stacks in {dump}")
+        _append_text(f"{msg} — thread stacks in {dump}\n{origin}".rstrip())
     except Exception:  # noqa: BLE001 — the exit below matters more than the dump
-        _append_text(msg)
+        _append_text(f"{msg}\n{origin}".rstrip())
     try:
         print(f"docsync: {msg} — ending this run (exit {watchdog.EXIT_DEADLINE})", file=sys.stderr, flush=True)
         sys.stdout.flush()
@@ -220,27 +229,26 @@ def _deadline_exceeded(seconds: float) -> None:
 
 def _with_deadline(a, fn) -> int:
     seconds = getattr(a, "max_runtime", watchdog.DEFAULT_MAX_RUNTIME)
-    watchdog.arm(seconds, lambda: _deadline_exceeded(seconds))
+    origin = _origin(a)
+    watchdog.arm(seconds, lambda: _deadline_exceeded(seconds, origin))
     try:
         return fn()
     finally:
         watchdog.disarm()
 
 
-def _append_log(run: RunReport) -> None:
+def _append_log(run: RunReport, origin: str) -> None:
     try:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
         with open(STATE_DIR / "history.log", "a") as fh:
-            fh.write(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S')}\n{run.render()}\n")
+            fh.write(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S')}\n{origin}\n{run.render()}\n")
     except OSError:
         pass
 
 
 def cmd_conflicts(a) -> int:
-    cfg = load_config()
-    roots = cfg.effective_roots()
-    hits = sorted((f"{r.name}: " if len(roots) > 1 else "") + p
-                  for r in roots for p in _root_files(cfg.for_root(r), [".docsync*"]) if ".conflict-" in p)
+    found = monitor.conflict_copies(load_config())
+    hits = sorted((f"{name}: " if len(found) > 1 else "") + p for name, paths in found.items() for p in paths)
     if not hits:
         print("no conflict copies")
         return 0
@@ -375,6 +383,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--local", action="store_true", help="this Mac only (what a peer answers to the check)")
     s.set_defaults(fn=cmd_icloud_check)
     cli_tools.register(sub)
+    monitor_report.register(sub)
 
     for name, dry, help_ in (("sync", False, "sync with peers (bidirectional) and print the report"),
                              ("plan", True, "dry run: show what sync would do")):
@@ -390,6 +399,7 @@ def build_parser() -> argparse.ArgumentParser:
                        help=f"end the whole run with exit 4 after SEC seconds (default {watchdog.DEFAULT_MAX_RUNTIME}, 0 = no limit)")
         s.add_argument("--no-notify", action="store_true", help="no Notification Center message on failures/conflicts")
         s.add_argument("--from-agent", action="store_true", help=argparse.SUPPRESS)
+        s.add_argument("--from-heal", action="store_true", help="started by docsync heal (origin agent=heal)")
         s.add_argument("-j", "--jobs", type=int, default=0, help="max parallel peers (default: all)")
         s.add_argument("--root", action="append", metavar="NAME", help="only this root (repeatable; default: all roots)")
         s.add_argument("--json", action="store_true", help="also print the result as one JSON object (last line)")
@@ -400,7 +410,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--max-runtime", type=_max_runtime, default=watchdog.DEFAULT_MAX_RUNTIME, metavar="SEC",
                    help="deadline per run (exit 4 for that run; the loop keeps going)")
     s.set_defaults(fn=cmd_watch, peers=[], all=True, verbose=False, quiet=False, force_deletes=False,
-                   sequential=False, jobs=0, wait=0, no_notify=False, from_agent=False, root=None, json=False)
+                   sequential=False, jobs=0, wait=0, no_notify=False, from_agent=False, from_heal=False, root=None, json=False)
 
     s = sub.add_parser("advise", help="on-device Apple Foundation Model: what to do about conflicts, held-back deletes, peers")
     s.add_argument("peers", nargs="*", help="limit the report to these peers")

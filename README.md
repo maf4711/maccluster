@@ -12,6 +12,7 @@ docsync tb                          # Thunderbolt ports, link, speed, cabling sk
 docsync speedtest --all-hosts       # raw TCP + ssh throughput per peer and host (TB vs LAN)
 docsync advise                      # on-device Apple Foundation Model: what to do about conflicts etc.
 docsync install-agent --interval 15 # launchd: every 15 min in the background
+docsync monitor                     # agent, running sync, last run, alerts on every node
 ```
 
 ## Roots
@@ -170,6 +171,100 @@ The advisor never executes anything; it only suggests docsync commands and file 
   interval (`--no-watch` for interval only). With `skip_on_battery = true` in the config the
   agent's runs do nothing on battery power.
 
+## Monitor
+
+`docsync monitor` shows this Mac and every configured peer in one table, then the alerts.
+It only reads: it never syncs, never takes a lock and never writes state.
+
+```
+node    agent                          running now   last run                                        last ok  confl  dumps  icloud
+node-c  running exit 0 /15m max 1800s  idle          11-08 14:54 2/0/0 ok/fail/busy 3 files [agent]  4m       0      0      ok 49m
+node-a  not loaded                     idle          11-08 13:10 2/0/0 ok/fail/busy 0 files [agent]  1h 48m   0      0      -
+node-b  docsync too old on node-b (needs 1.3.3)
+FAIL node-a: agent not loaded
+WARN node-b: docsync too old on node-b (needs 1.3.3)
+monitor: FAIL
+```
+
+- **agent**: from `launchctl print gui/<uid>/com.a321.docsync`: state, last exit, interval, the
+  `--max-runtime` value, and `FOREIGN` unless the program is `<python> -m docsync` with a `<python>`
+  that exists and whose docsync (`<python> -m docsync --version`, run from `/` without `PYTHONPATH`,
+  10 s, once per report) is at least `AGENT_MIN_VERSION` (1.3.2, the symlink-guard floor; bumped on
+  purpose, not with every release). Any other form (a `docsync-launchd.py` shim, …) is `shim`; the
+  reason is `shim`, `missing interpreter` or `old <v>` (`old ?` when it does not answer). Which
+  Python runs the monitor does not matter. The plist's mtime gives how long the agent is loaded.
+- **running now**: the `run.lock` holder and the root locks in `<state>/locks/` whose pid answers
+  `kill -0`. A root-lock record written for another Mac's run cannot be checked here (`alive: null`).
+- **last run**: the newest report block in `history.log` (DRY RUN and all-busy runs are left out)
+  or `deadline of N s exceeded` event: peers ok/failed/busy, the failed peers with their reason,
+  files, conflicts, `peer lock lost`, `skipped (symlink …)` and held-back deletions, and its origin.
+  The rule for a run reads only the parsed `peers N ok, M failed[, K busy]` line, never the rest of
+  the block (the origin line is free text): **success** = ok ≥ 1 and failed = 0, busy allowed
+  (`last_success`); **synced** = ok ≥ 1 whatever failed (`last_synced`). **last ok** shows the age
+  of `last_synced`: a node that syncs with its reachable peers is not stale because another is off.
+- **confl**: `*.conflict-*` copies in all roots, scanned like `docsync conflicts` (includes honoured).
+  **dumps**: `deadline-*.txt` in the log dir from the last 24 h. **icloud**: ok per root and age of
+  the last `icloud-check` (`icloud-<node>.json`), when there is one.
+- Every `sync`/`plan` writes an origin line into its `history.log` block (also after a deadline
+  event): `origin: <argv> | parent <ppid> <parent command, max 200 chars> | agent=<yes|heal|no>`, the
+  parent from `ps -o command= -p <ppid>` (`parent ?` when ps fails); `agent=yes` with `--from-agent`
+  (the launchd agent), `agent=heal` with `--from-heal` (`docsync heal` passes it to its own
+  `sync`/`plan`). A heal run counts for last ok / last success like any other run and raises no
+  `non_agent_run`.
+- Alerts come from one pure function, `docsync.monitor_alerts.alerts(node) -> [Alert]` (shared with
+  `heal`). Each has a stable `code` and code-specific `data`; exit 0 without FAIL, 1 with at least one:
+
+| code | level | when | data |
+|---|---|---|---|
+| `agent_not_loaded` | FAIL | launchctl does not know the agent | |
+| `agent_exit` | FAIL | last exit not 0, 2 or 3, or 2 without a failed peer in the agent's own last run (newest `agent=yes` block; the last run when there is none) | `exit` |
+| `agent_foreign` | FAIL | not `<python> -m docsync` with an existing, current docsync | `program` (argv before `sync`), `reason` |
+| `stale_success` | FAIL | last synced run older than 2 h, or none after the never-synced grace | `age_min` (null: none) |
+| `never_synced` | WARN | no synced run yet, agent loaded less than 2 × interval + 30 min (or load time unknown) | `loaded_age_min`, `grace_min` |
+| `peer_failed` | WARN | failed peers in the last run (exit 2 is then expected) | `peers`, `reasons` (`peer [root]: reason`) |
+| `agent_no_max_runtime` | WARN | no `--max-runtime`, or 0 | |
+| `conflicts` | WARN | open conflict copies | `count`, `roots` {root: n} |
+| `deadline_dump` | WARN | deadline dump within 24 h | `paths` |
+| `peer_lock_lost` | WARN | `peer lock lost` in the last run | `count` |
+| `held_deletes` | WARN | `N held back by deletion guard` in the last run | `count` (sum) |
+| `non_agent_run` | WARN | last run's origin has `agent=no` (not `heal`) | `origin` |
+| `icloud_incomplete` | WARN | last iCloud check not ok for a root | `roots` |
+| `peer_unreachable` | WARN | node unreachable, in error or a local directory | `state` |
+| `peer_too_old` | WARN | peer docsync without `monitor`, or reporting a version below 1.3.3 | `version` (its `--version`, or null) |
+
+- Peers answer for themselves like `icloud-check`: `docsync monitor --local --json` over ssh, with
+  `docsync` from the extended PATH or the Python next to `maccluster`. A docsync without the command
+  shows `docsync too old on <peer> (needs 1.3.3)`. The alerts are computed here from each node's facts.
+- Bounded to about 45 s: peers are probed in parallel, each finds a host by ping within 2 s (no
+  Bonjour/ARP fallback), ssh gets `ConnectTimeout=5`, and a peer that does not answer within 45 s is
+  `error: no answer within 45 s` (its whole ssh process group is killed). The conflict scan gets
+  20 s; past that `conflicts` is null.
+- `--interval SEC` refreshes until Ctrl-C (exit 130, no traceback); `--once` (the default) prints one
+  report. `--json` prints one object per report:
+
+```
+{"schema": 1, "version": "…", "checked_at": <unix s>, "ok": bool, "exit_code": 0|1,
+ "alerts": [{"node", "level": "FAIL"|"WARN", "code", "text", "data": {…}}],
+ "nodes": [{"node", "state": "ok"|"unreachable"|"docsync too old on …"|"error: …", "version",
+   "agent": {"loaded", "state", "last_exit", "program": [argv before "sync"], "program_ok",
+             "interval_s", "max_runtime", "loaded_age_s", "version": agent's docsync|null,
+             "foreign_reason": null|"shim"|"missing interpreter"|"old <v>"},
+   "running": {"run_lock": <holder>|null, "root_locks": [<holder>]},
+   "last_run": <run>|null, "last_success": <run>|null, "last_synced": <run>|null,
+   "last_agent_run": <run>|null,
+   "conflicts": {root: n}|null, "deadline_dumps": [paths],
+   "icloud": {"checked_at", "age_s", "roots": {root: ok}}|null,
+   "alerts": [{"level", "code", "text", "data"}]}]}
+<holder> = {"pid", "started", "command", "host", "alive": true|false|null, "lock": file name}
+<run>    = {"time": "YYYY-MM-DD HH:MM:SS", "age_s", "kind": "report"|"deadline", "ok", "failed", "busy",
+            "files", "conflicts", "peer_lock_lost", "symlink_skipped", "held_deletes", "deadline_exceeded",
+            "failed_peers": [{"peer", "root", "reason"}],
+            "origin": {"text", "agent": true|false|null, "by": "agent"|"heal"|"other"|null}|null}
+```
+
+A node without facts (`state` other than `ok`) has `null` for every fact key. New keys may be
+added; existing keys keep their meaning while `schema` is 1.
+
 ## Parallel peers
 
 `docsync sync` with several peers runs them **in parallel**, one thread per peer, each with
@@ -318,3 +413,5 @@ as a peer folder.
 - `docsync/session.py` — one run against one peer
 - `docsync/report.py` — the final report
 - `docsync/cli.py` — commands
+- `docsync/monitor.py`, `docsync/monitor_alerts.py`, `docsync/monitor_report.py` — `docsync monitor` (facts of one Mac; alert codes; table and peers)
+- `docsync/probe.py` — runs a docsync subcommand on a peer over ssh (icloud-check, monitor)
