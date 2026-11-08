@@ -16,12 +16,14 @@ from pathlib import Path
 from maccluster.cluster_ssh import node_ssh_user
 from maccluster.domain.enums import CheckSeverity, ReachabilityState
 from maccluster.domain.models import DoctorFinding, Node
-from maccluster.services.sync_setup import AGENT_LABEL, DOTFILES_STATUS
+from maccluster.services.sync_setup import DOTFILES_STATUS
+from maccluster.services.sync_setup_agent import AGENT_LABEL
 from maccluster.services.sync_setup_remote import NodeShell, script
 
 SUCCESS_WARN_S = 2 * 3600
 _BLOCK = re.compile(r"^=== (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\s*$", re.M)
-_SUCCESS = re.compile(r"peers\s+\d+ ok, 0 failed")
+# at least one peer synced, none failed, none skipped as busy (an all-busy run moved nothing)
+_SUCCESS = re.compile(r"peers\s+[1-9]\d* ok, 0 failed(?!.*busy)")
 
 
 def _doctor_script(node_id: str) -> str:
@@ -62,12 +64,13 @@ def _ago(seconds: float) -> str:
 
 
 def last_success(history: str) -> datetime | None:
-    """Start time of the newest history.log report whose peers all succeeded (this Mac's time)."""
+    """Start time of the newest real (not dry-run) history.log report in which at least one peer
+    synced and none failed or was busy (this Mac's time)."""
     marks = list(_BLOCK.finditer(history))
     for i in range(len(marks) - 1, -1, -1):
         end = marks[i + 1].start() if i + 1 < len(marks) else len(history)
         block = history[marks[i].end() : end]
-        if "TOTAL" in block and _SUCCESS.search(block):
+        if "TOTAL" in block and "DRY RUN" not in block and _SUCCESS.search(block):
             return datetime.strptime(marks[i].group(1), "%Y-%m-%d %H:%M:%S").astimezone()
     return None
 

@@ -52,11 +52,28 @@ LLM_BLOCK = "".join(
     f'includes = ["x"]\n'
     for n in ("llm-claude", "llm-codex", "llm-gemini")
 )
-AGENT_PRINT = (
-    "gui/501/com.a321.docsync = {\n\tstate = not running\n\targuments = {\n"
-    "\t\t/py\n\t\t-m\n\t\tdocsync\n\t\tsync\n\t\t--all\n\t\t--max-runtime\n\t\t1800\n\t}\n"
-    "\tlast exit code = 0\n}\n"
-)
+OWN_PY = "/Users/x/.local/pipx/venvs/maccluster/bin/python"
+OWN_ARGS = [
+    OWN_PY,
+    "-m",
+    "docsync",
+    "sync",
+    "--all",
+    "--quiet",
+    "--from-agent",
+    "--max-runtime",
+    "1800",
+]
+FOREIGN_PY = "/Users/x/.local/pipx/venvs/docsync-lan/bin/python"
+FOREIGN_ARGS = [FOREIGN_PY, "-m", "docsync", "sync", "--all", "--max-runtime", "1800"]
+
+
+def agent_print(args: list[str]) -> str:
+    lines = "".join(f"\t\t{a}\n" for a in args)
+    return (
+        "gui/501/com.a321.docsync = {\n\tactive count = 0\n\tstate = not running\n"
+        f"\tprogram = {args[0]}\n\targuments = {{\n{lines}\t}}\n\tlast exit code = 0\n}}\n"
+    )
 
 
 def _sha(text: str | None) -> str:
@@ -78,7 +95,12 @@ class FakeNode:
         self.probes_ok = True
         self.config: str | None = LEGACY_CONFIG
         self.backups: dict[str, str] = {}
-        self.agent_plist: str | None = None
+        self.agent_args: list[str] | None = None  # the plist's ProgramArguments
+        self.agent_loaded = False
+        self.agent_version = "1.2.0"  # docsync version of a foreign agent program
+        self.bootout_fails = False
+        self.install_fails = False
+        self.others: list[tuple[str, str]] = []  # other docsync installs: (path, version)
         self.sync_home = True
         self.dotfiles = "behind"  # missing | behind | clean | dirty | diverged
         self.lock_busy = 0  # number of lock probes that report busy
@@ -150,12 +172,20 @@ class FakeCluster:
             node.config += LLM_BLOCK
             return "added roots llm-claude, llm-codex, llm-gemini", 0
         if op == "agent-status":
-            if node.agent_plist is None:
-                return "plist=0\n", 0
-            return "plist=1\n" + AGENT_PRINT, 0
+            out = f"plist={int(node.agent_args is not None)}\npy={OWN_PY}\n"
+            return out + (agent_print(node.agent_args) if node.agent_loaded else ""), 0
+        if op == "agent-bootout":
+            node.agent_loaded = node.bootout_fails
+            return "", 0
+        if op == "agent-version":
+            return f"docsync {node.agent_version}", 0
+        if op == "docsync-others":
+            return "".join(f"other={p}|docsync {v}\n" for p, v in node.others), 0
         if op == "install-agent":
+            if node.install_fails:
+                return "RuntimeError: launchctl bootstrap failed: 5: Input/output error", 1
             node.writes += 1
-            node.agent_plist = "<plist>--max-runtime 1800</plist>"
+            node.agent_args, node.agent_loaded = list(OWN_ARGS), True
             return "installed", 0
         if op == "sync-home-status":
             return f"loaded={int(node.sync_home)} plist={int(node.sync_home)}", 0
@@ -183,4 +213,4 @@ class FakeCluster:
         return [op for n, op in self.ops if n == name]
 
     def snapshot(self) -> dict[str, tuple[str, str]]:
-        return {n: (_sha(x.config), _sha(x.agent_plist)) for n, x in self.nodes.items()}
+        return {n: (_sha(x.config), _sha(repr(x.agent_args))) for n, x in self.nodes.items()}

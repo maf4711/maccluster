@@ -14,7 +14,7 @@ from types import SimpleNamespace
 
 import pytest
 import sync_setup_fakes as fakes
-from sync_setup_fakes import AGENT_PRINT, LEGACY_CONFIG, THREE_NODES, FakeCluster
+from sync_setup_fakes import LEGACY_CONFIG, THREE_NODES, FakeCluster
 
 from maccluster.errors import CliError
 from maccluster.ports.process import ProcessResult
@@ -93,7 +93,7 @@ def test_one_agent_per_node(fake_ctx, cluster):
         assert ops.count("sync-home-remove") == 1
         assert ops.count("install-agent") == 1
         assert node.sync_home is False
-        assert "--max-runtime 1800" in node.agent_plist
+        assert node.agent_args == fakes.OWN_ARGS and node.agent_loaded
         assert _by_name(result)[name].agent_state == "loaded"
     removes = [" ".join(c) for c in cluster.calls if "# op:sync-home-remove" in " ".join(c)]
     assert len(removes) == 3
@@ -106,7 +106,9 @@ def test_one_agent_per_node(fake_ctx, cluster):
 
 
 def test_agent_without_max_runtime_is_a_failure(fake_ctx, cluster, monkeypatch):
-    monkeypatch.setattr(fakes, "AGENT_PRINT", AGENT_PRINT.replace("--max-runtime", "--other"))
+    monkeypatch.setattr(
+        fakes, "OWN_ARGS", [a.replace("--max-runtime", "--other") for a in fakes.OWN_ARGS]
+    )
     result = _setup(fake_ctx)
     assert result.exit_code == 1
     assert all("max-runtime" in n.agent_state for n in result.nodes)

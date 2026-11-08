@@ -33,16 +33,29 @@ def _toml(value) -> str:
     return json.dumps(str(value))
 
 
+class PeerRename(ValueError):
+    """An old peer would get a new name: its base-<root>-<peer>.json files would be orphaned."""
+
+
 def _strip_peers(text: str) -> str:
-    out, skipping = [], False
+    """Drop every [[peers]] block; comment and blank lines right before the next table header
+    belong to that table and stay."""
+    out, skipping, pending = [], False, []
     for line in text.splitlines():
         if _PEERS_HEADER.match(line):
-            skipping = True
+            skipping, pending = True, []
             continue
-        if skipping and _TABLE_HEADER.match(line):
-            skipping = False
-        if not skipping:
-            out.append(line)
+        if skipping:
+            if _TABLE_HEADER.match(line):
+                skipping = False
+                out.extend(pending)
+            elif not line.strip() or line.lstrip().startswith("#"):
+                pending.append(line)
+                continue
+            else:
+                pending = []
+                continue
+        out.append(line)
     return "\n".join(out).rstrip() + "\n"
 
 
@@ -58,6 +71,14 @@ def _peer_block(p: dict) -> str:
 def wanted_peers(data: dict, peers: list[PeerEntry]) -> list[dict]:
     """Peers by cluster.toml id; a peer already in the file keeps its own user and path."""
     old = {str(p.get("name")): p for p in data.get("peers", [])}
+    names = {p.name for p in peers}
+    for name, prev in old.items():
+        if name in names:
+            continue
+        hosts = {str(h).lower() for h in prev.get("hosts", [])}
+        for p in peers:
+            if hosts & {h.lower() for h in p.hosts}:
+                raise PeerRename(f"peer {name} would be renamed to {p.name}")
     out = []
     for p in peers:
         prev = old.get(p.name, {})

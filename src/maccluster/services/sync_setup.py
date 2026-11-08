@@ -10,28 +10,31 @@ written only when it differs, so a second run on a set-up cluster writes nothing
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 
 from maccluster.app_factory import AppContext
 from maccluster.cluster_ssh import node_ssh_user
-from maccluster.constants import LAUNCH_AGENT_SYNC_LABEL
 from maccluster.domain.models import Node
 from maccluster.errors import CliError
 from maccluster.services.config_service import load_and_bind_self
 from maccluster.services.sync_docsync import _hosts
+from maccluster.services.sync_setup_agent import (
+    MIN_DOCSYNC,
+    ensure_agent,
+    parse_version,
+    replace_foreign,
+    retire_sync_home,
+    stale_docsyncs,
+)
 from maccluster.services.sync_setup_config import (
     PeerEntry,
+    PeerRename,
     missing_llm_roots,
     plan_config,
     root_count,
 )
 from maccluster.services.sync_setup_remote import NodeShell, connect, script
 
-MIN_DOCSYNC = (1, 3, 0)  # 1.2.x ignores root `includes` and would sync all of ~/.claude
-AGENT_LABEL = "com.a321.docsync"
-AGENT_INTERVAL_MIN = 15
-AGENT_MAX_RUNTIME = 1800
 LOCK_WAIT_S = 60
 LOCK_POLL_S = 5
 DOTFILES_REPO = "git@github.com:maf4711/dotfiles.git"
@@ -64,19 +67,6 @@ with open(p, "a+") as fh:
         print("free")
 PY
 """
-AGENT_STATUS = (
-    f'[ -f "$HOME/Library/LaunchAgents/{AGENT_LABEL}.plist" ] && echo plist=1 || echo plist=0\n'
-    f'launchctl print "gui/$(id -u)/{AGENT_LABEL}" 2>/dev/null || true\n'
-)
-SYNC_HOME_PLIST = f'"$HOME/Library/LaunchAgents/{LAUNCH_AGENT_SYNC_LABEL}.plist"'
-SYNC_HOME_STATUS = (
-    f'l=0; launchctl print "gui/$(id -u)/{LAUNCH_AGENT_SYNC_LABEL}" >/dev/null 2>&1 && l=1\n'
-    f'f=0; [ -e {SYNC_HOME_PLIST} ] && f=1\necho "loaded=$l plist=$f"\n'
-)
-SYNC_HOME_REMOVE = (
-    f'launchctl bootout "gui/$(id -u)/{LAUNCH_AGENT_SYNC_LABEL}" 2>/dev/null || true\n'
-    f"rm -f {SYNC_HOME_PLIST}\n"
-)
 GIT_ENV = (
     'export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" GIT_TERMINAL_PROMPT=0 '
     "GIT_SSH_COMMAND='ssh -o BatchMode=yes -o ConnectTimeout=10'\n"
@@ -110,16 +100,9 @@ class _Skip(Exception):
     """Ends one node's setup; the message says why."""
 
 
-def _version(text: str) -> tuple[str, tuple[int, ...]]:
-    m = re.search(r"docsync (\d+(?:\.\d+)*)", text)
-    if not m:
-        return "missing", ()
-    return m.group(1), tuple(int(x) for x in m.group(1).split("."))
-
-
 def _check_docsync(sh: NodeShell) -> None:
     out = sh.run(script("docsync", DOCSYNC_PROBE, python=True), timeout=60).stdout or ""
-    shown, ver = _version(out)
+    shown, ver = parse_version(out)
     if ver < MIN_DOCSYNC or "add-llm ok" not in out or "icloud-check ok" not in out:
         raise _Skip(
             f"docsync {shown} on {sh.node.id}: run maccluster remote-install {sh.node.ip} first"
@@ -158,6 +141,8 @@ def _config(
     old = res.stdout if res.returncode == 0 else None
     try:
         new = plan_config(old, peers)
+    except PeerRename as exc:
+        raise _Skip(f"skipped: {sh.node.id} {exc}") from exc
     except ValueError as exc:  # tomllib.TOMLDecodeError is a ValueError
         raise _Skip(f"docsync config on {sh.node.id} unreadable, left unchanged: {exc}") from exc
     llm = missing_llm_roots(new)
@@ -178,46 +163,6 @@ def _config(
                 f"docsync roots add-llm failed on {sh.node.id}: {(a.stderr or a.stdout).strip()[:200]}"
             )
     return True, f"config written ({backup}{detail})"
-
-
-def _sync_home(sh: NodeShell, *, dry_run: bool) -> str:
-    out = sh.run(script("sync-home-status", SYNC_HOME_STATUS)).stdout or ""
-    if "loaded=1" not in out and "plist=1" not in out:
-        return ""
-    if dry_run:
-        return "would remove sync-home"
-    sh.run(script("sync-home-remove", SYNC_HOME_REMOVE))
-    return "sync-home removed"
-
-
-def _agent_ok(out: str) -> tuple[bool, bool]:
-    """(loaded, runs with --max-runtime 1800)."""
-    loaded = "plist=1" in out and f"{AGENT_LABEL} = {{" in out
-    return loaded, bool(re.search(rf"--max-runtime\s+{AGENT_MAX_RUNTIME}\b", out))
-
-
-def _agent(sh: NodeShell, *, dry_run: bool) -> tuple[str, str, bool]:
-    """(agent_state, message, ok)."""
-    loaded, capped = _agent_ok(sh.run(script("agent-status", AGENT_STATUS)).stdout or "")
-    if loaded and capped:
-        return "loaded", "agent loaded", True
-    if dry_run:
-        return "would install", f"would install agent {AGENT_LABEL}", True
-    inst = sh.run(
-        script(
-            "install-agent",
-            f'"$py" -m docsync install-agent --interval {AGENT_INTERVAL_MIN}\n',
-            python=True,
-        )
-    )
-    loaded, capped = _agent_ok(sh.run(script("agent-status", AGENT_STATUS)).stdout or "")
-    if loaded and capped:
-        return "loaded", f"agent {AGENT_LABEL} loaded", True
-    if loaded:
-        state = f"loaded without --max-runtime {AGENT_MAX_RUNTIME}"
-        return state, f"agent {state}", False
-    err = (inst.stderr or inst.stdout or "").strip().splitlines()
-    return "not loaded", f"agent not loaded: {err[-1][:160] if err else 'no output'}", False
 
 
 def _git_failure(sh: NodeShell, text: str) -> tuple[str, str]:
@@ -281,13 +226,18 @@ def _setup_node(
         _check_docsync(sh)
         if not dry_run:
             _wait_for_lock(ctx, sh)
+        try:
+            foreign_msg = replace_foreign(sh, dry_run=dry_run)
+        except RuntimeError as exc:
+            raise _Skip(str(exc)) from exc
         changed, cfg_msg = _config(sh, _peers_of(node, nodes), dry_run=dry_run, stamp=stamp)
     except _Skip as skip:
         return NodeSetup(node.id, True, False, "-", "-", str(skip)), False
-    home_msg = _sync_home(sh, dry_run=dry_run)
-    agent_state, agent_msg, ok = _agent(sh, dry_run=dry_run)
+    agent_state, agent_msg, ok = ensure_agent(sh, dry_run=dry_run)
+    home_msg = retire_sync_home(sh, dry_run=dry_run, agent_ok=ok)
     dot_state, dot_msg = _dotfiles(sh, dry_run=dry_run)
-    parts = [p for p in (cfg_msg, agent_msg, home_msg, dot_msg) if p]
+    stale = stale_docsyncs(sh)
+    parts = [p for p in (foreign_msg, cfg_msg, agent_msg, home_msg, dot_msg, *stale) if p]
     return NodeSetup(node.id, True, changed, agent_state, dot_state, "  ".join(parts)), ok
 
 
