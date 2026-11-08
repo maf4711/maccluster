@@ -9,22 +9,27 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
+import sys
 import threading
 import time
+import traceback
+from pathlib import Path
 
 DEFAULT_MAX_RUNTIME = 1800  # seconds; the first full sync on 2026-11-07 moved 15 GB in 65 s
 EXIT_DEADLINE = 4
 
 _cancel: threading.Event | None = None
+_limit: float = 0.0
 
 
 def arm(seconds: float, on_expire) -> bool:
     """Start the deadline. seconds <= 0 means no limit (nothing armed). Re-arming replaces it."""
-    global _cancel
+    global _cancel, _limit
     disarm()
     if not seconds or seconds <= 0:
         return False
     cancel = _cancel = threading.Event()
+    _limit = float(seconds)
 
     def run():
         if not cancel.wait(seconds):
@@ -35,10 +40,34 @@ def arm(seconds: float, on_expire) -> bool:
 
 
 def disarm() -> None:
-    global _cancel
+    global _cancel, _limit
     if _cancel is not None:
         _cancel.set()
         _cancel = None
+    _limit = 0.0
+
+
+def limit() -> float:
+    """Seconds of the armed deadline; 0 when none is armed."""
+    return _limit if active() else 0.0
+
+
+def log_dir() -> Path:
+    return Path(os.environ.get("DOCSYNC_LOG_DIR", "~/Library/Logs/docsync")).expanduser()
+
+
+def dump_stacks(path: Path) -> Path:
+    """Write the stack of every Python thread (name, ident, frames) to `path`; returns it."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    names = {t.ident: (t.name, t.daemon) for t in threading.enumerate()}
+    out = [f"docsync pid {os.getpid()}  {time.strftime('%Y-%m-%d %H:%M:%S')}  {' '.join(sys.argv)}"]
+    for ident, frame in sys._current_frames().items():
+        name, daemon = names.get(ident, ("?", False))
+        out.append(f"\nThread {name} (ident {ident}{', daemon' if daemon else ''}), most recent call last:")
+        out.append("".join(traceback.format_stack(frame)).rstrip())
+    path.write_text("\n".join(out) + "\n")
+    return path
 
 
 def active() -> bool:

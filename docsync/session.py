@@ -8,7 +8,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from docsync import engine, manifest, safetynet
+from docsync import engine, lock, manifest, safetynet
 from docsync.config import STATE_DIR, Config, Root
 from docsync.progress import Bar
 from docsync.report import PeerReport
@@ -50,9 +50,10 @@ def scan_local(cfg: Config):
 def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbose: bool = False,
              state_dir: Path = STATE_DIR, log=print, progress: bool = False,
              force_deletes: bool = False, progress_stream=None, local_source=None,
-             root_name: str = "documents", on_progress=None) -> PeerReport:
+             root_name: str = "documents", on_progress=None, root_locks: lock.RootLocks | None = None) -> PeerReport:
     """local_source: callable returning (manifest, cloud_set); when given, the remote listing is
-    requested first and the local scan result fetched afterwards (they overlap in run_many)."""
+    requested first and the local scan result fetched afterwards (they overlap in run_many).
+    root_locks: the run's root locks (run_many shares one); dry runs take none."""
     rep = PeerReport(peer=peer_name, dry=dry, root=root_name)
     local_root = cfg.local_root
     if not local_root.is_dir():  # never create a root: a missing one is a typo or an unmounted volume
@@ -60,10 +61,19 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
         rep.finish()
         return rep
     bfile = base_file(peer_name, state_dir, root_name)
+    locks = None if dry else (root_locks or lock.RootLocks(state_dir, local_root))
+    peer_lock = None
     try:
-        _migrate_base(peer_name, state_dir, root_name)
         t0 = time.monotonic()
         rep.host = transport.check()
+        if locks is not None:  # after check(): a missing peer folder takes no lock
+            peer_lock, busy, warns = locks.pair(transport)
+            rep.warnings += warns
+            if busy:
+                kind, text = busy
+                log(f"[{peer_name}] {'peer busy: ' + text if kind == 'peer' else text}")
+                raise _Busy(f"peer busy (covered by the other run): {text}" if kind == "peer" else text)
+        _migrate_base(peer_name, state_dir, root_name)  # renames a base file: only once the pair is ours
         if hasattr(transport, "prepare"):
             rep.warnings += transport.prepare()
         rep.phase("connect", t0)
@@ -121,6 +131,8 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
         t0 = time.monotonic()
         stamp = _stamp()
         host = socket.gethostname().split(".")[0]
+        if plan.conflicts:
+            _guard(peer_lock)
         for path, winner in plan.conflicts:
             copy = engine.conflict_name(path, stamp, host)
             try:
@@ -141,6 +153,7 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
         rep.phase("conflicts", t0)
 
         if not dry and cfg.safetynet and hasattr(transport, "backup"):
+            _guard(peer_lock)
             t0 = time.monotonic()
             try:  # retention on the peer side first, so a full SafetyNet never blocks a backup
                 transport.prune_safetynet(cfg.safetynet_policy())
@@ -157,6 +170,7 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
         sizes_local = {local_name.get(k, k): v[1] for k, v in local.items()}
         sizes_remote = {remote_name.get(k, k): v[1] for k, v in remote.items()}
         streams = cfg.transfer_streams
+        _guard(peer_lock)
         t0 = time.monotonic()
         bar = _bar(progress and not dry, "push →", plan.push, local, progress_stream, multi=streams > 1)
         st = transport.push(local_root, sorted(plan.push), dry, verbose,
@@ -173,6 +187,7 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
         _skipped(rep, st, "push")
         rep.phase("push", t0)
 
+        _guard(peer_lock)
         t0 = time.monotonic()
         bar = _bar(progress and not dry, "pull ←", plan.pull, remote, progress_stream, multi=streams > 1)
         st = transport.pull(local_root, sorted(plan.pull), dry, verbose,
@@ -189,6 +204,7 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
         _skipped(rep, st, "pull")
         rep.phase("pull", t0)
 
+        _guard(peer_lock)
         t0 = time.monotonic()
         remove_local(local_root, Path.home(), plan.delete_local, stamp, cfg.trash, dry)
         transport.remove(plan.delete_remote, stamp, cfg.trash, dry)
@@ -206,10 +222,18 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
                 for k, v in old_base_raw.items():
                     if fold(k) in hidden:
                         new_base[k] = v
+            _guard(peer_lock)
             manifest.save(bfile, new_base,
                           meta={"peer": peer_name, "host": rep.host, "synced_at": datetime.now().isoformat()})
+    except _Busy as e:
+        rep.busy, rep.error = True, str(e)
     except (TransportError, OSError) as e:
         rep.ok, rep.error = False, str(e)
+    finally:
+        if peer_lock is not None:
+            peer_lock.release()
+        if locks is not None and root_locks is None:
+            locks.close()
     rep.finish()
     if on_progress:
         try:
@@ -217,6 +241,16 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
         except Exception:  # noqa: BLE001 — a caller's callback must not break the sync
             pass
     return rep
+
+
+class _Busy(Exception):
+    """The root lock of this pair is held by another run."""
+
+
+def _guard(peer_lock) -> None:
+    """Before every write phase: the peer must still hold our lock (a sleep or a dead link frees it)."""
+    if peer_lock is not None and not peer_lock.held():
+        raise TransportError("peer lock lost (sleep or link down) — base not written")
 
 
 def _feeder(bar, cb, peer: str, root: str, phase: str, total: int):
@@ -263,7 +297,8 @@ def _refresh(root: Path, pre: manifest.Manifest, touched: set[str]) -> manifest.
 
 
 def run_many(cfg: Config, jobs: list[tuple[str, object]], *, parallel: bool = True, max_workers: int = 0,
-             state_dir: Path = STATE_DIR, log=print, progress: bool = False, **kw) -> list[PeerReport]:
+             state_dir: Path = STATE_DIR, log=print, progress: bool = False,
+             max_runtime: float | None = None, **kw) -> list[PeerReport]:
     """Sync several peers. jobs = [(peer_name, transport-or-callable-returning-transport)].
     Parallel: one thread per peer, one progress line per peer. Reports come back in job order."""
     from concurrent.futures import ThreadPoolExecutor
@@ -276,6 +311,7 @@ def run_many(cfg: Config, jobs: list[tuple[str, object]], *, parallel: bool = Tr
             safetynet.prune(str(cfg.local_root / safetynet.SN_DIR), *cfg.safetynet_policy())
         except Exception:  # noqa: BLE001
             pass
+    locks = None if kw.get("dry") else lock.RootLocks(state_dir, cfg.local_root, max_runtime=max_runtime)
     scan_pool = ThreadPoolExecutor(max_workers=1)
     local_future = scan_pool.submit(scan_local, cfg)  # one local walk, overlapping the remote listings
     local_source = local_future.result
@@ -289,7 +325,8 @@ def run_many(cfg: Config, jobs: list[tuple[str, object]], *, parallel: bool = Tr
             else:
                 display.update(_name, f"   {_name:<10}" + msg.replace(f"[{_name}] ", ""))
         return run_peer(cfg, name, transport, state_dir=state_dir, log=plog, progress=progress,
-                        progress_stream=display.slot(name) if display else None, local_source=local_source, **kw)
+                        progress_stream=display.slot(name) if display else None, local_source=local_source,
+                        root_locks=locks, **kw)
 
     try:
         if not parallel or len(jobs) == 1:
@@ -299,6 +336,8 @@ def run_many(cfg: Config, jobs: list[tuple[str, object]], *, parallel: bool = Tr
             reps = [f.result() for f in futs]
     finally:
         scan_pool.shutdown(wait=False)
+        if locks is not None:
+            locks.close()
     if display:
         display.close()
     return reps

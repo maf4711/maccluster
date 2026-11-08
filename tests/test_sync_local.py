@@ -465,3 +465,7 @@ try:  # DeadlineTests lives in its own module to keep this file short; collected
     from tests.deadline_cases import DeadlineTests  # noqa: F401
 except ImportError:
     from deadline_cases import DeadlineTests  # noqa: F401
+try:  # PeerLockTests and DeadlineStackTests: same pattern
+    from tests.peerlock_cases import DeadlineStackTests, PeerLockTests  # noqa: F401
+except ImportError:
+    from peerlock_cases import DeadlineStackTests, PeerLockTests  # noqa: F401

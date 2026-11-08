@@ -1,0 +1,28 @@
+# Changelog
+
+## Unreleased
+
+- Root lock on both sides of a peer pair: every `docsync sync` holds
+  `<state dir>/locks/root-<sha1[:12]>.lock` for its root on this Mac and on the peer (taken there by a
+  small Python 3.9 helper sent over ssh stdin) for the whole three-way run, so the same root of two
+  Macs is never synced in both directions at once. The two locks are taken in a fixed order (by
+  `<host>:<real root path>`), each with a wait of at most 1 s.
+- A peer whose root is locked by another run is reported as `peer busy (covered by the other run)`:
+  not a failure, no notification, base file untouched. The run exits 0 when the other peers are ok
+  and 3 when every peer was busy. Root-lock records carry a 4th line, the host name; `run.lock` is unchanged.
+- The peer-side lock ends within 5 s after its ssh session closes and within 30 s on a silent
+  connection (heartbeat every 10 s, `DOCSYNC_LOCK_HEARTBEAT_S`; hard cap max-runtime + 60 s, or the
+  request's `api.SyncRequest.max_runtime` + 60 s when no deadline is armed (`api.sync` from maccluster;
+  default 1800 s, <= 0 = no hard cap, only the heartbeat bounds the helper).
+- The peer acknowledges every heartbeat. Before each write phase (conflict copies, SafetyNet, push,
+  pull, deletes) and before the base file is saved, a run checks that the last acknowledgement is
+  younger than 2 heartbeats (wall clock, so a sleeping Mac counts); otherwise the peer fails with
+  `peer lock lost (sleep or link down) — base not written`.
+- When this Mac's own root lock is held by a run of another pair, the peer line reads
+  `local root busy (pid N on <host>) — retried next run` instead of `peer busy`.
+- When the run deadline fires, the stacks of all threads are written to
+  `<log dir>/deadline-<UTC stamp>.txt` (`DOCSYNC_LOG_DIR`, default `~/Library/Logs/docsync`) and the
+  history.log line names the file (`docsync.watchdog.dump_stacks`).
+- Dry runs (`docsync plan`) take no root locks.
+- A legacy base file (`base-<peer>.json`) is renamed only after both root locks are held, so a busy
+  peer leaves every base file untouched; the peer-side record is cut at 4096 bytes on a character boundary.

@@ -44,6 +44,7 @@ class PeerReport:
     host: str = ""
     via: str = ""  # Thunderbolt | LAN | LAN (Bonjour) | Thunderbolt (ARP)
     ok: bool = True
+    busy: bool = False  # a root lock of this pair was held by another run: skipped, not a failure
     error: str = ""
     dry: bool = False
     started: float = field(default_factory=time.monotonic)
@@ -79,7 +80,7 @@ class PeerReport:
         self.phases.append(Phase(name, time.monotonic() - t0))
 
     def to_dict(self) -> dict:
-        keys = ("peer", "root", "host", "via", "ok", "error", "dry", "secs", "first_sync", "local_files", "local_bytes",
+        keys = ("peer", "root", "host", "via", "ok", "busy", "error", "dry", "secs", "first_sync", "local_files", "local_bytes",
                 "remote_files", "remote_bytes", "pushed_files", "pushed_bytes", "pulled_files", "pulled_bytes",
                 "wire_sent", "wire_received", "deleted_local", "deleted_remote", "unchanged", "cloud_only_local",
                 "cloud_only_remote", "skipped", "deletes_skipped", "retries", "streams", "safetynet_files",
@@ -105,6 +106,8 @@ class PeerReport:
     def render(self) -> str:
         tag = " (DRY RUN — nothing written)" if self.dry else ""
         head = f"── {self.peer}{f' [{self.root}]' if self.root else ''} @ {self.host or '?'}{' via ' + self.via if self.via else ''}{tag}"
+        if self.busy:
+            return f"{head}\n   {self.error}"
         if not self.ok:
             return f"{head}\n   FAILED after {fmt_secs(self.secs)}: {self.error}"
         rows = [
@@ -148,12 +151,14 @@ class RunReport:
         dels = sum(p.deleted_local + p.deleted_remote for p in self.peers)
         confl = sum(len(p.conflicts) for p in self.peers)
         failed = [p.peer for p in self.peers if not p.ok]
+        busy = [p.peer for p in self.peers if p.busy]
         dry = any(p.dry for p in self.peers)
         verb = "planned" if dry else "transferred"
         lines = [p.render() for p in self.peers]
         lines.append("══ TOTAL" + (" (DRY RUN)" if dry else ""))
-        lines.append(f"   peers        {len(self.peers) - len(failed)} ok, {len(failed)} failed"
-                     + (f" ({', '.join(failed)})" if failed else ""))
+        lines.append(f"   peers        {len(self.peers) - len(failed) - len(busy)} ok, {len(failed)} failed"
+                     + (f" ({', '.join(failed)})" if failed else "")
+                     + (f", {len(busy)} busy ({', '.join(busy)})" if busy else ""))
         lines.append(f"   files        {files:,} {verb}  ({fmt_bytes(nbytes)}, {nbytes // 1024:,} KB)")
         lines.append(f"   deleted      {dels:,}    conflicts {confl:,}")
         lines.append(f"   time         {fmt_secs(secs)}    throughput "
@@ -163,6 +168,10 @@ class RunReport:
     @property
     def ok(self) -> bool:
         return all(p.ok for p in self.peers)
+
+    @property
+    def all_busy(self) -> bool:
+        return bool(self.peers) and all(p.busy for p in self.peers)
 
     def to_dict(self) -> dict:
         return {

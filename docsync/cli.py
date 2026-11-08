@@ -145,7 +145,12 @@ def _deadline_exceeded(seconds: float) -> None:
     """Watchdog callback (runs in its thread): leave a trace, kill our rsync/ssh children, exit 4.
     os._exit skips cleanup on purpose — a hung thread must not keep the process (and the lock) alive."""
     msg = f"deadline of {seconds:g} s exceeded"
-    _append_text(msg)
+    try:  # where it hung: every thread's stack, before the children (rsync, ssh) are killed
+        stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+        dump = watchdog.dump_stacks(watchdog.log_dir() / f"deadline-{stamp}.txt")
+        _append_text(f"{msg} — thread stacks in {dump}")
+    except Exception:  # noqa: BLE001 — the exit below matters more than the dump
+        _append_text(msg)
     try:
         print(f"docsync: {msg} — ending this run (exit {watchdog.EXIT_DEADLINE})", file=sys.stderr, flush=True)
         sys.stdout.flush()

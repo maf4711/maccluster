@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from docsync import lock
+from docsync import lock, watchdog
 from docsync.config import DEFAULT_EXCLUDES, STATE_DIR, Config, Peer, Root
 from docsync.report import RunReport
 
@@ -68,6 +68,7 @@ class SyncRequest:
     state_dir: Path | None = None
     lock: bool = True
     lock_wait: float = 0.0
+    max_runtime: float = watchdog.DEFAULT_MAX_RUNTIME  # caller's own run limit: the peer lock lasts that + 60 s (<= 0: no cap)
 
 
 @dataclass
@@ -81,8 +82,8 @@ class SyncResult:
 
     @property
     def exit_code(self) -> int:
-        if self.error.startswith("another run"):
-            return 3
+        if self.error.startswith("another run") or self.report.all_busy:
+            return 3  # every peer busy: another run covers them all
         return 0 if self.ok else 2
 
     def to_dict(self) -> dict:
@@ -138,7 +139,7 @@ def sync(req: SyncRequest) -> SyncResult:
         reps = run_roots(cfg, roots, jobs_for_root, state_dir=state_dir, parallel=req.parallel,
                          max_workers=req.max_workers, log=req.log or (lambda *a: None), dry=req.dry_run,
                          verbose=req.verbose, progress=req.terminal_progress, force_deletes=req.force_deletes,
-                         on_progress=req.progress)
+                         on_progress=req.progress, max_runtime=req.max_runtime)
     finally:
         if fh is not None:
             fh.close()

@@ -25,6 +25,7 @@ class DeadlineTests(unittest.TestCase):
         self.b.mkdir(parents=True)
         (self.a / "x.txt").write_text("x")
         self.cfgdir = self.state.parent / "cfg"
+        self.logs = self.state.parent / "logs"  # deadline stack dumps, never the real ~/Library/Logs
         save_config(Config(path=str(self.a), trash=False, peers=[Peer("b", [str(self.b)])]), self.cfgdir / "config.toml")
 
     def tearDown(self):
@@ -33,7 +34,8 @@ class DeadlineTests(unittest.TestCase):
     def spawn(self, args, hang="", **kw):
         import subprocess, sys
         env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parent.parent), DOCSYNC_TEST_HANG=hang,
-                   DOCSYNC_CONFIG_DIR=str(self.cfgdir), DOCSYNC_STATE_DIR=str(self.state))
+                   DOCSYNC_CONFIG_DIR=str(self.cfgdir), DOCSYNC_STATE_DIR=str(self.state),
+                   DOCSYNC_LOG_DIR=str(self.logs))
         return subprocess.Popen([sys.executable, "-c", WRAP, *args], env=env, text=True,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kw)
 

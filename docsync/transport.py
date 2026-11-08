@@ -16,6 +16,7 @@ import threading
 import time
 from pathlib import Path
 
+from docsync import lock, watchdog
 from docsync.transport_base import rsync_bin  # noqa: F401 — re-exported
 from docsync.manifest import LISTER_PY, LISTER_SH, Manifest, parse_lines, scan
 
@@ -30,6 +31,10 @@ BULK_SSH_OPTS = SSH_OPTS + [
     "-o", "ControlMaster=no", "-o", "ControlPath=none",
     "-o", "Ciphers=aes128-gcm@openssh.com,aes256-gcm@openssh.com,chacha20-poly1305@openssh.com",
 ]
+# Root-lock helper (lock.PEERLOCK_PY): its own connection, so a dead link is noticed within 30 s
+# instead of hiding behind a shared ControlMaster.
+LOCK_SSH_OPTS = ["-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=3",
+                 "-o", "ControlMaster=no", "-o", "ControlPath=none"]
 STREAM_MIN_FILES = 16          # below this a single rsync stream is used
 STREAM_MIN_BYTES = 64 << 20
 
@@ -359,6 +364,16 @@ class RemoteTransport:
         if res.returncode != 0:
             raise TransportError(res.stderr.strip().splitlines()[-1] if res.stderr.strip() else f"ssh rc={res.returncode}")
         return f"{res.stdout.strip()} ({(time.monotonic() - t0) * 1000:.0f} ms)"
+
+    def root_lock(self, max_runtime: float | None = None) -> lock.PeerLock:
+        """Start the root-lock helper on the peer (it answers with its key; lock() takes the lock).
+        It ends at the latest max-runtime + 60 s after it started: the armed deadline (CLI), else
+        `max_runtime` (api.SyncRequest.max_runtime; None = the default). <= 0: no hard cap, only the
+        heartbeat bounds the helper."""
+        limit = watchdog.limit() or (watchdog.DEFAULT_MAX_RUNTIME if max_runtime is None else max_runtime)
+        cap = limit + 60 if limit > 0 else 0
+        return lock.PeerLock([*self.ssh_cmd, *LOCK_SSH_OPTS, self.userhost,
+                              lock.peer_lock_command(remote_path(self.path), cap)])
 
     def manifest(self, excludes: list[str], dataless: set[str] | None = None) -> Manifest:
         q = remote_path(self.path)
