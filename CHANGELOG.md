@@ -20,7 +20,9 @@
   the node is skipped. Other docsync installs older than 1.3.0 are named
   (`stale docsync <version> at <path> on <node> — upgrade or remove`). `com.maccluster.sync-home`
   is removed only after the docsync agent is confirmed loaded. A paused foreign agent plist
-  is moved to `<plist>.foreign-<UTC stamp>` before llm-* roots are written. The run-lock probe
+  is moved out of LaunchAgents to
+  `~/Library/LaunchAgents.disabled/com.a321.docsync.plist.foreign-<UTC stamp>` before llm-* roots
+  are written. The run-lock probe
   counts a record as busy only when its pid is alive and started no later than the record. An old peer whose hosts match a
   cluster node under another name skips the node (`peer <old> would be renamed to <id>`).
 - `doctor`: finding `sync` per node — agent loaded and last exit code, age of the last

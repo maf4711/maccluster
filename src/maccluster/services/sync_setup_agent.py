@@ -22,6 +22,8 @@ AGENT_MAX_RUNTIME = 1800
 MIN_DOCSYNC = (1, 3, 0)  # 1.2.x ignores root `includes` and would sync all of ~/.claude
 
 AGENT_PLIST = f'"$HOME/Library/LaunchAgents/{AGENT_LABEL}.plist"'
+# Outside ~/Library/LaunchAgents: launchd must never see a moved-aside plist (same Label).
+DISABLED_DIR = "~/Library/LaunchAgents.disabled"
 AGENT_STATUS = (
     f"p={AGENT_PLIST}\n"
     'if [ -f "$p" ]; then echo plist=1\n'
@@ -144,9 +146,16 @@ def stale_docsyncs(sh: NodeShell) -> list[str]:
     return warnings
 
 
+def plist_aside_script(stamp: str) -> str:
+    return (
+        'mkdir -p "$HOME/Library/LaunchAgents.disabled" && '
+        f'mv -f {AGENT_PLIST} "$HOME/Library/LaunchAgents.disabled/{AGENT_LABEL}.plist.foreign-{stamp}"\n'
+    )
+
+
 def replace_foreign(sh: NodeShell, *, dry_run: bool, stamp: str) -> str:
     """Before llm-* roots exist: boot out a loaded com.a321.docsync that is not ours, and move a
-    foreign plist on disk to `<plist>.foreign-<stamp>` (a paused foreign agent would come back
+    foreign plist on disk to ~/Library/LaunchAgents.disabled/ (a paused foreign agent would come back
     at the next login, e.g. when install-agent fails). Returns a message ('' if nothing to do);
     raises RuntimeError when the foreign agent stays loaded or its plist cannot be moved."""
     st = agent_status(sh)
@@ -165,20 +174,17 @@ def replace_foreign(sh: NodeShell, *, dry_run: bool, stamp: str) -> str:
             msgs.append(f"{what} booted out")
     if st.plist_foreign:
         program = st.plist_args[0] if st.plist_args else "unreadable ProgramArguments"
+        dest = f"{DISABLED_DIR}/{AGENT_LABEL}.plist.foreign-{stamp}"
         if dry_run:
-            msgs.append(f"would move foreign agent plist aside: {program}")
+            msgs.append(f"would move foreign agent plist to {dest}: {program}")
         else:
-            mv = sh.run(
-                script(
-                    "agent-plist-aside",
-                    f'mv -f {AGENT_PLIST} {AGENT_PLIST[:-1]}.foreign-{stamp}"\n',
-                )
-            )
+            mv = sh.run(script("agent-plist-aside", plist_aside_script(stamp)))
             if mv.returncode != 0 or agent_status(sh).plist:
                 raise RuntimeError(
-                    f"foreign agent plist on {sh.node.id} could not be moved aside — llm-* roots not written"
+                    f"foreign agent plist on {sh.node.id} could not be moved to {DISABLED_DIR}"
+                    " — llm-* roots not written"
                 )
-            msgs.append(f"foreign agent plist moved aside: {program}")
+            msgs.append(f"foreign agent plist moved to {dest}: {program}")
     return "  ".join(msgs)
 
 

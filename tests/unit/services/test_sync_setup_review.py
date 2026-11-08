@@ -77,8 +77,11 @@ def test_paused_foreign_plist_is_moved_aside_before_llm_roots(fake_ctx, cluster)
     assert "agent-bootout" not in ops
     assert ops.index("agent-plist-aside") < ops.index("write-config") < ops.index("add-llm")
     assert b.aside == {"20261108T010000Z": FOREIGN_ARGS}
-    assert f"foreign agent plist moved aside: {FOREIGN_PY}" in _msg(result, "node-b")
-    assert b.agent_args == fakes.OWN_ARGS and b.agent_loaded
+    dest = "~/Library/LaunchAgents.disabled/com.a321.docsync.plist.foreign-20261108T010000Z"
+    assert f"foreign agent plist moved to {dest}: {FOREIGN_PY}" in _msg(result, "node-b")
+    scripts = [fakes._script_of(c) for c in cluster.calls]
+    aside = [x for x in scripts if "# op:agent-plist-aside" in x]
+    assert len(aside) == 1 and "LaunchAgents.disabled/com.a321.docsync.plist.foreign-" in aside[0]
 
 
 def test_paused_foreign_plist_and_failing_install_leaves_nothing_loadable(fake_ctx, cluster):
@@ -275,3 +278,37 @@ def test_lock_probe_reads_the_holder_without_taking_the_lock(tmp_path, monkeypat
     assert run() == "free"
     lock.write_text("1\n")
     assert run().startswith("busy:")
+
+
+def test_plist_aside_script_leaves_nothing_in_launch_agents(tmp_path, monkeypatch):
+    """Real bash: the foreign plist ends up in ~/Library/LaunchAgents.disabled, and nothing
+    with the agent's name is left in ~/Library/LaunchAgents."""
+    from maccluster.services.sync_setup_agent import plist_aside_script
+    from maccluster.services.sync_setup_remote import script
+
+    def bash_only(argv, *a, **k):
+        assert list(argv)[:2] == ["/bin/bash", "-c"], argv
+        return REAL_POPEN(argv, *a, **k)
+
+    monkeypatch.setattr(subprocess, "Popen", bash_only)
+    monkeypatch.setattr(subprocess, "run", REAL_RUN)
+    agents = tmp_path / "Library" / "LaunchAgents"
+    agents.mkdir(parents=True)
+    (agents / "com.a321.docsync.plist").write_text("<plist>foreign</plist>")
+    (agents / "other.plist").write_text("x")
+    text = script("agent-plist-aside", plist_aside_script("20261108T010000Z"))
+    res = subprocess.run(
+        ["/bin/bash", "-c", text],
+        env={"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"},
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode == 0, res.stderr
+    assert sorted(p.name for p in agents.iterdir()) == ["other.plist"]
+    moved = (
+        tmp_path
+        / "Library"
+        / "LaunchAgents.disabled"
+        / "com.a321.docsync.plist.foreign-20261108T010000Z"
+    )
+    assert moved.read_text() == "<plist>foreign</plist>"

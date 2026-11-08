@@ -101,7 +101,9 @@ class FakeNode:
         self.agent_version = "1.2.0"  # docsync version of a foreign agent program
         self.bootout_fails = False
         self.install_fails = False
-        self.aside: dict[str, list[str] | None] = {}  # plists moved to .foreign-<stamp>
+        self.aside: dict[
+            str, list[str] | None
+        ] = {}  # plists moved to LaunchAgents.disabled/…foreign-<stamp>
         self.version_timeouts: list[float] = []
         self.others: list[tuple[str, str]] = []  # other docsync installs: (path, version)
         self.sync_home = True
