@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 
 from maccluster import __version__
+from maccluster.cli.sync_setup_parser import add_sync_setup_parser
 from maccluster.constants import DEFAULT_MONITOR_INTERVAL_S, SYNC_DEV_WIFI_TOP
 from maccluster.domain.models import DEFAULT_TRANSPORT_PRIORITY
 
@@ -803,6 +804,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="MCPRT: git ship only, do not upload iOS apps to TestFlight",
     )
+    add_sync_setup_parser(sync_sub)
     p_ri = sub.add_parser(
         "remote-install",
         help=(
