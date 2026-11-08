@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.1 — 2026-11-08
+
+- rsync's stdout/stderr pipes are closed and rsync is reaped on every exit path (no more
+  `ResourceWarning: unclosed file` from `_run_rsync_once`); the lock watcher keeps tracking it.
+- Test only: the `docsync watch` Ctrl-C test waits for the hung listing child instead of counting
+  descendants with `ps -A` (flaky under load).
+
 ## 1.3.0 — 2026-11-08
 
 Rollout:
