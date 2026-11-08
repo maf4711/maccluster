@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Per-root `includes` allowlist (root-anchored globs, `*`/`?` stop at `/`, `**` = any depth) in the
+  local scan, the remote lister and `parse_lines`; non-matching directories are never entered.
+  Such roots drop `DENY_PATTERNS` files (`.credentials.json`, `auth.json`, `*.pem`, `.env`, …) on
+  both sides, `docsync plan` prints `denied: <n> file(s)`, the peer needs python3, and
+  `install-agent` keeps them out of WatchPaths. New `docsync roots add-llm` appends the
+  `llm-claude`, `llm-codex` and `llm-gemini` roots. Roots without `includes` are unchanged.
 - Root lock on both sides of a peer pair: every `docsync sync` holds
   `<state dir>/locks/root-<sha1[:12]>.lock` for its root on this Mac and on the peer (taken there by a
   small Python 3.9 helper sent over ssh stdin) for the whole three-way run, so the same root of two

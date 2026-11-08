@@ -3,8 +3,8 @@
     RemoteTransport.ssh_cmd = [sys.executable, "tests/fake_ssh.py", "--state", "<peer state dir>"]
 
 Usage as ssh: fake_ssh.py [--state DIR] [ssh options] userhost command...  The command runs under
-/bin/sh with `python3` bound to /usr/bin/python3 (3.9, like the peers) and DOCSYNC_STATE_DIR set to
-DIR, so one test can play two Macs with separate state dirs. The process execs into the shell, so
+/bin/sh with `python3` bound to /usr/bin/python3 (3.9, like the peers) when the PATH has a python3,
+and DOCSYNC_STATE_DIR set to DIR, so one test can play two Macs with separate state dirs. The process execs into the shell, so
 the command inherits stdin/stdout directly (EOF on stdin reaches it like through a real ssh)."""
 import os
 import sys
@@ -23,7 +23,8 @@ def main(argv: list[str]) -> None:
     if i + 1 >= len(argv):
         sys.exit("fake_ssh: usage: fake_ssh.py [--state DIR] [options] host command")
     command = " ".join(argv[i + 1:])
-    shim = 'python3() { /usr/bin/python3 "$@"; }\n'
+    # bind python3 only where the PATH has one, so a test can play a peer without python3 (PATH=/bin)
+    shim = 'command -v python3 >/dev/null 2>&1 && python3() { /usr/bin/python3 "$@"; }\n'
     os.execve("/bin/sh", ["sh", "-c", shim + command], env)
 
 

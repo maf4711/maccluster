@@ -33,6 +33,13 @@ class RootSpec:
 
 
 @dataclass
+class _ConfigRootSpec(RootSpec):
+    """docsync's own CLI only: a config root with an `includes` allowlist. Not part of the stable
+    API (API_VERSION stays 1); RootSpec itself has no includes."""
+    includes: list[str] | None = None
+
+
+@dataclass
 class PeerSpec:
     name: str
     host: str | None                 # None → reported as unreachable; "/abs/dir" → local directory peer
@@ -98,7 +105,8 @@ def _config(req: SyncRequest) -> Config:
         trash=req.trash, case_insensitive=req.case_insensitive, max_delete=req.max_delete,
         transfer_streams=req.transfer_streams, safetynet=req.safetynet, safetynet_keep=req.safetynet_keep,
         safetynet_max_age_days=req.safetynet_max_age_days, safetynet_max_gb=req.safetynet_max_gb,
-        roots=[Root(r.name, r.local_path, r.peer_path, r.excludes) for r in req.roots],
+        roots=[Root(r.name, r.local_path, r.peer_path, r.excludes, includes=getattr(r, "includes", None))
+               for r in req.roots],
     )
 
 

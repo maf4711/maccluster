@@ -35,6 +35,7 @@ BULK_SSH_OPTS = SSH_OPTS + [
 # instead of hiding behind a shared ControlMaster.
 LOCK_SSH_OPTS = ["-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=3",
                  "-o", "ControlMaster=no", "-o", "ControlPath=none"]
+NO_PYTHON_RC = 97              # includes listing: the peer has no python3
 STREAM_MIN_FILES = 16          # below this a single rsync stream is used
 STREAM_MIN_BYTES = 64 << 20
 
@@ -238,9 +239,10 @@ class LocalTransport:
             raise TransportError(f"not a directory: {self.root}")
         return self.label
 
-    def manifest(self, excludes: list[str], dataless: set[str] | None = None) -> Manifest:
+    def manifest(self, excludes: list[str], dataless: set[str] | None = None,
+                 includes: list[str] | None = None, denied: set[str] | None = None, icase: bool = False) -> Manifest:
         _test_hang()
-        return scan(self.root, excludes, dataless)
+        return scan(self.root, excludes, dataless, includes, denied, icase)
 
     def push(self, local_root: Path, paths: list[str], dry: bool, verbose: bool, progress=None,
              sizes: dict[str, int] | None = None, streams: int = 1) -> dict[str, int]:
@@ -375,8 +377,18 @@ class RemoteTransport:
         return lock.PeerLock([*self.ssh_cmd, *LOCK_SSH_OPTS, self.userhost,
                               lock.peer_lock_command(remote_path(self.path), cap)])
 
-    def manifest(self, excludes: list[str], dataless: set[str] | None = None) -> Manifest:
+    def manifest(self, excludes: list[str], dataless: set[str] | None = None,
+                 includes: list[str] | None = None, denied: set[str] | None = None, icase: bool = False) -> Manifest:
         q = remote_path(self.path)
+        if includes is not None:  # the allowlist runs on the peer: no LISTER_SH fallback (it lists everything)
+            args = " ".join(shlex.quote(p) for p in ["icase" if icase else "case", *includes])
+            res = self.ssh(f"command -v python3 >/dev/null 2>&1 || exit {NO_PYTHON_RC}; python3 - {q} {args}",
+                           stdin=LISTER_PY, timeout=600)
+            if res.returncode == NO_PYTHON_RC:
+                raise TransportError("includes need python3 on the peer")
+            if res.returncode != 0:
+                raise TransportError(f"remote listing failed: {res.stderr.strip()[-400:]}")
+            return parse_lines(res.stdout, excludes, dataless, includes, denied, icase)
         res = self.ssh(f"command -v python3 >/dev/null 2>&1 && python3 - {q}", stdin=LISTER_PY, timeout=600)
         if res.returncode != 0:
             res = self.ssh(LISTER_SH.format(root=q), timeout=600)

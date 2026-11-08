@@ -469,3 +469,8 @@ try:  # PeerLockTests and DeadlineStackTests: same pattern
     from tests.peerlock_cases import DeadlineStackTests, PeerLockTests  # noqa: F401
 except ImportError:
     from peerlock_cases import DeadlineStackTests, PeerLockTests  # noqa: F401
+try:  # IncludesTests and IncludesConfigTests (per-root allowlists): same pattern
+    from tests.includes_cases import IncludesConfigTests, IncludesTests
+except ImportError:
+    from includes_cases import IncludesConfigTests, IncludesTests
+COLLECTED_FROM_INCLUDES = (IncludesConfigTests, IncludesTests)

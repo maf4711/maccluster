@@ -41,17 +41,18 @@ def _fold(cfg: Config):
 
 
 def scan_local(cfg: Config):
-    """(manifest, cloud-only set) of the local tree — shared between peers in run_many."""
+    """(manifest, cloud-only set, denied set) of the local tree — shared between peers in run_many."""
     cloud: set[str] = set()
-    m = manifest.scan(cfg.local_root, cfg.excludes, cloud)
-    return m, cloud
+    denied: set[str] = set()
+    m = manifest.scan(cfg.local_root, cfg.excludes, cloud, cfg.includes, denied, cfg.case_insensitive)
+    return m, cloud, denied
 
 
 def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbose: bool = False,
              state_dir: Path = STATE_DIR, log=print, progress: bool = False,
              force_deletes: bool = False, progress_stream=None, local_source=None,
              root_name: str = "documents", on_progress=None, root_locks: lock.RootLocks | None = None) -> PeerReport:
-    """local_source: callable returning (manifest, cloud_set); when given, the remote listing is
+    """local_source: callable returning scan_local's (manifest, cloud_set, denied_set); when given, the remote listing is
     requested first and the local scan result fetched afterwards (they overlap in run_many).
     root_locks: the run's root locks (run_many shares one); dry runs take none."""
     rep = PeerReport(peer=peer_name, dry=dry, root=root_name)
@@ -81,12 +82,15 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
         t0 = time.monotonic()
         cloud_remote: set[str] = set()
         log(f"[{peer_name}] listing remote tree…")
-        remote = transport.manifest(cfg.excludes, cloud_remote)
+        denied_remote: set[str] = set()
+        # roots without includes keep the 1.2.0 transport call (other transports need not know includes)
+        remote = transport.manifest(cfg.excludes, cloud_remote, **(
+            {} if cfg.includes is None else {"includes": cfg.includes, "denied": denied_remote, "icase": cfg.case_insensitive}))
         if local_source is None:
             log(f"[{peer_name}] listing local tree…")
-            local_pre, cloud_local = scan_local(cfg)
+            local_pre, cloud_local, denied_local = scan_local(cfg)
         else:
-            local_pre, cloud_local = local_source()
+            local_pre, cloud_local, denied_local = local_source()
         local = dict(local_pre)
         rep.phase("list", t0)
         rep.local_files, rep.local_bytes = len(local), _bytes_of(local, local)
@@ -125,6 +129,9 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
             rep.deletes_skipped = ndel
             plan.delete_local, plan.delete_remote = [], []
         log(f"[{peer_name}] plan: {plan.summary}")
+        if cfg.includes is not None:
+            denied = {fold(p) for p in denied_remote | denied_local}
+            log(f"[{peer_name}] denied: {len(denied)} file(s)")
         if verbose or dry:
             _print_plan(plan, log, limit=None if verbose else 20)
 

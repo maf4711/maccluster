@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 from docsync import __version__, advisor, agent, api, cli_tools, lock, macos, thunderbolt, watchdog
-from docsync.config import (CONFIG_FILE, MACCLUSTER_CONFIG, STATE_DIR, Config, Peer, load_config,
+from docsync.config import (CONFIG_FILE, MACCLUSTER_CONFIG, STATE_DIR, Config, Peer, add_llm_roots, load_config,
                             local_hostnames, peers_from_maccluster, save_config)
 from docsync.hosts import resolve, resolve_peer, select_peers
 from docsync.manifest import scan
@@ -50,6 +50,21 @@ def cmd_init(a) -> int:
     if not cfg.peers:
         print("   no peers yet — add [[peers]] blocks or re-run with --peer NAME=host1,host2")
     return 0
+
+
+def cmd_roots_add_llm(a) -> int:
+    try:
+        added = add_llm_roots(CONFIG_FILE)
+    except ValueError as e:
+        print(f"docsync: {e}", file=sys.stderr)
+        return 1
+    print(f"added roots {', '.join(added)} to {CONFIG_FILE}" if added else "llm roots already present")
+    return 0
+
+
+def watch_paths(cfg: Config) -> list[str]:
+    """launchd WatchPaths: roots with includes (~/.claude, ~/.codex change all the time) sync on the interval only."""
+    return [str(cfg.for_root(r).local_root) for r in cfg.effective_roots() if r.includes is None]
 
 
 def cmd_peers(a) -> int:
@@ -102,7 +117,8 @@ def cmd_sync(a, dry: bool) -> int:
         if not a.sequential and len(peers) > 1:
             log(f"syncing {len(peers)} peers in parallel, {len(roots)} root{'s' if len(roots) != 1 else ''}")
         result = api.sync(api.SyncRequest(
-            roots=[api.RootSpec(r.name, r.path, r.peer_path, cfg.for_root(r).excludes) for r in roots], peers=specs,
+            roots=[api._ConfigRootSpec(r.name, r.path, r.peer_path, cfg.for_root(r).excludes, r.includes)
+                   for r in roots], peers=specs,
             conflict_policy=cfg.conflict_policy, max_delete=cfg.max_delete, force_deletes=a.force_deletes,
             transfer_streams=cfg.transfer_streams, case_insensitive=cfg.case_insensitive, trash=cfg.trash,
             excludes=cfg.excludes, safetynet=cfg.safetynet, safetynet_keep=cfg.safetynet_keep,
@@ -305,6 +321,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--force", action="store_true")
     s.set_defaults(fn=cmd_init)
 
+    s = sub.add_parser("roots", help="manage synced roots in the config")
+    rs = s.add_subparsers(dest="roots_cmd", required=True)
+    rs.add_parser("add-llm", help="append the llm-claude/llm-codex/llm-gemini allowlist roots to the config"
+                  ).set_defaults(fn=cmd_roots_add_llm)
     sub.add_parser("peers", help="peers, reachability, last sync").set_defaults(fn=cmd_peers)
     sub.add_parser("status", help="local tree size + peers").set_defaults(fn=cmd_status)
     cli_tools.register(sub)
@@ -348,8 +368,7 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("install-agent", help="launchd: sync --all every N minutes and when ~/Documents changes")
     s.add_argument("--interval", type=int, default=15, metavar="MIN")
     s.add_argument("--no-watch", action="store_true", help="interval only, no WatchPaths trigger")
-    s.set_defaults(fn=lambda a: print(agent.install(a.interval, None if a.no_watch else
-                   [str(load_config().for_root(r).local_root) for r in load_config().effective_roots()])) or 0)
+    s.set_defaults(fn=lambda a: print(agent.install(a.interval, None if a.no_watch else watch_paths(load_config()))) or 0)
     sub.add_parser("uninstall-agent").set_defaults(fn=lambda a: print(agent.uninstall()) or 0)
     return ap
 

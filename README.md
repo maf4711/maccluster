@@ -38,6 +38,35 @@ excludes = [".DS_Store"]      # default: the global excludes
 in parallel within each root. A root whose folder does not exist fails with `root missing`
 and is never created.
 
+### Allowlist roots (`includes`) and `docsync roots add-llm`
+
+A root with `includes` syncs only the files whose path relative to the root matches one of the
+patterns: anchored at the root, `*` and `?` never cross `/`, `**` matches any depth
+(`CLAUDE.md` does not match `sub/CLAUDE.md`). Directories no pattern can reach are never
+entered, on this Mac and on the peer (a 4 GB `~/.codex` is not walked, only its allowlisted parts). Files outside
+the allowlist are neither copied nor deleted on either side; symlinks (and symlinked folders)
+are skipped as everywhere. Conflict copies (`CLAUDE.conflict-<stamp>-<host>.md`) in such a root are
+tracked like their original file, so deleting the loser propagates.
+
+```toml
+[[roots]]
+name = "llm-claude"
+path = "~/.claude"
+includes = ["CLAUDE.md", "settings.json", "MEMORY.md", "RTK.md", "projects/*/memory/**"]
+```
+
+In such a root the deny list (`.credentials.json`, `auth.json`, `oauth_creds.json`, `*.pem`,
+`id_rsa*`, `id_ed25519*`, `.env`, any path component, ignoring case) wins over every include:
+those files are never listed or sent, and `docsync plan` prints `denied: <n> file(s)` per root.
+Roots without `includes` have no deny list (a Keynote `Talk.key` in Documents syncs as before).
+An includes root needs python3 on the peer (`includes need python3 on the peer`; no `find`
+fallback), and `docsync install-agent` leaves it out of WatchPaths: it syncs on the interval.
+
+`docsync roots add-llm` appends the roots `llm-claude` (`~/.claude`), `llm-codex` (`~/.codex`:
+`config.toml`, `AGENTS.md`, `rules/**`) and `llm-gemini` (`~/.gemini`: `settings.json`,
+`GEMINI.md`) to `config.toml` as plain text, keeping every existing byte; run twice it prints
+`llm roots already present`.
+
 ## Fidelity
 
 rsync runs with `-X -A --crtimes` whenever both Macs have an rsync that supports them
