@@ -397,5 +397,74 @@ class IncludesConfigTests(unittest.TestCase):
         self.assertNotIn(str(Path("~/.claude").expanduser()), watch)
 
 
+class IncludesToolsTests(_Trees):
+    """`docsync conflicts` and `docsync status` filter an includes root like sync does."""
+
+    def cli(self, *argv, includes=CLAUDE_INCLUDES):
+        from docsync import cli
+        text = f'path = "{self.a}"\n'  # without includes: the legacy single root, as before
+        if includes is not None:  # `path` is the "documents" root: keep it out of the includes root
+            text = f'path = "{self.base / "docs"}"\n'
+            text += f'\n[[roots]]\nname = "llm-claude"\npath = "{self.a}"\nincludes = {list(includes)!r}\n'.replace("'", '"')
+        out = io.StringIO()
+        with mock.patch.object(cli, "load_config", lambda: parse_config(text)), \
+                mock.patch.object(cli, "cmd_peers", lambda a: 0), redirect_stdout(out):
+            rc = cli.main(list(argv))
+        return rc, out.getvalue()
+
+    def conflict_tree(self):
+        for rel in ("CLAUDE.conflict-x-node-a.md", "sessions/foo.conflict-x-node-a.json",
+                    ".credentials.conflict-x-node-a.json", "sessions/deep/s.jsonl"):
+            touch(self.a / rel, rel, self.now)
+
+    def test_conflicts_respects_includes(self):
+        self.conflict_tree()
+        calls = []
+        real_scandir, real_listdir = os.scandir, os.listdir
+
+        def counting(fn):
+            def wrapper(path=".", *args, **kw):
+                if "/sessions" in os.fspath(path):
+                    calls.append(os.fspath(path))
+                return fn(path, *args, **kw)
+            return wrapper
+        with mock.patch.object(os, "scandir", counting(real_scandir)), \
+                mock.patch.object(os, "listdir", counting(real_listdir)):
+            rc, out = self.cli("conflicts")
+        self.assertEqual(rc, 0)
+        self.assertEqual(calls, [])
+        self.assertIn("CLAUDE.conflict-x-node-a.md", out)
+        self.assertNotIn("sessions/", out)
+        self.assertNotIn(".credentials", out)
+        self.assertIn("1 conflict copies", out)
+
+    def test_status_respects_includes(self):
+        touch(self.a / "CLAUDE.md", "12345", self.now)
+        touch(self.a / "projects/p/memory/m.md", "123", self.now)
+        touch(self.a / "sessions/big.jsonl", "x" * 5000, self.now)
+        touch(self.a / ".credentials.json", "secret", self.now)
+        touch(self.a / "auth.json", "s", self.now)
+        rc, out = self.cli("status")
+        self.assertEqual(rc, 0)
+        from docsync.report import fmt_bytes
+        self.assertIn(f"{self.a}: 2 files, {fmt_bytes(8)}\n", out)
+
+    def test_tools_unchanged_without_includes(self):
+        self.conflict_tree()
+        touch(self.a / "CLAUDE.md", "12345", self.now)
+        from docsync.report import fmt_bytes
+        cfg = parse_config(f'path = "{self.a}"\n')
+        m = manifest.scan(cfg.local_root, cfg.excludes)
+        rc, out = self.cli("status", includes=None)
+        self.assertEqual(rc, 0)
+        self.assertEqual(out, f"{cfg.local_root}: {len(m):,} files, {fmt_bytes(sum(v[1] for v in m.values()))}\n")
+        self.assertIn("5 files", out)
+        rc, out = self.cli("conflicts", includes=None)
+        hits = sorted(p for p in manifest.scan(self.a, [".docsync*"]) if ".conflict-" in p)
+        self.assertEqual(out, "".join(f"   {h}\n" for h in hits) + f"{len(hits)} conflict copies — review, then "
+                         "delete the loser; the deletion propagates on the next sync\n")
+        self.assertEqual(len(hits), 3)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -84,10 +84,18 @@ def cmd_peers(a) -> int:
     return 0
 
 
+def _root_files(c: Config, excludes: list[str]):
+    """Files of one root view, filtered like sync: only paths its includes match, nothing on the deny
+    list, and no descent into directories no include can reach. Without includes: the whole tree."""
+    return scan(c.local_root, excludes, None, c.includes, None, c.case_insensitive)
+
+
 def cmd_status(a) -> int:
     cfg = load_config()
-    m = scan(cfg.local_root, cfg.excludes)
-    print(f"{cfg.local_root}: {len(m):,} files, {fmt_bytes(sum(v[1] for v in m.values()))}")
+    # the `path` line as before, then one line per includes root (counting only what sync sends)
+    for v in [cfg] + [cfg.for_root(r) for r in cfg.effective_roots() if r.includes is not None]:
+        m = _root_files(v, v.excludes)
+        print(f"{v.local_root}: {len(m):,} files, {fmt_bytes(sum(x[1] for x in m.values()))}")
     return cmd_peers(a)
 
 
@@ -232,7 +240,7 @@ def cmd_conflicts(a) -> int:
     cfg = load_config()
     roots = cfg.effective_roots()
     hits = sorted((f"{r.name}: " if len(roots) > 1 else "") + p
-                  for r in roots for p in scan(cfg.for_root(r).local_root, [".docsync*"]) if ".conflict-" in p)
+                  for r in roots for p in _root_files(cfg.for_root(r), [".docsync*"]) if ".conflict-" in p)
     if not hits:
         print("no conflict copies")
         return 0
