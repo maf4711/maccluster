@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.3.3 — unreleased
+## 1.3.3 — 2026-11-08
 
 - `docsync heal [--once] [--dry-run] [--no-notify] [--no-fm]`: heals what `docsync monitor` reports,
   automatically and with one Notification Center message per action. Fixed allowlist, each action
