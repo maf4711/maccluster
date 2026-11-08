@@ -14,9 +14,15 @@
   `config.toml.bak-<UTC stamp>`. A node that is unreachable (TB IP and `.local`, 5 s each),
   runs docsync < 1.3.0 or lacks `roots add-llm`/`icloud-check` (skip message names
   `remote-install`), or holds the docsync run lock for 60 s is skipped and the command exits 1.
-  A second run on a set-up cluster writes nothing.
+  A second run on a set-up cluster writes nothing. A `com.a321.docsync` that runs any other
+  program (a repo shim, a separate docsync-lan pipx venv on 1.2.x) is booted out before llm-*
+  roots are written and replaced by one on the probed interpreter; if it cannot be booted out
+  the node is skipped. Other docsync installs older than 1.3.0 are named
+  (`stale docsync <version> at <path> on <node> — upgrade or remove`). `com.maccluster.sync-home`
+  is removed only after the docsync agent is confirmed loaded. An old peer whose hosts match a
+  cluster node under another name skips the node (`peer <old> would be renamed to <id>`).
 - `doctor`: finding `sync` per node — agent loaded and last exit code, age of the last
-  successful docsync run (warning above 2 h), the stored `icloud-<node>.json` result and the
+  successful docsync run (warning above 2 h; dry-run and all-busy reports do not count), the stored `icloud-<node>.json` result and the
   `~/dotfiles` state. An unreachable peer is a warning and never changes doctor's exit code.
 - Deadline expiry writes every thread stack to `~/Library/Logs/maccluster/deadline-<UTC stamp>.txt`
   (docsync `watchdog.dump_stacks`, else `faulthandler`) before exit 4; stderr names the file.
