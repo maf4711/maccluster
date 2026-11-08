@@ -8,6 +8,7 @@ separate docsync-lan pipx venv on 1.2.x) is booted out before llm-* roots are wr
 
 from __future__ import annotations
 
+import json
 import re
 import shlex
 from dataclasses import dataclass
@@ -20,8 +21,12 @@ AGENT_INTERVAL_MIN = 15
 AGENT_MAX_RUNTIME = 1800
 MIN_DOCSYNC = (1, 3, 0)  # 1.2.x ignores root `includes` and would sync all of ~/.claude
 
+AGENT_PLIST = f'"$HOME/Library/LaunchAgents/{AGENT_LABEL}.plist"'
 AGENT_STATUS = (
-    f'[ -f "$HOME/Library/LaunchAgents/{AGENT_LABEL}.plist" ] && echo plist=1 || echo plist=0\n'
+    f"p={AGENT_PLIST}\n"
+    'if [ -f "$p" ]; then echo plist=1\n'
+    '  echo "plistargs=$(plutil -extract ProgramArguments json -o - "$p" 2>/dev/null | tr -d \'\\n\')"\n'
+    "else echo plist=0; fi\n"
     'echo "py=$py"\n'
     f'launchctl print "gui/$(id -u)/{AGENT_LABEL}" 2>/dev/null || true\n'
 )
@@ -64,6 +69,15 @@ class AgentState:
     program: str
     arguments: tuple[str, ...]
     py: str
+    plist_args: tuple[str, ...] = ()  # ProgramArguments in the plist on disk
+
+    @property
+    def plist_foreign(self) -> bool:
+        """The plist on disk would start another program than `$py -m docsync` at next login."""
+        args = self.plist_args
+        if not self.plist:
+            return False
+        return not (args and self.py and args[0] == self.py and _pair(args, "-m", "docsync"))
 
     @property
     def own(self) -> bool:
@@ -90,12 +104,18 @@ def parse_agent(out: str) -> AgentState:
     args = tuple(x.strip() for x in m.group(1).splitlines() if x.strip()) if m else ()
     prog = re.search(r"^\s*program = (.+)$", out, re.M)
     py = re.search(r"^py=(.*)$", out, re.M)
+    raw = re.search(r"^plistargs=(.*)$", out, re.M)
+    try:
+        plist_args = tuple(str(a) for a in json.loads(raw.group(1))) if raw else ()
+    except (ValueError, TypeError):
+        plist_args = ()
     return AgentState(
         plist="plist=1" in out,
         loaded=f"{AGENT_LABEL} = {{" in out,
         program=prog.group(1).strip() if prog else (args[0] if args else ""),
         arguments=args,
         py=py.group(1).strip() if py else "",
+        plist_args=plist_args,
     )
 
 
@@ -103,11 +123,12 @@ def agent_status(sh: NodeShell) -> AgentState:
     return parse_agent(sh.run(script("agent-status", AGENT_STATUS, python=True)).stdout or "")
 
 
-def foreign_version(sh: NodeShell, st: AgentState) -> str:
+def foreign_version(sh: NodeShell, st: AgentState, *, timeout: float) -> str:
     """docsync version of a foreign agent: its argv up to `sync`, plus --version."""
-    argv = list(st.arguments) or [st.program]
+    argv = list(st.arguments or st.plist_args) or [st.program]
     prefix = argv[: argv.index("sync")] if "sync" in argv else argv[:1]
-    out = sh.run(script("agent-version", shlex.join([*prefix, "--version"]) + " 2>&1\n")).stdout
+    cmd = shlex.join([*prefix, "--version"]) + " 2>&1\n"
+    out = sh.run(script("agent-version", cmd), timeout=timeout).stdout
     return parse_version(out or "")[0]
 
 
@@ -123,21 +144,42 @@ def stale_docsyncs(sh: NodeShell) -> list[str]:
     return warnings
 
 
-def replace_foreign(sh: NodeShell, *, dry_run: bool) -> str:
-    """Boot out a com.a321.docsync that is not ours. Returns a message ('' if nothing to do);
-    raises RuntimeError when the foreign agent stays loaded."""
+def replace_foreign(sh: NodeShell, *, dry_run: bool, stamp: str) -> str:
+    """Before llm-* roots exist: boot out a loaded com.a321.docsync that is not ours, and move a
+    foreign plist on disk to `<plist>.foreign-<stamp>` (a paused foreign agent would come back
+    at the next login, e.g. when install-agent fails). Returns a message ('' if nothing to do);
+    raises RuntimeError when the foreign agent stays loaded or its plist cannot be moved."""
     st = agent_status(sh)
-    if not st.loaded or st.own:
-        return ""
-    what = f"foreign agent {st.program} (docsync {foreign_version(sh, st)})"
-    if dry_run:
-        return f"would replace {what}"
-    sh.run(script("agent-bootout", AGENT_BOOTOUT))
-    if agent_status(sh).loaded:
-        raise RuntimeError(
-            f"{what} on {sh.node.id} could not be booted out — llm-* roots not written"
-        )
-    return f"{what} booted out"
+    msgs = []
+    if st.loaded and not st.own:
+        what = f"foreign agent {st.program} (docsync {foreign_version(sh, st, timeout=30)})"
+        if dry_run:
+            msgs.append(f"would replace {what}")
+        else:
+            sh.run(script("agent-bootout", AGENT_BOOTOUT))
+            st = agent_status(sh)
+            if st.loaded:
+                raise RuntimeError(
+                    f"{what} on {sh.node.id} could not be booted out — llm-* roots not written"
+                )
+            msgs.append(f"{what} booted out")
+    if st.plist_foreign:
+        program = st.plist_args[0] if st.plist_args else "unreadable ProgramArguments"
+        if dry_run:
+            msgs.append(f"would move foreign agent plist aside: {program}")
+        else:
+            mv = sh.run(
+                script(
+                    "agent-plist-aside",
+                    f'mv -f {AGENT_PLIST} {AGENT_PLIST[:-1]}.foreign-{stamp}"\n',
+                )
+            )
+            if mv.returncode != 0 or agent_status(sh).plist:
+                raise RuntimeError(
+                    f"foreign agent plist on {sh.node.id} could not be moved aside — llm-* roots not written"
+                )
+            msgs.append(f"foreign agent plist moved aside: {program}")
+    return "  ".join(msgs)
 
 
 def ensure_agent(sh: NodeShell, *, dry_run: bool) -> tuple[str, str, bool]:

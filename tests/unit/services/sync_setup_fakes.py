@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import re
 import shlex
 from collections.abc import Sequence
@@ -100,6 +101,8 @@ class FakeNode:
         self.agent_version = "1.2.0"  # docsync version of a foreign agent program
         self.bootout_fails = False
         self.install_fails = False
+        self.aside: dict[str, list[str] | None] = {}  # plists moved to .foreign-<stamp>
+        self.version_timeouts: list[float] = []
         self.others: list[tuple[str, str]] = []  # other docsync installs: (path, version)
         self.sync_home = True
         self.dotfiles = "behind"  # missing | behind | clean | dirty | diverged
@@ -142,10 +145,10 @@ class FakeCluster:
         node = self.nodes[name]
         if not node.reachable and Path(full[0]).name == "ssh":
             return ProcessResult(full, 255, "", "ssh: connect timed out")
-        out, rc = self._op(node, op, text)
+        out, rc = self._op(node, op, text, timeout)
         return ProcessResult(full, rc, out, "" if rc == 0 else out)
 
-    def _op(self, node: FakeNode, op: str, text: str) -> tuple[str, int]:
+    def _op(self, node: FakeNode, op: str, text: str, timeout: float) -> tuple[str, int]:
         if op == "probe":
             return "", 0
         if op == "docsync":
@@ -172,12 +175,22 @@ class FakeCluster:
             node.config += LLM_BLOCK
             return "added roots llm-claude, llm-codex, llm-gemini", 0
         if op == "agent-status":
-            out = f"plist={int(node.agent_args is not None)}\npy={OWN_PY}\n"
+            out = f"plist={int(node.agent_args is not None)}\n"
+            if node.agent_args is not None:
+                out += f"plistargs={json.dumps(node.agent_args)}\n"
+            out += f"py={OWN_PY}\n"
             return out + (agent_print(node.agent_args) if node.agent_loaded else ""), 0
         if op == "agent-bootout":
             node.agent_loaded = node.bootout_fails
             return "", 0
+        if op == "agent-plist-aside":
+            node.writes += 1
+            stamp = re.search(r"\.foreign-(\d{8}T\d{6}Z)", text).group(1)
+            node.aside[stamp] = node.agent_args
+            node.agent_args = None
+            return "", 0
         if op == "agent-version":
+            node.version_timeouts.append(timeout)
             return f"docsync {node.agent_version}", 0
         if op == "docsync-others":
             return "".join(f"other={p}|docsync {v}\n" for p, v in node.others), 0

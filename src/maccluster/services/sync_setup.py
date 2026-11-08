@@ -49,21 +49,35 @@ DOCSYNC_PROBE = (
     "exit 0\n"
 )
 # Read-only: never take the flock (an agent run starting that moment would fail LOCK_NB and
-# exit 3). Busy = run.lock names a pid that is alive; docsync's busy_text words it when present.
+# exit 3). run.lock keeps the last holder's record after release, so busy needs both: the pid
+# on line 1 is alive AND that process started no later than the record's `started` (line 2,
+# unix s; ±2 s). A process that started later reuses a recycled pid: the record is stale.
+# Fail-safe: when the start times cannot be compared (no `started`, ps fails), it is busy.
 LOCK_PROBE = """"$py" - <<'PY'
-import os
+import os, subprocess, time
 from pathlib import Path
 p = Path(os.environ.get("DOCSYNC_STATE_DIR", "~/.local/state/docsync")).expanduser() / "run.lock"
 try:
-    pid = int(p.read_text(errors="replace").split("\\n", 1)[0])
-except (OSError, ValueError):
+    lines = p.read_text(errors="replace").splitlines()
+    pid = int(lines[0])
+except (OSError, ValueError, IndexError):
     print("free"); raise SystemExit
 try:
     os.kill(pid, 0)
-except (ProcessLookupError, OverflowError):  # no such process: a stale record
+except (ProcessLookupError, OverflowError):  # no such process
     print("free"); raise SystemExit
 except PermissionError:  # alive, owned by another user
     pass
+def proc_start(pid):
+    out = subprocess.run(["/bin/ps", "-o", "lstart=", "-p", str(pid)], capture_output=True,
+                         text=True, env={"LC_ALL": "C", "PATH": "/bin:/usr/bin"}).stdout.strip()
+    return time.mktime(time.strptime(" ".join(out.split()), "%a %b %d %H:%M:%S %Y"))
+try:
+    started = float(lines[1])
+    if proc_start(pid) > started + 2:
+        print("free"); raise SystemExit  # a newer process got the recycled pid
+except (IndexError, ValueError, OSError):
+    pass  # cannot compare: fail-safe busy
 try:
     from docsync import lock
     print("busy:", lock.busy_text(lock.read_holder(p)))
@@ -231,7 +245,7 @@ def _setup_node(
         if not dry_run:
             _wait_for_lock(ctx, sh)
         try:
-            foreign_msg = replace_foreign(sh, dry_run=dry_run)
+            foreign_msg = replace_foreign(sh, dry_run=dry_run, stamp=stamp)
         except RuntimeError as exc:
             raise _Skip(str(exc)) from exc
         changed, cfg_msg = _config(sh, _peers_of(node, nodes), dry_run=dry_run, stamp=stamp)

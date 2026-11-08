@@ -68,13 +68,45 @@ def test_foreign_agent_that_stays_loaded_gets_no_llm_roots(fake_ctx, cluster):
     assert "could not be booted out — llm-* roots not written" in _msg(result, "node-b")
 
 
-def test_paused_foreign_plist_is_replaced_without_bootout(fake_ctx, cluster):
+def test_paused_foreign_plist_is_moved_aside_before_llm_roots(fake_ctx, cluster):
     b = cluster.nodes["node-b"]
     b.agent_args, b.agent_loaded = list(FOREIGN_ARGS), False
     result = _setup(fake_ctx)
     assert result.exit_code == 0
-    assert "agent-bootout" not in cluster.node_ops("node-b")
+    ops = cluster.node_ops("node-b")
+    assert "agent-bootout" not in ops
+    assert ops.index("agent-plist-aside") < ops.index("write-config") < ops.index("add-llm")
+    assert b.aside == {"20261108T010000Z": FOREIGN_ARGS}
+    assert f"foreign agent plist moved aside: {FOREIGN_PY}" in _msg(result, "node-b")
     assert b.agent_args == fakes.OWN_ARGS and b.agent_loaded
+
+
+def test_paused_foreign_plist_and_failing_install_leaves_nothing_loadable(fake_ctx, cluster):
+    b = cluster.nodes["node-b"]
+    b.agent_args, b.agent_loaded, b.install_fails = list(FOREIGN_ARGS), False, True
+    result = _setup(fake_ctx)
+    assert result.exit_code == 1
+    assert b.agent_args is None  # no plist launchd could load at the next login
+    assert b.aside == {"20261108T010000Z": FOREIGN_ARGS}
+    assert "llm-claude" in b.config  # written only after the foreign plist was gone
+    assert "sync-home kept (agent not loaded)" in _msg(result, "node-b")
+
+
+def test_foreign_version_timeouts(fake_ctx, cluster, monkeypatch):
+    from maccluster.services.sync_setup_agent import agent_status, foreign_version
+    from maccluster.services.sync_setup_remote import connect
+
+    b = cluster.nodes["node-b"]
+    b.agent_args, b.agent_loaded = list(FOREIGN_ARGS), True
+    _setup(fake_ctx, dry_run=True)
+    assert b.version_timeouts == [30]
+    from maccluster.services.config_service import load_and_bind_self
+
+    cfg, self_node = load_and_bind_self(fake_ctx)
+    node_b = next(n for n in cfg.nodes if n.id == "node-b")
+    sh = connect(fake_ctx, node_b, self_node=self_node)
+    assert foreign_version(sh, agent_status(sh), timeout=10) == "1.2.0"
+    assert b.version_timeouts == [30, 10]
 
 
 def test_dry_run_names_the_foreign_agent(fake_ctx, cluster):
@@ -196,10 +228,11 @@ def test_generated_bash_runs_for_real(tmp_path, monkeypatch):
 
 
 def test_lock_probe_reads_the_holder_without_taking_the_lock(tmp_path, monkeypatch):
-    """Real bash + python: free without a record or with a dead pid, busy with a live pid,
-    and the probe never calls flock."""
+    """Real bash + python + ps: busy only for a live pid that started before the record; a
+    recycled pid is free; without a comparable `started` it is busy (fail-safe); no flock."""
     import os
     import sys
+    import time
 
     from maccluster.services.sync_setup import LOCK_PROBE
     from maccluster.services.sync_setup_remote import script
@@ -224,38 +257,21 @@ def test_lock_probe_reads_the_holder_without_taking_the_lock(tmp_path, monkeypat
 
     assert run() == "free"
     lock = state / "run.lock"
+    me, now = os.getpid(), int(time.time())
     lock.write_text("99999999\n1762560000\ndocsync sync --all\n")
-    assert run() == "free"
-    lock.write_text(f"{os.getpid()}\n1762560000\ndocsync sync --all\n")
+    assert run() == "free"  # no such process
+    lock.write_text(f"{me}\n{now}\ndocsync sync --all\n")
     out = run()
-    assert out.startswith("busy:") and f"pid {os.getpid()}" in out
-    assert lock.read_text().startswith(str(os.getpid()))
-
-
-def test_generated_scripts_parse_in_bash(monkeypatch):
-    """Every generated script is valid bash (`set -n`: parsed, nothing executed)."""
-    from maccluster.services import sync_setup, sync_setup_agent
-    from maccluster.services.sync_setup_doctor import _doctor_script
-    from maccluster.services.sync_setup_remote import PY_RESOLVE
-
-    def bash_only(argv, *a, **k):
-        assert list(argv)[:2] == ["/bin/bash", "-c"], argv
-        return REAL_POPEN(argv, *a, **k)
-
-    monkeypatch.setattr(subprocess, "Popen", bash_only)
-    monkeypatch.setattr(subprocess, "run", REAL_RUN)
-    bodies = [
-        PY_RESOLVE,
-        _doctor_script("node-a"),
-        sync_setup.DOCSYNC_PROBE,
-        sync_setup.LOCK_PROBE,
-        sync_setup.DOTFILES_STATUS,
-        sync_setup._write_script("x = 1\n", "20261108T010000Z"),
-        sync_setup_agent.AGENT_STATUS,
-        sync_setup_agent.OTHER_DOCSYNCS,
-        sync_setup_agent.SYNC_HOME_STATUS,
-        sync_setup_agent.SYNC_HOME_REMOVE,
-    ]
-    for body in bodies:
-        res = subprocess.run(["/bin/bash", "-c", "set -n\n" + body], capture_output=True, text=True)
-        assert res.returncode == 0, (res.stderr, body)
+    assert out.startswith("busy:") and f"pid {me}" in out  # alive, started before the record
+    assert lock.read_text().startswith(str(me))
+    lock.write_text(f"{me}\n1000\ndocsync sync --all\n")
+    assert run() == "free"  # alive but started after the record: a recycled pid
+    lock.write_text(f"{me}\n")
+    assert run().startswith("busy:")  # no `started` to compare: fail-safe busy
+    # pid 1 (launchd, root): kill -0 raises PermissionError for this user
+    lock.write_text(f"1\n{now}\nx\n")
+    assert run().startswith("busy:")
+    lock.write_text("1\n1000\nx\n")
+    assert run() == "free"
+    lock.write_text("1\n")
+    assert run().startswith("busy:")

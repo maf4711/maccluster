@@ -145,7 +145,7 @@ def _agent_program(sh: NodeShell, out: str) -> tuple[list[str], bool]:
         return [], False
     parts = [f"agent runs {st.program}, not maccluster's docsync — run maccluster sync setup"]
     try:
-        shown, ver = parse_version(f"docsync {foreign_version(sh, st)}")
+        shown, ver = parse_version(f"docsync {foreign_version(sh, st, timeout=10)}")
     except Exception:  # an unreadable version is no reason to fail the finding
         shown, ver = "?", ()
     if ver and ver < MIN_DOCSYNC:
