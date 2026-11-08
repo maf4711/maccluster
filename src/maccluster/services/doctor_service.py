@@ -96,6 +96,11 @@ def run_doctor(
             peers.append((node, state))
             node_health.append(NodeHealth(node=node, reachability=state))
     findings.append(checks.check_peers(peers))
+    if cfg is not None and self_node is not None:
+        from maccluster.services.sync_setup_doctor import sync_findings
+
+        states = {node.id: state for node, state in peers}
+        findings.extend(sync_findings(ctx, cfg, self_node, peer_states=states))
 
     mesh = build_mesh_health(
         node_health,

@@ -118,11 +118,23 @@ def _render_plain(result) -> str:
     return "\n".join(lines)
 
 
+def _run_setup(ctx: AppContext, args) -> int:
+    from maccluster.services.sync_setup import render_setup, setup
+
+    result = setup(
+        ctx, dry_run=bool(getattr(args, "dry_run", False)), node=getattr(args, "node", None)
+    )
+    print(dumps("sync", to_jsonable(result)) if ctx.json_mode else render_setup(result))
+    return result.exit_code
+
+
 def run(ctx: AppContext, args) -> int:
     action = normalize_sync_target(getattr(args, "sync_action", None))
+    if action == "setup":
+        return _run_setup(ctx, args)
     if action not in ("home", "dev"):
         raise CliError(
-            "sync requires a target: maccluster sync home|dev  (see --help)",
+            "sync requires a target: maccluster sync home|dev|setup  (see --help)",
             exit_code=2,
         )
 

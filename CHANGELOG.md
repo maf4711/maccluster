@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+### Added
+- `maccluster sync setup [--dry-run] [--node NAME]`: from any one Mac, gives every node of
+  cluster.toml the same docsync set-up — roots `documents` (the top-level `path`), `desktop`,
+  `llm-claude`, `llm-codex`, `llm-gemini` (via `docsync roots add-llm`); peers = the other nodes
+  by their cluster.toml ids with the Thunderbolt address first and the `.local` names after it;
+  one launchd agent `com.a321.docsync` (`docsync install-agent --interval 15`, verified to run
+  with `--max-runtime 1800`); `com.maccluster.sync-home` booted out and its plist removed; and
+  `~/dotfiles` cloned or fast-forwarded (a dirty, diverged or unpushed clone is left unchanged
+  and named). All other config keys and comments stay; the old file is kept as
+  `config.toml.bak-<UTC stamp>`. A node that is unreachable (TB IP and `.local`, 5 s each),
+  runs docsync < 1.3.0 or lacks `roots add-llm`/`icloud-check` (skip message names
+  `remote-install`), or holds the docsync run lock for 60 s is skipped and the command exits 1.
+  A second run on a set-up cluster writes nothing. A `com.a321.docsync` that runs any other
+  program (a repo shim, a separate docsync-lan pipx venv on 1.2.x) is booted out before llm-*
+  roots are written and replaced by one on the probed interpreter; if it cannot be booted out
+  the node is skipped. Other docsync installs older than 1.3.0 are named
+  (`stale docsync <version> at <path> on <node> — upgrade or remove`). `com.maccluster.sync-home`
+  is removed only after the docsync agent is confirmed loaded. A paused foreign agent plist
+  is moved out of LaunchAgents to
+  `~/Library/LaunchAgents.disabled/com.a321.docsync.plist.foreign-<UTC stamp>` before llm-* roots
+  are written. The run-lock probe
+  counts a record as busy only when its pid is alive and started no later than the record. An old peer whose hosts match a
+  cluster node under another name skips the node (`peer <old> would be renamed to <id>`).
+- `doctor`: finding `sync` per node — agent loaded and last exit code, age of the last
+  successful docsync run (warning above 2 h; dry-run and all-busy reports do not count), a warning when `com.a321.docsync` runs another program than maccluster's docsync or a docsync < 1.3.0, the stored `icloud-<node>.json` result and the
+  `~/dotfiles` state. An unreachable peer is a warning and never changes doctor's exit code.
+- Deadline expiry writes every thread stack to `~/Library/Logs/maccluster/deadline-<UTC stamp>.txt`
+  (docsync `watchdog.dump_stacks`, else `faulthandler`) before exit 4; stderr names the file.
+
+### Changed
+- The docsync engine gets the run's `--timeout` as `SyncRequest.max_runtime` (docsync-lan
+  >= 1.3), so its peer lock lasts the whole maccluster run (timeout + 60 s) instead of aborting
+  runs over 31 min with `peer lock lost`. Older engines are detected and run as before.
+
 ## 0.7.6 — 2026-11-07
 
 ### Added

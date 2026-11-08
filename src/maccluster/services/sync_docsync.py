@@ -260,8 +260,11 @@ def run(
     force_deletes: bool = False,
     api=None,
     state_dir: Path | None = None,
+    max_runtime: float | None = None,
 ) -> SyncHomeResult:
-    """One docsync run over every include root and peer. `api` is injectable for tests."""
+    """One docsync run over every include root and peer. `api` is injectable for tests.
+    `max_runtime` (the run's --timeout) goes to docsync >= 1.3, whose peer lock then lasts that
+    + 60 s; older engines have no such field and keep their own default."""
     if api is None:
         from docsync import api  # noqa: PLC0415 — optional engine
     version = getattr(api, "__version__", None) or docsync_version() or "?"
@@ -280,6 +283,9 @@ def run(
     defaults = list(api.SyncRequest.__dataclass_fields__["excludes"].default_factory()) + list(
         ENGINE_EXCLUDES
     )
+    extra = {}
+    if max_runtime is not None and "max_runtime" in api.SyncRequest.__dataclass_fields__:
+        extra["max_runtime"] = max_runtime
     req = api.SyncRequest(
         roots=[
             api.RootSpec(name, str(lp), rp, defaults + translate_excludes(excludes, rel))
@@ -291,6 +297,7 @@ def run(
         dry_run=dry_run or compare_only,
         log=log,
         state_dir=state_dir,
+        **extra,
     )
     prog.note(f"engine docsync {version}: {len(req.roots)} root(s) × {len(specs)} peer(s)")
     res = api.sync(req)

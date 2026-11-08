@@ -52,7 +52,12 @@ def _sync_docsync(
     ctx: AppContext, *, prog, policy: str, force_deletes: bool, **kw
 ) -> SyncHomeResult:
     from maccluster.config.paths import default_sync_exclude_file
-    from maccluster.constants import SYNC_DEFAULT_PRESETS, SYNC_DEV_EXCLUDES, SYNC_HOME_EXCLUDES
+    from maccluster.constants import (
+        SYNC_DEFAULT_PRESETS,
+        SYNC_DEV_EXCLUDES,
+        SYNC_HOME_EXCLUDES,
+        TIMEOUT_SYNC,
+    )
     from maccluster.services.config_service import load_and_bind_self
     from maccluster.services.sync_filters import load_exclude_file, merge_includes
     from maccluster.services.sync_history import write_run_log
@@ -135,6 +140,7 @@ def _sync_docsync(
             compare_only=bool(kw.get("compare_only")),
             default_user=user,
             force_deletes=force_deletes,
+            max_runtime=float(kw.get("timeout") or TIMEOUT_SYNC),
         ),
     )
     if kw.get("write_log", True) and not result.dry_run:
@@ -155,6 +161,27 @@ def _load_watchdog(prog):
     return watchdog
 
 
+def _dump_stacks(wd) -> Path | None:
+    """All thread stacks to ~/Library/Logs/maccluster/deadline-<UTC stamp>.txt: docsync's
+    `watchdog.dump_stacks` when it has one, else faulthandler. None if nothing could be written."""
+    import faulthandler
+    import time
+
+    path = Path.home() / "Library" / "Logs" / "maccluster"
+    path = path / f"deadline-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}.txt"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        dump = getattr(wd, "dump_stacks", None)
+        if dump is not None:
+            dump(path)
+        else:
+            with path.open("w") as fh:
+                faulthandler.dump_traceback(fh, all_threads=True)
+        return path
+    except Exception:  # the exit must happen even when the dump fails
+        return None
+
+
 def run_with_deadline(prog, timeout: float | None, fn):
     """Run `fn` with the whole process bounded by `timeout` seconds (default TIMEOUT_SYNC).
     On expiry this process's rsync/ssh children are ended and the process exits 4, which also
@@ -167,9 +194,11 @@ def run_with_deadline(prog, timeout: float | None, fn):
         return fn()
 
     def expire() -> None:
+        stacks = _dump_stacks(wd)
         try:
             print(
-                f"maccluster: deadline of {seconds:g} s exceeded — ending this sync (exit {wd.EXIT_DEADLINE})",
+                f"maccluster: deadline of {seconds:g} s exceeded — ending this sync (exit {wd.EXIT_DEADLINE})"
+                + (f"; thread stacks in {stacks}" if stacks else ""),
                 file=sys.stderr,
                 flush=True,
             )

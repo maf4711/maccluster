@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 
 from maccluster import __version__
+from maccluster.cli.sync_setup_parser import add_sync_parser
 from maccluster.constants import DEFAULT_MONITOR_INTERVAL_S, SYNC_DEV_WIFI_TOP
 from maccluster.domain.models import DEFAULT_TRANSPORT_PRIORITY
 
@@ -729,11 +730,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_home_dev_transfer_flags(p_push, command="push")
 
-    p_sync = sub.add_parser(
-        "sync",
-        help="Sync data with peers over TB/SSH (home or ~/Developer)",
-    )
-    sync_sub = p_sync.add_subparsers(dest="sync_action", metavar="TARGET")
+    sync_sub = add_sync_parser(sub)
     p_home = sync_sub.add_parser(
         "home",
         help=(
