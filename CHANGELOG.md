@@ -2,6 +2,46 @@
 
 ## 1.3.3 — unreleased
 
+- `docsync heal [--once] [--dry-run] [--no-notify] [--no-fm]`: heals what `docsync monitor` reports,
+  automatically and with one Notification Center message per action. Fixed allowlist, each action
+  verified: `reload_agent` (launchctl bootstrap of the own plist, or `install-agent --interval 15`;
+  then the agent must pass the shared `docsync.agentcheck` rule: argv `<python> -m docsync …`, that
+  python exists, its docsync is >= 1.3.2, `--max-runtime` set — whatever python heal runs under),
+  `sync_now` (one detached
+  `sync --all --max-runtime 1800 --no-notify --from-heal` (origin agent=heal, never non_agent_run), only when no live process holds run.lock, verified by
+  the new run taking the lock), `wake_peer` (Wake-on-LAN when cluster.toml or the docsync peer has
+  `wake_mac`, then `/sbin/ping` of the TB IP for up to 60 s), `setup_node` / `update_peer`
+  (coordinator only: `maccluster sync setup --node`, `MACCLUSTER_SRC=~/Developer/maccluster
+  maccluster remote-install <ip> --no-config --no-ssh-config --user <user of ssh_target>`; never
+  copies cluster.toml, never rewrites this Mac's ssh config; a missing maccluster source is a failure).
+  setup_node/update_peer are verified by one fresh monitor probe of the node. Conflicts and held-back deletions stay with the user:
+  `advise_conflicts` (runs `docsync advise`) and `advise_deletes` notify a recommendation
+  ("review, then docsync sync --force-deletes"); `summarize_dump` summarizes the newest deadline dump.
+- Alerts come from `monitor_report.gather()` and `monitor_alerts.alerts()`. `peer_failed` wakes the
+  peers whose failure says they did not answer (coordinator), otherwise notifies; `never_synced`
+  and `peer_lock_lost` get no action.
+- Coordinator mode is explicit: `docsync heal --coordinator` (and `install-heal-agent --coordinator`,
+  meant for one Mac only) heals itself and the remote nodes, when cluster.toml and maccluster exist;
+  without the flag heal only heals this node. Rate limit: the same action for the same node and code
+  at most once per 30 min; a failure, or an "ok" after which the alert is still there on the next
+  pass, counts toward the give-up after 3 (one notification). Notify-type actions (notify, advise_*,
+  summarize_dump) notify once per episode, with a reminder at most every 24 h. A loaded agent whose
+  last run failed (agent_exit) is notified with the newest deadline-dump summary, never bootstrapped
+  or kickstarted. stale_success never syncs when the last run synced with no peer (all failed or busy) or the
+  same pass has a peer_failed of that node or a peer_unreachable: it wakes the unreachable peers
+  (coordinator) or notifies. sync_now counts as ok only when stale_success is gone on the next pass. Malformed heal-state.json entries
+  are dropped. The FM helper is only compiled with at least 120 s of the pass left; dumps are only
+  read from the log dir. State in
+  `<state>/heal-state.json`, a `=== heal <time>` block per run in history.log. Exit 0 when no FAIL
+  remains, 1 otherwise, 2 when `docsync monitor` is missing.
+- Apple Foundation Model (`docsync-heal` Swift helper, guided generation): may only choose among
+  the allowed actions or none; every choice is validated again in Python, disallowed ones are
+  logged as `fm proposed disallowed action <a>`. Unavailable, 20 s timeout or bad output → the
+  rule table decides. Summaries are German, at most 3 sentences.
+- Hard bans, each with a test: never `--force-deletes`, never resolve, delete or rename conflict
+  copies, never edit config.toml or cluster.toml, never kill a process (kill -0 only).
+- `docsync install-heal-agent [--interval MIN]` / `uninstall-heal-agent`: launchd
+  `com.a321.docsync-heal`, `<python> -m docsync heal --once --max-runtime 600` every 15 min.
 - `docsync monitor [--once] [--json] [--interval SEC] [--local]` (incident 2026-11-08: with the
   agents paused on all three Macs, syncs kept running from an unknown caller and nothing showed
   it). One row per node (this Mac and every peer): launchd agent (loaded, state, last exit,

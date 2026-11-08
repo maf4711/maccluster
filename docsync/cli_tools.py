@@ -1,4 +1,4 @@
-"""Diagnostic commands: tb, speedtest, discover, doctor, safetynet."""
+"""Diagnostic commands: tb, speedtest, discover, doctor, safetynet (+ heal, from heal_cli)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import shutil
 import socket
 from pathlib import Path
 
-from docsync import agent, discover, safetynet, speedtest, tbsketch, thunderbolt
+from docsync import agent, discover, heal_cli, safetynet, speedtest, tbsketch, thunderbolt
 from docsync.config import CONFIG_FILE, STATE_DIR, load_config, local_hostnames
 from docsync.hosts import resolve, resolve_peer, select_peers, transport_for
 from docsync.manifest import scan
@@ -199,3 +199,4 @@ def register(sub) -> None:
     s = sub.add_parser("safetynet", help="backups made before overwrite: status or prune per root")
     s.add_argument("action", nargs="?", choices=["status", "prune"], default="status")
     s.set_defaults(fn=cmd_safetynet)
+    heal_cli.register(sub)

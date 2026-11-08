@@ -10,16 +10,22 @@ def is_macos() -> bool:
     return platform.system() == "Darwin"
 
 
+def notify_argv(title: str, text: str, subtitle: str = "") -> list[str]:
+    """The osascript command line that posts one Notification Center message."""
+    def esc(s: str) -> str:
+        return s.replace("\\", "\\\\").replace('"', '\\"')
+    script = f'display notification "{esc(text[:230])}" with title "{esc(title)}"'
+    if subtitle:
+        script += f' subtitle "{esc(subtitle)}"'
+    return ["/usr/bin/osascript", "-e", script]
+
+
 def notify(title: str, text: str, subtitle: str = "") -> bool:
     """Notification Center via osascript. Returns False when unavailable; never raises."""
     if not is_macos():
         return False
-    esc = lambda s: s.replace("\\", "\\\\").replace('"', '\\"')  # noqa: E731
-    script = f'display notification "{esc(text[:230])}" with title "{esc(title)}"'
-    if subtitle:
-        script += f' subtitle "{esc(subtitle)}"'
     try:
-        res = subprocess.run(["/usr/bin/osascript", "-e", script], capture_output=True, text=True, timeout=10)
+        res = subprocess.run(notify_argv(title, text, subtitle), capture_output=True, text=True, timeout=10)
         return res.returncode == 0
     except (OSError, subprocess.TimeoutExpired):
         return False

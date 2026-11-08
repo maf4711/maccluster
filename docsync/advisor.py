@@ -95,18 +95,21 @@ def rule_based(conflicts: list[str], warnings: list[str], sizes: dict[str, int] 
     return out[:8]
 
 
-def helper_ready() -> tuple[bool, str]:
-    """Compile the Swift helper if missing or stale. Returns (ok, reason-if-not)."""
-    if not SWIFT_SRC.exists():
-        return False, f"helper source missing: {SWIFT_SRC}"
+def helper_ready(src: Path = SWIFT_SRC, helper: Path = HELPER, timeout: float = 600) -> tuple[bool, str]:
+    """Compile a Swift helper (default: the advisor) if missing or stale. Returns (ok, reason-if-not)."""
+    if not src.exists():
+        return False, f"helper source missing: {src}"
     swiftc = shutil.which("swiftc")
-    if HELPER.exists() and HELPER.stat().st_mtime >= SWIFT_SRC.stat().st_mtime:
+    if helper.exists() and helper.stat().st_mtime >= src.stat().st_mtime:
         return True, ""
     if not swiftc:
         return False, "swiftc not found (install Xcode Command Line Tools)"
-    HELPER.parent.mkdir(parents=True, exist_ok=True)
-    res = subprocess.run([swiftc, "-O", "-parse-as-library", "-o", str(HELPER), str(SWIFT_SRC)],
-                         text=True, capture_output=True, timeout=600)
+    helper.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        res = subprocess.run([swiftc, "-O", "-parse-as-library", "-o", str(helper), str(src)],
+                             text=True, capture_output=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return False, f"swiftc timed out after {timeout:g} s"
     if res.returncode != 0:
         return False, f"swiftc failed: {res.stderr.strip()[-300:]}"
     return True, ""

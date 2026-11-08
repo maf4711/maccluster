@@ -483,4 +483,7 @@ try:  # SymlinkTests (symlinks are never written through, replaced or deleted): 
 except ImportError:
     from symlink_cases import SymlinkTests
 COLLECTED_FROM_SYMLINKS = (SymlinkTests,)
+globals().update({c.__name__: c for c in __import__("heal_cases", globals(), fromlist=["*"], level=1 if __package__ else 0).HEAL_CASES})
+globals().update({c.__name__: c for c in __import__("heal_fm_cases", globals(), fromlist=["*"], level=1 if __package__ else 0).HEAL_FM_CASES})
+globals().update({c.__name__: c for c in __import__("heal_review_cases", globals(), fromlist=["*"], level=1 if __package__ else 0).HEAL_REVIEW_CASES})
 from tests.monitor_cases import MonitorHealthTests as MonitorHealthTests, MonitorTests as MonitorTests  # docsync monitor
