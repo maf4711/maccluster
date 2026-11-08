@@ -16,7 +16,7 @@ from pathlib import Path
 from maccluster.cluster_ssh import node_ssh_user
 from maccluster.domain.enums import CheckSeverity, ReachabilityState
 from maccluster.domain.models import DoctorFinding, Node
-from maccluster.services.sync_setup import DOTFILES_STATUS
+from maccluster.services.sync_setup import DOTFILES_STATUS, self_first
 from maccluster.services.sync_setup_agent import (
     AGENT_LABEL,
     MIN_DOCSYNC,
@@ -168,7 +168,7 @@ def sync_findings(
         ]
     now = ctx.clock.now()
     findings = []
-    for node in [self_node, *[n for n in cfg.nodes if n.id != self_node.id]]:
+    for node in self_first(cfg.nodes, self_node):
         if node.id != self_node.id and peer_states.get(node.id) != ReachabilityState.UP:
             findings.append(
                 DoctorFinding(

@@ -110,12 +110,8 @@ def plan_config(text: str | None, peers: list[PeerEntry]) -> str:
         out = _strip_peers(out) + "".join(_peer_block(p) for p in want)
     if DESKTOP[0] not in roots:
         out = (
-            out.rstrip()
-            + "\n"
-            + (
-                f"\n[[roots]]  # added by `maccluster sync setup`\nname = {_toml(DESKTOP[0])}\n"
-                f"path = {_toml(DESKTOP[1])}\n"
-            )
+            out.rstrip() + "\n\n[[roots]]  # added by `maccluster sync setup`\n"
+            f"name = {_toml(DESKTOP[0])}\npath = {_toml(DESKTOP[1])}\n"
         )
     check = tomllib.loads(out)
     names = [str(r.get("name")) for r in check.get("roots", [])]

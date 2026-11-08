@@ -10,12 +10,14 @@ written only when it differs, so a second run on a set-up cluster writes nothing
 
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass, field
 
 from maccluster.app_factory import AppContext
 from maccluster.cluster_ssh import node_ssh_user
 from maccluster.domain.models import Node
 from maccluster.errors import CliError
+from maccluster.ports.process import ProcessResult
 from maccluster.services.config_service import load_and_bind_self
 from maccluster.services.sync_docsync import _hosts
 from maccluster.services.sync_setup_agent import (
@@ -141,8 +143,6 @@ def _wait_for_lock(ctx: AppContext, sh: NodeShell) -> None:
 
 
 def _write_script(text: str, stamp: str) -> str:
-    import base64
-
     b64 = base64.b64encode(text.encode()).decode()
     return (
         f'set -e; f={CONFIG}; mkdir -p "$(dirname "$f")"\n'
@@ -150,6 +150,10 @@ def _write_script(text: str, stamp: str) -> str:
         f"printf %s '{b64}' | /usr/bin/base64 -D > \"$f.tmp\"\n"
         'mv "$f.tmp" "$f"\n'
     )
+
+
+def _err(res: ProcessResult) -> str:
+    return (res.stderr or res.stdout or "").strip()[:200]
 
 
 def _config(
@@ -173,17 +177,16 @@ def _config(
         return True, f"would write config ({backup}{detail})"
     w = sh.run(script("write-config", _write_script(new, stamp)))
     if w.returncode != 0:
-        raise _Skip(f"config not written on {sh.node.id}: {(w.stderr or w.stdout).strip()[:200]}")
+        raise _Skip(f"config not written on {sh.node.id}: {_err(w)}")
     if llm:
         a = sh.run(script("add-llm", '"$py" -m docsync roots add-llm\n', python=True))
         if a.returncode != 0:
-            raise _Skip(
-                f"docsync roots add-llm failed on {sh.node.id}: {(a.stderr or a.stdout).strip()[:200]}"
-            )
+            raise _Skip(f"docsync roots add-llm failed on {sh.node.id}: {_err(a)}")
     return True, f"config written ({backup}{detail})"
 
 
-def _git_failure(sh: NodeShell, text: str) -> tuple[str, str]:
+def _git_failure(sh: NodeShell, res: ProcessResult) -> tuple[str, str]:
+    text = (res.stderr or "") + (res.stdout or "")
     if any(w in text.lower() for w in _NO_GITHUB):
         return "no-github", f"dotfiles: no GitHub access on {sh.node.id}"
     lines = text.strip().splitlines()
@@ -199,7 +202,7 @@ def _dotfiles(sh: NodeShell, *, dry_run: bool) -> tuple[str, str]:
             script("dotfiles-clone", GIT_ENV + f'git clone {DOTFILES_REPO} "$d"\n'), timeout=300
         )
         if r.returncode != 0:
-            return _git_failure(sh, (r.stderr or "") + (r.stdout or ""))
+            return _git_failure(sh, r)
         return "cloned", "dotfiles cloned"
     if state == "dirty":
         return "dirty", "dotfiles dirty — left unchanged"
@@ -209,7 +212,7 @@ def _dotfiles(sh: NodeShell, *, dry_run: bool) -> tuple[str, str]:
     body = GIT_ENV + fetch + 'git -C "$d" rev-list --left-right --count HEAD...@{u}\n'
     r = sh.run(script("dotfiles-fetch", body), timeout=120)
     if r.returncode != 0:
-        return _git_failure(sh, (r.stderr or "") + (r.stdout or ""))
+        return _git_failure(sh, r)
     try:
         ahead, behind = (int(x) for x in r.stdout.split()[:2])
     except ValueError:
@@ -224,7 +227,7 @@ def _dotfiles(sh: NodeShell, *, dry_run: bool) -> tuple[str, str]:
         return "behind", f"would fast-forward dotfiles {behind} commits"
     ff = sh.run(script("dotfiles-ff", GIT_ENV + 'git -C "$d" merge --ff-only --quiet "@{u}"\n'))
     if ff.returncode != 0:
-        return _git_failure(sh, (ff.stderr or "") + (ff.stdout or ""))
+        return _git_failure(sh, ff)
     return "fast-forwarded", f"dotfiles fast-forwarded {behind} commits"
 
 
@@ -232,6 +235,11 @@ def _peers_of(node: Node, nodes: tuple[Node, ...]) -> list[PeerEntry]:
     return [
         PeerEntry(n.id, tuple(_hosts(n, "tb")), node_ssh_user(n)) for n in nodes if n.id != node.id
     ]
+
+
+def self_first(nodes, self_node: Node) -> list[Node]:
+    """This Mac first, then the other cluster.toml nodes in file order."""
+    return [self_node, *[n for n in nodes if n.id != self_node.id]]
 
 
 def _setup_node(
@@ -261,7 +269,7 @@ def _setup_node(
 
 def setup(ctx: AppContext, *, dry_run: bool = False, node: str | None = None) -> SetupResult:
     cfg, self_node = load_and_bind_self(ctx)
-    ordered = [self_node, *[n for n in cfg.nodes if n.id != self_node.id]]
+    ordered = self_first(cfg.nodes, self_node)
     if node is not None:
         ordered = [n for n in ordered if node in (n.id, str(n.ip))]
         if not ordered:
