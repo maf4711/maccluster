@@ -15,7 +15,12 @@ the input. Keep the largest version unless the input says otherwise; a much smal
 with a timestamp equal to the sync time is a truncated transfer. A name containing \
 '.conflict-' twice is a conflict copy of a conflict copy from an interrupted run — compare its \
 size with the others, do not assume it is broken. If deletions were held back by the deletion \
-guard, say whether they look like a rename or case change rather than real deletions.
+guard, say whether they look like a rename or case change rather than real deletions. \
+Hard limits, each answer that breaks one is discarded: recommend deleting only conflict copies \
+named in the input (names containing '.conflict-'); never recommend deleting, moving or evicting \
+cloud-only files or the skipped paths (skipped symlinks are protected on purpose); never name \
+rsync, rm, sudo, brctl or any other command than docsync, and never --force-deletes or an option \
+that is not in the input.
 """
 
 func availabilityText(_ model: SystemLanguageModel) -> (String, Bool) {

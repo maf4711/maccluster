@@ -283,8 +283,13 @@ def cmd_advise(a) -> int:
     if ok:
         rc, text = advisor.ask(prompt)
         if rc == 0:
+            kept, dropped = advisor.guard(text, conflicts)
             print("── advisor (on-device Apple Foundation Model)")
-            print(text)
+            print("\n".join(kept) or "• (keine verwertbare Empfehlung)")
+            if dropped:
+                print(f"({dropped} Empfehlung{'en' if dropped != 1 else ''} verworfen: nicht durch die Eingabe gedeckt — "
+                      "Löschen nur von gelisteten Konfliktkopien, nur docsync-Befehle; cloud-only und übersprungene "
+                      "Symlinks bleiben)")
             return 0
         why = text or f"helper exit {rc}"
     print("── advisor (rule-based fallback — model not used: " + why + ")")

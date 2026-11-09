@@ -95,6 +95,51 @@ def rule_based(conflicts: list[str], warnings: list[str], sizes: dict[str, int] 
     return out[:8]
 
 
+# ── guard over the model's free text ────────────────────────────────────────
+# The model writes prose; nothing it says is executed, but users act on it. Each bullet must stay
+# inside what the input backs: delete only conflict copies named in the input, run only docsync
+# with options docsync has. Everything else is dropped, never rewritten.
+_NEGATED = re.compile(r"\b(nicht|nie|niemals|kein\w*|never|not|no)\b(\s+\S+){0,3}", re.I)
+_DELETE = re.compile(r"\b(lösch\w?|löschen|gelöscht|entfern\w?|entfernen|delete[sd]?|remove[sd]?|rm|evict\w*|trash|papierkorb)\b", re.I)
+# a noun such as "Löschungen" (held-back deletions) is a fact, not an instruction
+_FOREIGN = re.compile(r"\b(rsync|rm|sudo|brctl|mv|chmod|chflags|tmutil|killall|kill|launchctl|pmset)\b")
+_BANNED_OPTS = {"--force-deletes"}  # held-back deletions stay a user decision (rule-based text explains it)
+_OPT = re.compile(r"(?<![\w-])--[a-z][\w-]*")
+
+
+def _docsync_options() -> set[str]:
+    import argparse
+    from docsync import cli
+    opts: set[str] = set()
+    for act in cli.build_parser()._actions:
+        if isinstance(act, argparse._SubParsersAction):
+            for sp in act.choices.values():
+                for sub in sp._actions:
+                    opts.update(o for o in sub.option_strings if o.startswith("--"))
+    return opts
+
+
+def guard(text: str, conflicts: list[str]) -> tuple[list[str], int]:
+    """(bullets that stay, number dropped). Lines that are not bullets are left out."""
+    allowed = _docsync_options() - _BANNED_OPTS
+    names = set(conflicts) | {os.path.basename(c) for c in conflicts}
+    kept, dropped = [], 0
+    for line in (ln.strip() for ln in text.splitlines()):
+        if not line.startswith(("•", "-", "*")):
+            continue
+        quoted = re.findall(r"`([^`]+)`", line)
+        bad = bool(_FOREIGN.search(" ".join(quoted) + " " + line.replace("docsync", "")))
+        bad |= any(o not in allowed for o in _OPT.findall(line))
+        if _DELETE.search(_NEGATED.sub(" ", line)):
+            targets = [q for q in quoted if ".conflict-" in q]
+            bad |= not targets or any(t not in names and os.path.basename(t) not in names for t in targets)
+        if bad:
+            dropped += 1
+        else:
+            kept.append(line if line.startswith("•") else "• " + line.lstrip("-* "))
+    return kept, dropped
+
+
 def helper_ready(src: Path = SWIFT_SRC, helper: Path = HELPER, timeout: float = 600) -> tuple[bool, str]:
     """Compile a Swift helper (default: the advisor) if missing or stale. Returns (ok, reason-if-not)."""
     if not src.exists():
