@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.4 — 2026-11-09
+
+- `docsync advise` (and heal's `advise_conflicts`): a deterministic guard over the on-device
+  model's free text. A bullet stays only when the input backs it: deleting is recommended only for
+  conflict copies listed in the input (negated phrases like "nicht löschen" do not count), commands
+  are only `docsync` with options it really has, never `--force-deletes`, `rsync`, `rm`, `sudo`,
+  `brctl`. Dropped bullets are counted ("N Empfehlungen verworfen"). The Swift instructions state
+  the same limits. Trigger: the model had advised removing all cloud-only files and an invented
+  `rsync --ignore-timestamps`.
+
 ## 1.3.3 — 2026-11-08
 
 - `docsync heal [--once] [--dry-run] [--no-notify] [--no-fm]`: heals what `docsync monitor` reports,
