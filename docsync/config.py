@@ -20,6 +20,10 @@ DEFAULT_EXCLUDES = [
     "*.icloud", "~$*", ".~lock.*", "*.swp", "*.tmp", "*.part", "Thumbs.db",
     "*.photoslibrary", "*.sparsebundle",
 ]
+# Per-Mac runtime state of agent tools (Ruflo/claude-flow daemon, swarm memory, hive-mind): each Mac
+# rewrites it constantly, so syncing it only makes conflict copies. Excluded in every root, even when
+# the config has its own explicit `excludes` list.
+RUNTIME_STATE_EXCLUDES = [".claude-flow", ".swarm", ".hive-mind"]
 # Never listed or sent in a root with `includes`, even when an include names them (matched against
 # every path component, ignoring case). Roots without includes do not use this list.
 DENY_PATTERNS = [".credentials.json", "auth.json", "oauth_creds.json", "*.pem", "id_rsa*", "id_ed25519*", ".env"]
@@ -87,8 +91,7 @@ class Config:
     def for_root(self, root: Root) -> "Config":
         """Config view for one root: its path and excludes (always excluding docsync's own dirs)."""
         ex = list(root.excludes if root.excludes is not None else self.excludes)
-        if ".docsync*" not in ex:
-            ex.append(".docsync*")
+        ex += [e for e in (".docsync*", *RUNTIME_STATE_EXCLUDES) if e not in ex]
         return replace(self, path=root.path, excludes=ex, includes=root.includes)
 
     def peer_path(self, peer: "Peer", root: Root) -> str:
