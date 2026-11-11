@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.5 — 2026-11-11
+
+- Per-Mac agent runtime state (`.claude-flow`, `.swarm`, `.hive-mind`) is excluded in every root, also
+  when a config carries its own `excludes` list. Ruflo daemons rewrite these files on every Mac, so each
+  run made new conflict copies (node-b: 6 of 8 new copies on 2026-11-09). Existing copies stay untouched.
+
 ## 1.3.4 — 2026-11-09
 
 - `docsync advise` (and heal's `advise_conflicts`): a deterministic guard over the on-device
