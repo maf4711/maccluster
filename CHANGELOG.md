@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+- rsync keeps partial files only outside the synced roots: `--partial-dir` is now an absolute path in
+  docsync's state dir on the receiving Mac (`<state>/partial/<root>-<peer>`; for pushes over ssh the
+  peer's own state dir), one per root and peer. Before, the relative `.docsync-partial` put every failed
+  transfer inside the destination folder, where iCloud Drive uploaded it (incident 2026-11-25: 23,275
+  zero-filled files, 47 GB, from unreadable iCloud placeholders on the sender).
+- Stale `.docsync-partial` dirs in the local root are moved to the SafetyNet (never unlinked) once per
+  run, but only when every file in them is all zero bytes or empty; a dir with real data, a symlink or
+  an iCloud-evicted file stays and is reported as a warning.
+- rsync's own temp files (`.<name>.XXXXXX`) go to `<partial dir>/tmp` (`--temp-dir`, only when on the
+  receiving root's volume). A partial dir that would lie inside a synced root (root = `~`) is not used
+  (warning); a failing or timed-out setup call on the peer falls back the same way. Partial files older
+  than 7 days are pruned from the state partial dir once per run.
+- Files rsync cannot read on the sender count once each in "skipped" (distinct paths), and the warning
+  names the file instead of rsync's closing summary line.
+- `make test` imports every test module again (`tests.monitor_cases` had no import fallback).
+
 ## 1.3.5 — 2026-11-11
 
 - Per-Mac agent runtime state (`.claude-flow`, `.swarm`, `.hive-mind`) is excluded in every root, also

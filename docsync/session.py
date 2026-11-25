@@ -5,11 +5,12 @@ from __future__ import annotations
 import inspect
 import os
 import socket
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
 
-from docsync import engine, lock, manifest, safetynet, xferwatch
+from docsync import engine, lock, manifest, partials, safetynet, xferwatch
 from docsync.config import STATE_DIR, Config, Root
 from docsync.progress import Bar
 from docsync.report import PeerReport
@@ -94,6 +95,8 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
         _migrate_base(peer_name, state_dir, root_name)  # renames a base file: only once the pair is ours
         if hasattr(transport, "prepare"):
             rep.warnings += transport.prepare()
+        if not dry:
+            _partials(cfg, transport, rep, log, state_dir, root_name, peer_name, locks)
         rep.phase("connect", t0)
 
         t0 = time.monotonic()
@@ -282,6 +285,33 @@ def run_peer(cfg: Config, peer_name: str, transport, *, dry: bool = False, verbo
         except Exception:  # noqa: BLE001 — a caller's callback must not break the sync
             pass
     return rep
+
+
+_swept_mu = threading.Lock()
+
+
+def _partials(cfg: Config, transport, rep: PeerReport, log, state_dir: Path, root_name: str, peer_name: str,
+              locks) -> None:
+    """rsync partial files go to this Mac's / the peer's state dir, never into a root; stale
+    `.docsync-partial` dirs of older versions leave the local root once per run (under its lock)."""
+    if hasattr(transport, "use_partial_dir"):
+        here = socket.gethostname().split(".")[0]
+        rep.warnings += transport.use_partial_dir(partials.local_dir(state_dir, root_name, peer_name),
+                                                  partials.key(root_name, here), cfg.local_root)
+    with _swept_mu:  # run_many: the peers share one RootLocks, the first one sweeps
+        if getattr(locks, "partials_swept", False):
+            return
+        if locks is not None:
+            locks.partials_swept = True
+    try:
+        partials.prune(Path(state_dir) / "partial")
+    except OSError as e:  # housekeeping only
+        rep.warnings.append(f"partial dir prune skipped: {e}")
+    moved, kept = partials.sweep(cfg.local_root, safetynet.stamp_now(), cfg.excludes)
+    if moved:
+        log(f"[{peer_name}] moved {len(moved)} stale {partials.PARTIAL_NAME} dir(s) to {safetynet.SN_DIR}")
+    for rel in kept:
+        rep.warnings.append(f"stale {partials.PARTIAL_NAME} kept (holds non-zero data, check by hand): {rel}")
 
 
 class _Busy(Exception):

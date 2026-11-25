@@ -146,9 +146,9 @@ def _run_rsync_once(src: str, dst: str, paths: list[str], ssh_cmd: list[str] | N
         return {"files": 0, "bytes": 0, "sent": 0, "received": 0, "skipped": 0}
     lst, proc = _files_from(paths), None
     try:
-        # --partial-dir: an interrupted transfer never leaves a truncated file under its final
-        # name (the next run would then see a "conflict"); .docsync-partial is in the default excludes.
-        cmd = [rsync_bin(), "-a", "--from0", f"--files-from={lst}", "--partial-dir=.docsync-partial",
+        # No relative --partial-dir: rsync would keep failed transfers inside the synced root (incident
+        # 2026-11-25). The transports pass an absolute one in `extra` (partials.py), outside every root.
+        cmd = [rsync_bin(), "-a", "--from0", f"--files-from={lst}",
                "--no-human-readable", "--stats", *(extra or [])]
         if progress is not None and not dry:
             cmd.append("--info=progress2")
@@ -190,14 +190,25 @@ def _run_rsync_once(src: str, dst: str, paths: list[str], ssh_cmd: list[str] | N
             raise TransportError(f"rsync rc={rc}: {stderr.strip()[-800:]}")
         stats = parse_rsync_stats(stdout)
         if rc in (23, 24):
-            errs = [l for l in stderr.splitlines() if "error:" in l or "failed:" in l]
-            stats["skipped"] = max(len(errs), 1)
-            stats["errors"] = errs[:5]
+            stats["skipped"], stats["errors"] = skipped_from_stderr(stderr)
         return stats
     finally:
         if proc is not None:
             xferwatch.untrack(proc)
         os.unlink(lst)
+
+
+_QUOTED = re.compile(r'"([^"]+)"')
+
+
+def skipped_from_stderr(stderr: str) -> tuple[int, list[str]]:
+    """(files not transferred, first error lines) of an rc 23/24 rsync. One unreadable file can give
+    several lines (llistxattr failed, send_files failed to open) plus rsync's closing summary:
+    count distinct quoted paths, the per-file lines come first in the list."""
+    errs = [l for l in stderr.splitlines() if "error:" in l or "failed:" in l or "failed to open" in l]
+    specific = [l for l in errs if not l.startswith("rsync error: some files")]
+    paths = {m.group(1) for m in map(_QUOTED.search, specific) if m}
+    return max(len(paths) or len(specific), 1), (specific + [l for l in errs if l not in specific])[:5]
 
 
 def _test_hang() -> None:
@@ -220,6 +231,22 @@ class LocalTransport:
         self.home = home or self.root.parent
         self.label = str(self.root)
         self.rsync_extra: list[str] = []
+        self.partial_args: dict[str, list[str]] = {}  # "push"/"pull" → --partial-dir/--temp-dir (use_partial_dir)
+
+    def use_partial_dir(self, local_dir: Path, peer_key: str, local_root: Path | None = None) -> list[str]:
+        """Both ends are this Mac: push and pull keep partial (and temp) files in local_dir."""
+        from docsync import partials
+        d = Path(local_dir)
+        roots = [r for r in (self.root, local_root) if r is not None]
+        if any(partials.inside(d, r) for r in roots):  # e.g. root = ~ and the state dir below it
+            self.partial_args = {}
+            return [f"no partial dir: {d} lies inside a synced root (interrupted transfers restart from zero)"]
+        (d / partials.TMP).mkdir(parents=True, exist_ok=True)
+        self.partial_args = {
+            "push": partials.rsync_args(str(d), partials.same_device(d, self.root)),
+            "pull": partials.rsync_args(str(d), local_root is not None and partials.same_device(d, local_root)),
+        }
+        return []
 
     def prepare(self) -> list[str]:
         """Both ends use this Mac's rsync: enable every fidelity flag it supports."""
@@ -252,11 +279,13 @@ class LocalTransport:
 
     def push(self, local_root: Path, paths: list[str], dry: bool, verbose: bool, progress=None,
              sizes: dict[str, int] | None = None, streams: int = 1) -> dict[str, int]:
-        return run_rsync_streams(f"{local_root}/", f"{self.root}/", paths, sizes or {}, None, dry, verbose, progress, streams, self.rsync_extra)
+        return run_rsync_streams(f"{local_root}/", f"{self.root}/", paths, sizes or {}, None, dry, verbose, progress, streams,
+                                 [*self.rsync_extra, *self.partial_args.get("push", [])])
 
     def pull(self, local_root: Path, paths: list[str], dry: bool, verbose: bool, progress=None,
              sizes: dict[str, int] | None = None, streams: int = 1) -> dict[str, int]:
-        return run_rsync_streams(f"{self.root}/", f"{local_root}/", paths, sizes or {}, None, dry, verbose, progress, streams, self.rsync_extra)
+        return run_rsync_streams(f"{self.root}/", f"{local_root}/", paths, sizes or {}, None, dry, verbose, progress, streams,
+                                 [*self.rsync_extra, *self.partial_args.get("pull", [])])
 
     def remove(self, paths: list[str], stamp: str, use_trash: bool, dry: bool) -> None:
         remove_local(self.root, self.home, paths, stamp, use_trash, dry)
@@ -320,6 +349,32 @@ class RemoteTransport:
         self.bulk_ssh_cmd = ["ssh", *BULK_SSH_OPTS] + (["-b", bind] if bind else [])
         self.label = f"{userhost}:{path}"
         self.rsync_extra: list[str] = []
+        self.partial_args: dict[str, list[str]] = {}  # push: dir on the peer, pull: dir on this Mac
+
+    def use_partial_dir(self, local_dir: Path, peer_key: str, local_root: Path | None = None) -> list[str]:
+        """Pull keeps partial (and temp) files in local_dir; push in the peer's state dir
+        (<state>/partial/<peer_key>, created over ssh). If that fails, push runs without
+        --partial-dir (rsync then drops partial files instead of keeping them) and a warning is returned."""
+        from docsync import partials
+        d, warns = Path(local_dir), []
+        self.partial_args = {}
+        if local_root is not None and partials.inside(d, local_root):
+            warns.append(f"no partial dir: {d} lies inside the synced root (interrupted pulls restart from zero)")
+        else:
+            (d / partials.TMP).mkdir(parents=True, exist_ok=True)
+            self.partial_args["pull"] = partials.rsync_args(str(d), local_root is not None and partials.same_device(d, local_root))
+        fail = "no partial dir on peer (interrupted pushes restart from zero): "
+        try:
+            res = self.ssh(partials.remote_script(peer_key, remote_path(self.path)), timeout=20)
+        except (subprocess.TimeoutExpired, OSError) as e:
+            return warns + [fail + str(e)]
+        out = res.stdout.strip().splitlines()[-4:]
+        if res.returncode != 0 or len(out) != 4 or not out[0].startswith("/"):
+            return warns + [fail + (res.stderr.strip()[-200:] or f"rc={res.returncode}")]
+        if out[0] == out[1] or out[0].startswith(out[1].rstrip("/") + "/"):
+            return warns + [fail + f"{out[0]} lies inside the peer's synced root"]
+        self.partial_args["push"] = partials.rsync_args(out[0], out[2] == out[3])
+        return warns
 
     def prepare(self) -> list[str]:
         """Find the most capable rsync on the peer and the fidelity flags both sides support."""
@@ -405,11 +460,13 @@ class RemoteTransport:
 
     def push(self, local_root: Path, paths: list[str], dry: bool, verbose: bool, progress=None,
              sizes: dict[str, int] | None = None, streams: int = 1) -> dict[str, int]:
-        return run_rsync_streams(f"{local_root}/", self.rsync_path, paths, sizes or {}, self.bulk_ssh_cmd, dry, verbose, progress, streams, self.rsync_extra)
+        return run_rsync_streams(f"{local_root}/", self.rsync_path, paths, sizes or {}, self.bulk_ssh_cmd, dry, verbose, progress,
+                                 streams, [*self.rsync_extra, *self.partial_args.get("push", [])])
 
     def pull(self, local_root: Path, paths: list[str], dry: bool, verbose: bool, progress=None,
              sizes: dict[str, int] | None = None, streams: int = 1) -> dict[str, int]:
-        return run_rsync_streams(self.rsync_path, f"{local_root}/", paths, sizes or {}, self.bulk_ssh_cmd, dry, verbose, progress, streams, self.rsync_extra)
+        return run_rsync_streams(self.rsync_path, f"{local_root}/", paths, sizes or {}, self.bulk_ssh_cmd, dry, verbose, progress,
+                                 streams, [*self.rsync_extra, *self.partial_args.get("pull", [])])
 
     def remove(self, paths: list[str], stamp: str, use_trash: bool, dry: bool) -> None:
         if dry or not paths:
