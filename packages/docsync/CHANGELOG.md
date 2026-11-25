@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.10 — 2026-11-25
+
+- The reverse Thunderbolt path (Mac mini → MacBook) no longer stops at a stale
+  `Name-2.local`. Every configured hostname is queried on the Thunderbolt bridge,
+  and when those are gone a Bonjour instance on that bridge with the same base name
+  (`mbpM5MaxMF (8)` via `_companion-link._tcp`) is resolved to the live hostname
+  (`mbpM5MaxMF-6.local`) and used as an IPv6 link-local. Wi-Fi answers are still ignored.
+
+
 ## 1.3.9 — 2026-11-25
 
 - When bridge0 has no cluster IPv4 (10.42.0.0/24 needs root), a plugged-in peer is no longer

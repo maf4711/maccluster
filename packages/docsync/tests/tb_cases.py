@@ -138,6 +138,105 @@ class LinkLocalTests(unittest.TestCase):
         self.assertEqual((host, via), ("fe80::14ff:7d24:3825:757e%bridge0", "Thunderbolt (link-local)"))
         self.assertEqual(calls, ["a321@fe80::14ff:7d24:3825:757e%bridge0"])
 
+    def test_bonjour_browse_reads_companion_link_instance_on_iface(self):
+        from docsync import discover
+        line = ("18:22:57.159  Add        2  19 local.               "
+                "_companion-link._tcp. mbpM5MaxMF (8)\n")
+        seen = []
+
+        class Proc:
+            def terminate(self):
+                pass
+
+            def kill(self):
+                pass
+
+            def communicate(self, timeout=2):
+                return line, ""
+
+        def popen(cmd, **k):
+            seen.append(cmd)
+            return Proc()
+
+        orig = discover.subprocess.Popen
+        discover.subprocess.Popen = popen
+        try:
+            got = discover.bonjour_ssh_hosts(0, iface="bridge0", service="_companion-link._tcp")
+        finally:
+            discover.subprocess.Popen = orig
+        self.assertEqual(got, ["mbpM5MaxMF (8)"])
+        self.assertIn("-i", seen[0])
+        self.assertIn("bridge0", seen[0])
+        self.assertIn("_companion-link._tcp", seen[0])
+
+    def test_tb_hostname_addrs_uses_later_name_when_first_is_stale(self):
+        from docsync import discover
+        sample = (
+            "18:08:07.849  Add  40000002      19  mbpM5MaxMF.local.                    "
+            "FE80:0000:0000:0000:00F5:F708:7C0D:F861%bridge0 4500\n"
+        )
+        calls = []
+        orig = (discover.tb_interfaces, discover.iface_ipv4, discover.iface_ipv6_link_locals,
+                discover._dns_sd_getaddr, discover.bonjour_ssh_hosts)
+        discover.tb_interfaces = lambda: ["bridge0"]
+        discover.iface_ipv4 = lambda dev: []
+        discover.iface_ipv6_link_locals = lambda dev: ["fe80::1%bridge0"]
+
+        def getaddr(host, iface, seconds):
+            calls.append(host)
+            return sample if host == "mbpM5MaxMF.local" else ""
+
+        discover._dns_sd_getaddr = getaddr
+        discover.bonjour_ssh_hosts = lambda *a, **k: self.fail("browse must not run after a configured name answers")
+        try:
+            got = discover.tb_hostname_addrs(
+                ["10.42.0.3", "mbpM5MaxMF-2.local", "mbpm5maxmf-2.local", "mbpM5MaxMF.local"])
+        finally:
+            (discover.tb_interfaces, discover.iface_ipv4, discover.iface_ipv6_link_locals,
+             discover._dns_sd_getaddr, discover.bonjour_ssh_hosts) = orig
+        self.assertEqual(got, ["fe80::f5:f708:7c0d:f861%bridge0"])
+        self.assertEqual(calls, ["mbpM5MaxMF-2.local", "mbpM5MaxMF.local"])
+
+    def test_tb_hostname_addrs_uses_live_bonjour_name_on_tb_iface(self):
+        from docsync import discover
+        sample = (
+            "18:08:07.849  Add  40000002      19  mbpM5MaxMF-6.local.                  "
+            "FE80:0000:0000:0000:00F5:F708:7C0D:F861%bridge0 4500\n"
+        )
+        calls = []
+        browsed = []
+        orig = (discover.tb_interfaces, discover.iface_ipv4, discover.iface_ipv6_link_locals,
+                discover._dns_sd_getaddr, discover.bonjour_ssh_hosts, discover.resolve_instance)
+        discover.tb_interfaces = lambda: ["bridge0"]
+        discover.iface_ipv4 = lambda dev: []
+        discover.iface_ipv6_link_locals = lambda dev: ["fe80::1%bridge0"]
+
+        def getaddr(host, iface, seconds):
+            calls.append((host, iface))
+            return sample if host == "mbpM5MaxMF-6.local" else ""
+
+        def browse(seconds=3.0, iface=None, service="_ssh._tcp"):
+            browsed.append((iface, service))
+            if iface == "bridge0" and service == "_companion-link._tcp":
+                return ["mbpM5MaxMF (8)"]
+            return []
+
+        def resolve(inst, seconds=3.0, service="_ssh._tcp"):
+            self.assertEqual((inst, service), ("mbpM5MaxMF (8)", "_companion-link._tcp"))
+            return "mbpM5MaxMF-6.local"
+
+        discover._dns_sd_getaddr = getaddr
+        discover.bonjour_ssh_hosts = browse
+        discover.resolve_instance = resolve
+        try:
+            got = discover.tb_hostname_addrs(["10.42.0.3", "mbpM5MaxMF-2.local", "mbpM5MaxMF.local"])
+        finally:
+            (discover.tb_interfaces, discover.iface_ipv4, discover.iface_ipv6_link_locals,
+             discover._dns_sd_getaddr, discover.bonjour_ssh_hosts, discover.resolve_instance) = orig
+        self.assertEqual(got, ["fe80::f5:f708:7c0d:f861%bridge0"])
+        self.assertEqual(browsed, [("bridge0", "_companion-link._tcp")])
+        self.assertIn(("mbpM5MaxMF-6.local", "bridge0"), calls)
+
 
 class ThunderboltProfilerTests(unittest.TestCase):
     SAMPLE = """Thunderbolt/USB4:

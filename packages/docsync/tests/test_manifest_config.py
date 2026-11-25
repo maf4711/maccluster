@@ -438,8 +438,8 @@ class LaunchdEnvironmentTests(unittest.TestCase):
 
 try:  # Thunderbolt/Sketch/Discover and macOS cases live in their own modules to keep this file short
     from tests.macos_cases import MacosTests
-    from tests.tb_cases import DiscoverTests, SketchTests, ThunderboltProfilerTests, ThunderboltTests
+    from tests.tb_cases import DiscoverTests, LinkLocalTests, SketchTests, ThunderboltProfilerTests, ThunderboltTests
 except ImportError:
     from macos_cases import MacosTests
-    from tb_cases import DiscoverTests, SketchTests, ThunderboltProfilerTests, ThunderboltTests
-COLLECTED_FROM_CASES = (DiscoverTests, MacosTests, SketchTests, ThunderboltProfilerTests, ThunderboltTests)
+    from tb_cases import DiscoverTests, LinkLocalTests, SketchTests, ThunderboltProfilerTests, ThunderboltTests
+COLLECTED_FROM_CASES = (DiscoverTests, LinkLocalTests, MacosTests, SketchTests, ThunderboltProfilerTests, ThunderboltTests)

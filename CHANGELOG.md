@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.9.1 — 2026-11-25
+
+The bundled docsync engine is 1.3.10. `maccluster sync home` on node-a was still
+on 1.3.9, so a peer whose Bonjour name grew a new suffix (`CM-KWFVR7JGW3-3000`)
+stayed unreachable on the Thunderbolt bridge. node-c already had 1.3.10 as an
+injected `docsync-lan`; installing 0.9.0 there would have downgraded it.
+
+### Changed
+- Bundled docsync 1.3.10: every configured hostname is queried on the Thunderbolt
+  bridge, then a same-base Bonjour instance on that bridge (`_companion-link._tcp`
+  / `_airplay._tcp`) is resolved to the live `.local` name. Wi-Fi answers stay ignored.
+
 ## 0.9.0 — 2026-11-25
 
 maccluster and docsync are now one distribution. The docsync engine (formerly the separate

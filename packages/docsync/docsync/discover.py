@@ -9,11 +9,17 @@ import time
 from pathlib import Path
 
 
-def bonjour_ssh_hosts(seconds: float = 3.0) -> list[str]:
-    """Browse _ssh._tcp for a few seconds, return instance names (e.g. 'CM-KWFVR7JGW3')."""
+def bonjour_ssh_hosts(seconds: float = 3.0, iface: str | None = None, service: str = "_ssh._tcp") -> list[str]:
+    """Browse a Bonjour service for a few seconds, return instance names (e.g. 'CM-KWFVR7JGW3').
+
+    `iface` limits the query to one interface (`dns-sd -i bridge0`), so a Thunderbolt
+    browse does not pick up a peer that is only on Wi-Fi."""
+    cmd = ["/usr/bin/dns-sd"]
+    if iface:
+        cmd += ["-i", iface]
+    cmd += ["-B", service, "local"]
     try:
-        proc = subprocess.Popen(["/usr/bin/dns-sd", "-B", "_ssh._tcp", "local"], text=True,
-                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        proc = subprocess.Popen(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     except FileNotFoundError:
         return []
     found: list[str] = []
@@ -27,7 +33,7 @@ def bonjour_ssh_hosts(seconds: float = 3.0) -> list[str]:
         proc.kill()
         return found
     for line in out.splitlines():
-        m = re.search(r"_ssh\._tcp\.\s+(.+?)\s*$", line)
+        m = re.search(rf"{re.escape(service)}\.\s+(.+?)\s*$", line)
         if m and " Add " in line:
             name = m.group(1).strip()
             if name not in found:
@@ -41,10 +47,10 @@ def to_local_hostname(instance: str) -> str:
     return f"{base}.local"
 
 
-def resolve_instance(instance: str, seconds: float = 3.0) -> str | None:
+def resolve_instance(instance: str, seconds: float = 3.0, service: str = "_ssh._tcp") -> str | None:
     """dns-sd -L: Bonjour instance -> the host name it can be reached at ('CM-X-3000.local')."""
     try:
-        proc = subprocess.Popen(["/usr/bin/dns-sd", "-L", instance, "_ssh._tcp", "local"], text=True,
+        proc = subprocess.Popen(["/usr/bin/dns-sd", "-L", instance, service, "local"], text=True,
                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     except FileNotFoundError:
         return None
@@ -260,26 +266,62 @@ def _dns_sd_getaddr(host: str, iface: str, seconds: float) -> str:
     return out or ""
 
 
-def tb_hostname_addrs(hosts: list[str], seconds: float = 1.6) -> list[str]:
-    """IPv6 link-local of a configured hostname, asked only on a live Thunderbolt interface.
-
-    `dns-sd -i bridge0 -G v6 name.local` returns the address on that cable. The neighbour
-    cache is often empty, so NDP alone misses a peer that is plugged in. One query per
-    distinct machine, and it stops at the first answer."""
-    devs = [d for d in tb_interfaces() if iface_ipv4(d) or iface_ipv6_link_locals(d)]
-    if not devs:
-        return []
-    seen_base: set[str] = set()
+def _mdns_names(hosts: list[str]) -> list[str]:
+    """Configured hostnames as `.local` names. Case-only duplicates collapse.
+    A failed lookup must not drop a later name of the same machine: macOS keeps
+    advertising `Name-6.local` after `Name-2.local` has gone, and both share one base."""
+    seen: set[str] = set()
+    names: list[str] = []
     for host in hosts:
         if host.startswith("/") or _looks_like_ip(host):
             continue
-        b = base_name(host)
-        if b in seen_base:
+        name = host if host.lower().endswith(".local") else host + ".local"
+        key = name.lower()
+        if key in seen:
             continue
-        seen_base.add(b)
-        name = host if host.endswith(".local") else host + ".local"
-        for dev in devs:
-            found = parse_dns_sd_aaaa(_dns_sd_getaddr(name, dev, seconds), {dev})
+        seen.add(key)
+        names.append(name)
+    return names
+
+
+def _tb_aaaa(name: str, devs: list[str], seconds: float) -> list[str]:
+    for dev in devs:
+        found = parse_dns_sd_aaaa(_dns_sd_getaddr(name, dev, seconds), {dev})
+        if found:
+            return found
+    return []
+
+
+def tb_hostname_addrs(hosts: list[str], seconds: float = 1.6) -> list[str]:
+    """IPv6 link-local of a peer, asked only on a live Thunderbolt interface.
+
+    `dns-sd -i bridge0 -G v6 name.local` returns the address on that cable. The neighbour
+    cache is often empty, so NDP alone misses a peer that is plugged in. Every configured
+    name is tried: the first one is often a stale `Name-2.local` from an older boot.
+    When none of those answer, a Bonjour instance on the Thunderbolt bridge whose base
+    name matches (`mbpM5MaxMF (8)` → `mbpM5MaxMF-6.local`) is queried the same way.
+    Wi-Fi answers are dropped by `parse_dns_sd_aaaa`."""
+    devs = [d for d in tb_interfaces() if iface_ipv4(d) or iface_ipv6_link_locals(d)]
+    if not devs:
+        return []
+    for name in _mdns_names(hosts):
+        found = _tb_aaaa(name, devs, seconds)
+        if found:
+            return found
+    wanted = {base_name(h) for h in hosts if not h.startswith("/") and not _looks_like_ip(h)}
+    if not wanted:
+        return []
+    iface = "bridge0" if "bridge0" in devs else devs[0]
+    for service in ("_companion-link._tcp", "_airplay._tcp"):
+        for inst in bonjour_ssh_hosts(seconds, iface=iface, service=service):
+            if base_name(inst) not in wanted:
+                continue
+            live = resolve_instance(inst, seconds, service=service)
+            if not live:
+                continue
+            if not live.lower().endswith(".local"):
+                live += ".local"
+            found = _tb_aaaa(live, devs, seconds)
             if found:
                 return found
     return []
