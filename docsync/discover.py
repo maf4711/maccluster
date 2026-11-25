@@ -169,10 +169,11 @@ def is_tb_host(host: str, active: list[ipaddress.IPv4Network], configured: ipadd
 
 
 def tb_neighbours() -> list[str]:
-    """IPs seen in the ARP table on Thunderbolt interfaces (peers that are linked but not configured)."""
+    """IPv4 peers in the ARP table on Thunderbolt interfaces (not this Mac's own addresses)."""
     devs = set(tb_interfaces())
     if not devs:
         return []
+    own = {str(itf.ip) for dev in devs for itf in iface_ipv4(dev)}
     try:
         out = subprocess.run(["/usr/sbin/arp", "-an"], text=True, capture_output=True, timeout=5).stdout
     except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -181,8 +182,134 @@ def tb_neighbours() -> list[str]:
     for line in out.splitlines():
         m = re.search(r"\((\d+\.\d+\.\d+\.\d+)\) at ([0-9a-f:]+|\(incomplete\)) on (\S+)", line)
         if m and m.group(3) in devs and m.group(2) != "(incomplete)" and not m.group(2).startswith("ff:"):
-            ips.append(m.group(1))
+            if m.group(1) not in own and m.group(1) not in ips:
+                ips.append(m.group(1))
     return ips
+
+
+def parse_ndp_neighbours(text: str, ifaces: set[str], own: set[str]) -> list[str]:
+    """Scoped fe80 neighbours (`fe80::…%bridge0`) on Thunderbolt interfaces, excluding this Mac.
+
+    `ndp -an` lines look like `fe80::abcd%bridge0  36:8e:…  bridge0  3s  D`. Incomplete rows and
+    neighbours on other interfaces (Wi-Fi, awdl) are ignored. `own` is compared case-insensitively
+    and includes the zone id."""
+    own_l = {a.lower() for a in own}
+    ifaces_l = {i.lower() for i in ifaces}
+    found: list[str] = []
+    for raw in text.splitlines():
+        parts = raw.split()
+        if len(parts) < 3 or not parts[0].lower().startswith("fe80:"):
+            continue
+        scoped, mac, netif = parts[0], parts[1], parts[2]
+        if mac == "(incomplete)":
+            continue
+        zone = scoped.partition("%")[2]
+        if netif.lower() not in ifaces_l and zone.lower() not in ifaces_l:
+            continue
+        if scoped.lower() in own_l or scoped in found:
+            continue
+        found.append(scoped)
+    return found
+
+
+def iface_ipv6_link_locals(dev: str) -> list[str]:
+    """This interface's own fe80 addresses, zone included (`fe80::1%bridge0`)."""
+    try:
+        out = subprocess.run(["/sbin/ifconfig", dev], text=True, capture_output=True, timeout=5).stdout
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return []
+    return re.findall(r"inet6 (fe80:[0-9a-f:]+%\S+)", out, flags=re.I)
+
+
+def parse_dns_sd_aaaa(text: str, ifaces: set[str]) -> list[str]:
+    """Link-local AAAA answers from `dns-sd -G v6`, compressed and scoped, on `ifaces` only.
+
+    A query bound to the Thunderbolt bridge (`-i bridge0`) still has to be filtered: the line
+    carries the zone (`%bridge0` or `%en0`). Wi-Fi answers are dropped."""
+    ifaces_l = {i.lower() for i in ifaces}
+    found: list[str] = []
+    for line in text.splitlines():
+        if not re.search(r"\bAdd\b", line):
+            continue
+        m = re.search(r"(fe80:[0-9a-f:]+)%([A-Za-z0-9]+)", line, re.I)
+        if not m or m.group(2).lower() not in ifaces_l:
+            continue
+        try:
+            ip = ipaddress.IPv6Address(m.group(1))
+        except ValueError:
+            continue
+        scoped = f"{ip.compressed}%{m.group(2)}"
+        if scoped not in found:
+            found.append(scoped)
+    return found
+
+
+def _dns_sd_getaddr(host: str, iface: str, seconds: float) -> str:
+    try:
+        proc = subprocess.Popen(["/usr/bin/dns-sd", "-i", iface, "-G", "v6", host],
+                                text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    except FileNotFoundError:
+        return ""
+    try:
+        time.sleep(seconds)
+        proc.terminate()
+        out, _ = proc.communicate(timeout=2)
+    except Exception:
+        proc.kill()
+        return ""
+    return out or ""
+
+
+def tb_hostname_addrs(hosts: list[str], seconds: float = 1.6) -> list[str]:
+    """IPv6 link-local of a configured hostname, asked only on a live Thunderbolt interface.
+
+    `dns-sd -i bridge0 -G v6 name.local` returns the address on that cable. The neighbour
+    cache is often empty, so NDP alone misses a peer that is plugged in. One query per
+    distinct machine, and it stops at the first answer."""
+    devs = [d for d in tb_interfaces() if iface_ipv4(d) or iface_ipv6_link_locals(d)]
+    if not devs:
+        return []
+    seen_base: set[str] = set()
+    for host in hosts:
+        if host.startswith("/") or _looks_like_ip(host):
+            continue
+        b = base_name(host)
+        if b in seen_base:
+            continue
+        seen_base.add(b)
+        name = host if host.endswith(".local") else host + ".local"
+        for dev in devs:
+            found = parse_dns_sd_aaaa(_dns_sd_getaddr(name, dev, seconds), {dev})
+            if found:
+                return found
+    return []
+
+
+def _looks_like_ip(host: str) -> bool:
+    try:
+        ipaddress.ip_address(host.split("%", 1)[0])
+    except ValueError:
+        return False
+    return True
+
+
+def tb_link_locals() -> list[str]:
+    """IPv6 link-local peers on a live Thunderbolt port.
+
+    When bridge0 has only 169.254/16 and not the cluster /24, the peer still answers as
+    `fe80::…%bridge0` (NDP). ping6 does not accept the `%zone` form; callers SSH this string,
+    which OpenSSH does accept."""
+    devs = tb_interfaces()
+    if not devs:
+        return []
+    own: set[str] = set()
+    for dev in devs:
+        own.update(a.lower() for a in iface_ipv6_link_locals(dev))
+    try:
+        out = subprocess.run(["/usr/sbin/ndp", "-an"], text=True, capture_output=True, timeout=5).stdout
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return []
+    return parse_ndp_neighbours(out, set(devs), own)
 
 
 def order_hosts(hosts: list[str]) -> list[tuple[str, str]]:

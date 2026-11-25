@@ -161,7 +161,7 @@ def state() -> TBState:
         addrs = [str(i.ip) for i in discover.iface_ipv4(dev)]
         if addrs:
             st.active_ifaces[dev] = addrs
-    st.neighbours = discover.tb_neighbours()
+    st.neighbours = discover.tb_link_locals() + discover.tb_neighbours()
     return st
 
 
@@ -175,5 +175,5 @@ def render(st: TBState) -> str:
         act = ", ".join(f"{d} {'/'.join(a)}" for d, a in st.active_ifaces.items()) or "none with IPv4"
         lines.append(f"   interfaces   {', '.join(st.interfaces)}   active: {act}")
     if st.neighbours:
-        lines.append(f"   neighbours   {', '.join(st.neighbours)}  (ARP on TB)")
+        lines.append(f"   neighbours   {', '.join(st.neighbours)}  (NDP/ARP on TB)")
     return "\n".join(lines)

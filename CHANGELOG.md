@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.9 — 2026-11-25
+
+- When bridge0 has no cluster IPv4 (10.42.0.0/24 needs root), a plugged-in peer is no longer
+  skipped as "Thunderbolt (link down)" and synced over Wi-Fi. Resolution now uses the peer's
+  IPv6 link-local on the Thunderbolt bridge before any LAN name: the NDP neighbour, or
+  `dns-sd -i <tb-iface> -G v6` when that cache is empty. A neighbour is accepted only when
+  `hostname -s` matches the configured peer. rsync gets the address in brackets
+  (`user@[fe80::…%bridge0]:path`); SSH keeps it unbracketed. `docsync tb` prints that path.
+
 ## 1.3.8 — 2026-11-25
 
 - While `~/.cache/docsync.hold` exists, heal's `sync_now` does nothing (skip, `held: <reason>`) and

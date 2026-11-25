@@ -36,6 +36,109 @@ class ThunderboltTests(unittest.TestCase):
                                ("169.254.9.9", "Thunderbolt (link down)")])
 
 
+NDP_SAMPLE = """\
+fe80::1%lo0                             (incomplete)         lo0 permanent R
+fe80::aabb:ccdd:eeff:1%bridge0          36:bf:cb:ca:26:40    bridge0 permanent R
+fe80::1122:3344:5566:7788%bridge0       36:8e:95:56:73:c0    bridge0 3s        D
+fe80::9999:8888:7777:6666%en0           ac:bc:b5:d1:b4:9e    en0 20s       R  R
+"""
+
+
+class LinkLocalTests(unittest.TestCase):
+    def test_parse_ndp_keeps_only_other_host_on_tb_bridge(self):
+        from docsync.discover import parse_ndp_neighbours
+        got = parse_ndp_neighbours(NDP_SAMPLE, {"bridge0"}, {"fe80::aabb:ccdd:eeff:1%bridge0"})
+        self.assertEqual(got, ["fe80::1122:3344:5566:7788%bridge0"])
+
+    def test_rsync_spec_brackets_ipv6_link_local(self):
+        from docsync.transport import rsync_spec
+        scoped = "fe80::1122:3344:5566:7788%bridge0"
+        self.assertEqual(rsync_spec(f"a321@{scoped}", "Documents"),
+                         f"a321@[{scoped}]:Documents/")
+        self.assertEqual(rsync_spec("a321@10.42.0.1", "Documents"), "a321@10.42.0.1:Documents/")
+
+    def test_resolve_uses_tb_link_local_before_lan(self):
+        from docsync import discover
+        from docsync.config import Peer
+        from docsync.hosts import resolve
+        from docsync.transport import RemoteTransport
+        peer = Peer("node-a", ["10.42.0.1", "CM-CFMQ2D029F.local"], user="a321")
+        calls = []
+        orig = (discover.order_hosts, discover.ping, discover.tb_link_locals,
+                discover.tb_neighbours, discover.bonjour_fallback, RemoteTransport.ssh)
+        discover.order_hosts = lambda hosts: [("10.42.0.1", "Thunderbolt (link down)"),
+                                               ("CM-CFMQ2D029F.local", "LAN")]
+
+        def ping(host, *a, **k):
+            calls.append(("ping", host))
+            return 1.0 if str(host).endswith(".local") else None
+
+        def ssh(self, cmd, stdin=None, timeout=120):
+            calls.append(("ssh", self.userhost))
+            class R:
+                stdout = "CM-CFMQ2D029F\n"
+                returncode = 0
+            return R()
+
+        discover.ping = ping
+        discover.tb_link_locals = lambda: ["fe80::1122:3344:5566:7788%bridge0"]
+        discover.tb_neighbours = lambda: ["169.254.231.86"]
+        discover.bonjour_fallback = lambda *a, **k: self.fail("Bonjour must not run before the TB neighbour")
+        RemoteTransport.ssh = ssh
+        try:
+            host, via = resolve(peer, lambda *a: None)
+        finally:
+            (discover.order_hosts, discover.ping, discover.tb_link_locals,
+             discover.tb_neighbours, discover.bonjour_fallback, RemoteTransport.ssh) = orig
+        self.assertEqual((host, via), ("fe80::1122:3344:5566:7788%bridge0", "Thunderbolt (link-local)"))
+        self.assertEqual(calls[0], ("ssh", "a321@fe80::1122:3344:5566:7788%bridge0"))
+        self.assertNotIn(("ping", "CM-CFMQ2D029F.local"), calls)
+
+    def test_parse_dns_sd_aaaa_keeps_tb_link_local_only(self):
+        from docsync.discover import parse_dns_sd_aaaa
+        sample = (
+            "17:25:07.136  Add  2             13  CM-CFMQ2D029F.local.                   "
+            "FE80:0000:0000:0000:14FF:7D24:3825:757E%bridge0 120\n"
+            "17:25:07.200  Add  2             14  CM-CFMQ2D029F.local.                   "
+            "FE80:0000:0000:0000:AAAA:BBBB:CCCC:DDDD%en0 120\n"
+        )
+        self.assertEqual(parse_dns_sd_aaaa(sample, {"bridge0"}),
+                         ["fe80::14ff:7d24:3825:757e%bridge0"])
+
+    def test_resolve_uses_tb_mdns_when_neighbour_cache_is_empty(self):
+        from docsync import discover
+        from docsync.config import Peer
+        from docsync.hosts import resolve
+        from docsync.transport import RemoteTransport
+        peer = Peer("node-a", ["10.42.0.1", "CM-CFMQ2D029F.local"], user="a321")
+        calls = []
+        orig = (discover.order_hosts, discover.ping, discover.tb_link_locals, discover.tb_hostname_addrs,
+                discover.tb_neighbours, discover.bonjour_fallback, RemoteTransport.ssh)
+        discover.order_hosts = lambda hosts: [("10.42.0.1", "Thunderbolt (link down)"),
+                                               ("CM-CFMQ2D029F.local", "LAN")]
+        discover.ping = lambda host, *a, **k: 1.0 if str(host).endswith(".local") else None
+        discover.tb_link_locals = lambda: []
+        discover.tb_hostname_addrs = lambda hosts: ["fe80::14ff:7d24:3825:757e%bridge0"]
+        discover.tb_neighbours = lambda: []
+        discover.bonjour_fallback = lambda *a, **k: self.fail("Bonjour")
+
+        def ssh(self, cmd, stdin=None, timeout=120):
+            calls.append(self.userhost)
+            class R:
+                stdout = "CM-CFMQ2D029F\n"
+                returncode = 0
+            return R()
+
+        RemoteTransport.ssh = ssh
+        try:
+            host, via = resolve(peer, lambda *a: None)
+        finally:
+            (discover.order_hosts, discover.ping, discover.tb_link_locals, discover.tb_hostname_addrs,
+             discover.tb_neighbours, discover.bonjour_fallback, RemoteTransport.ssh) = orig
+        self.assertEqual((host, via), ("fe80::14ff:7d24:3825:757e%bridge0", "Thunderbolt (link-local)"))
+        self.assertEqual(calls, ["a321@fe80::14ff:7d24:3825:757e%bridge0"])
+
+
 class ThunderboltProfilerTests(unittest.TestCase):
     SAMPLE = """Thunderbolt/USB4:
 

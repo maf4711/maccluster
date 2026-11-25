@@ -44,12 +44,12 @@ def cmd_tb(a) -> int:
     if cfg:
         print()
         for p in cfg.peers:
-            tb_hosts = [h for h, via in discover.order_hosts(p.hosts) if via.startswith("Thunderbolt")]
-            if not tb_hosts:
-                print(f"   {p.name:<10} no Thunderbolt address configured")
-                continue
-            ms = discover.ping(tb_hosts[0]) if st.link_up else None
-            print(f"   {p.name:<10} {tb_hosts[0]:<16} {'%.1f ms over Thunderbolt' % ms if ms is not None else 'not reachable over Thunderbolt'}")
+            host, via = resolve(p, lambda *x: None)
+            if host and via.startswith("Thunderbolt"):
+                print(f"   {p.name:<10} {host:<42} via {via}")
+            else:
+                print(f"   {p.name:<10} not reachable over Thunderbolt"
+                      + (f" (fell back to {host} via {via})" if host else ""))
     if not st.link_up:
         print()
         print("── no Thunderbolt link on this Mac — how to plug it")

@@ -339,6 +339,19 @@ def remote_remove_script(root: str, paths: list[str], stamp: str, use_trash: boo
     return "\n".join(lines)
 
 
+def rsync_spec(userhost: str, path: str) -> str:
+    """rsync remote spec. An IPv6 literal has colons, so it must be wrapped in brackets
+    (`user@[fe80::1%bridge0]:Documents/`) or rsync treats the first colon as the path separator.
+    SSH itself keeps the unbracketed address; only this rsync destination is bracketed."""
+    user, sep, host = userhost.rpartition("@")
+    if not sep:
+        user, host = "", userhost
+    if ":" in host and not (host.startswith("[") and host.endswith("]")):
+        host = f"[{host}]"
+    who = f"{user}@{host}" if user else host
+    return f"{who}:{path}/"
+
+
 class RemoteTransport:
     """Peer reached over ssh; files move with rsync."""
 
@@ -414,7 +427,7 @@ class RemoteTransport:
             p = p[2:]
         elif p == "~":
             p = "."
-        return f"{self.userhost}:{shlex.quote(p)}/"
+        return rsync_spec(self.userhost, shlex.quote(p))
 
     def ssh(self, remote_cmd: str, stdin: str | None = None, timeout: int = 120) -> subprocess.CompletedProcess:
         return subprocess.run([*self.ssh_cmd, self.userhost, remote_cmd], input=stdin,

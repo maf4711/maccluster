@@ -170,6 +170,6 @@ def sync(req: SyncRequest) -> SyncResult:
 
 
 def resolve_peer(hosts: list[str], user: str = "", name: str = "peer", log=None) -> tuple[str | None, str]:
-    """Opt-in auto-detection (Thunderbolt first, then LAN, Bonjour, Thunderbolt ARP neighbours)."""
+    """Opt-in auto-detection (Thunderbolt, then TB link-local/ARP, then LAN, then Bonjour)."""
     from docsync.hosts import resolve
     return resolve(Peer(name, list(hosts), user), log or (lambda *a: None))
