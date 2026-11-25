@@ -15,6 +15,11 @@ from maccluster.errors import CliError
 
 def main(argv: Sequence[str] | None = None) -> int:
     argv_list = list(sys.argv[1:] if argv is None else argv)
+    if argv_list[:1] == ["docsync"]:
+        # The bundled docsync engine has its own CLI; hand the rest of the line over unchanged.
+        from docsync.cli import main as docsync_main  # noqa: PLC0415 — only for this command
+
+        return docsync_main(argv_list[1:])
     parser = build_parser()
     try:
         args = parser.parse_args(argv_list)

@@ -186,9 +186,11 @@ class EngineHygieneTests(unittest.TestCase):
 
 class PackagingTests(unittest.TestCase):
     def test_pyproject_metadata(self):
+        """docsync ships inside the maccluster distribution (repo root pyproject.toml)."""
         import tomllib
-        root = Path(__file__).resolve().parent.parent
-        meta = tomllib.loads((root / "pyproject.toml").read_text())
-        self.assertEqual(meta["project"]["name"], "docsync-lan")  # "docsync" on PyPI is someone else's
+        pkg = Path(__file__).resolve().parent.parent
+        meta = tomllib.loads((pkg.parent.parent / "pyproject.toml").read_text())
+        self.assertEqual(meta["project"]["name"], "maccluster")
         self.assertEqual(meta["project"]["scripts"]["docsync"], "docsync.cli:main")
-        self.assertTrue((root / "docsync" / "resources" / "docsync-advisor.swift").exists())
+        self.assertIn("packages/docsync/docsync", meta["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"])
+        self.assertTrue((pkg / "docsync" / "resources" / "docsync-advisor.swift").exists())

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "maccluster"
-version = "0.8.1"
+version = "0.9.0"
 description = "CLI tool for Thunderbolt-networked Apple Silicon Mac mini clusters (2–4 nodes)"
 readme = "README.md"
 license = "MIT"
@@ -36,6 +36,8 @@ dev = [
 
 [project.scripts]
 maccluster = "maccluster.cli.main:main"
+# docsync (formerly the separate docsync-lan distribution) ships inside maccluster since 0.9.0.
+docsync = "docsync.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/maf4711/maccluster"
@@ -46,11 +48,12 @@ Download = "https://github.com/maf4711/maccluster/archive/refs/heads/main.zip"
 RawInstall = "https://raw.githubusercontent.com/maf4711/maccluster/main/install.sh"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/maccluster"]
+packages = ["src/maccluster", "packages/docsync/docsync"]
 
 [tool.hatch.build.targets.sdist]
 include = [
   "/src",
+  "/packages/docsync",
   "/tests",
   "/examples",
   "/docs",

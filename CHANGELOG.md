@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.9.0 — 2026-11-25
+
+maccluster and docsync are now one distribution. The docsync engine (formerly the separate
+`docsync-lan` package, repo maf4711/docsync, now archived) lives in `packages/docsync` and was
+merged with its full git history (`git subtree`). Engine version stays docsync 1.3.9.
+
+Rollout: `maccluster update` (or `remote-install`) on every node. Both remove an injected
+`docsync-lan` before reinstalling, so its file list can never delete the bundled engine.
+Launch agents keep calling `python -m docsync`: no plist changes.
+
+### Added
+- The maccluster wheel ships the `docsync` package and the `docsync` command.
+- `maccluster docsync …` runs the bundled docsync CLI with the rest of the command line.
+
+### Changed
+- `remote-install` no longer looks for, copies or injects a `docsync_lan-*.whl`. The engine
+  comes with the maccluster wheel (`ok; engine docsync bundled`).
+- `maccluster update`, `remote-install` and `install.sh` uninstall a legacy `docsync-lan`
+  (pipx: `pipx uninject maccluster docsync-lan`) before the force-reinstall.
+- CI also runs docsync's own test suite (macOS) and smoke-tests `maccluster docsync --version`
+  and `docsync --version` from the built artifacts.
+
+### Removed
+- `find_docsync_wheel`, `inject_script`, `MACCLUSTER_DOCSYNC_WHEEL` and `MACCLUSTER_DOCSYNC_SRC`.
+
 ## 0.8.1 — 2026-11-25
 
 Rollout: together with docsync-lan >= 1.3.7, which honours the same hold file in its own heal and install-agent.

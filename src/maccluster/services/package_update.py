@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.metadata
 import json
 import math
 import os
@@ -20,6 +21,7 @@ from urllib.parse import urlsplit
 from maccluster.app_factory import AppContext
 from maccluster.errors import CliError
 
+LEGACY_DOCSYNC_DIST = "docsync-lan"  # separate distribution before maccluster 0.9.0
 DEFAULT_SOURCE = "https://github.com/maf4711/maccluster/archive/refs/heads/main.zip"
 
 
@@ -219,6 +221,29 @@ def _venv_installation() -> tuple[str, Path, list[str]]:
     )
 
 
+def _legacy_docsync_installed() -> bool:
+    try:
+        importlib.metadata.distribution(LEGACY_DOCSYNC_DIST)
+    except importlib.metadata.PackageNotFoundError:
+        return False
+    return True
+
+
+def _drop_legacy_docsync(manager: str, command: list[str], *, timeout: float) -> None:
+    """docsync ships inside maccluster since 0.9.0. A still-injected docsync-lan owns the same
+    files; remove it before the (force-)reinstall so its RECORD can never delete them later."""
+    if not _legacy_docsync_installed():
+        return
+    if manager == "pipx":
+        argv = [command[0], "uninject", "maccluster", LEGACY_DOCSYNC_DIST]
+    else:
+        argv = [sys.executable, "-m", "pip", "uninstall", "--yes", LEGACY_DOCSYNC_DIST]
+    try:
+        _run(argv, timeout=timeout, operation="remove legacy docsync-lan")
+    except CliError:
+        pass  # the install below still lays down the bundled docsync files
+
+
 def _installation(*, timeout: float) -> tuple[str, Path, list[str]]:
     in_venv = sys.prefix != sys.base_prefix
     if not in_venv:
@@ -326,6 +351,7 @@ def install_wheel(
             **identity, changed=False, message="verified installed wheel is current"
         )
     rollback = _rollback_candidate(previous, manager=manager, program=program, timeout=timeout)
+    _drop_legacy_docsync(manager, command, timeout=timeout)
     try:
         _run([*command, str(retained.path)], timeout=timeout, operation=f"{manager} install")
         if _live_version(program, timeout=min(timeout, 30)) != artifact.version:

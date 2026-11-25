@@ -1,5 +1,9 @@
 # docsync
 
+> Since maccluster 0.9.0, docsync ships **inside maccluster** (this directory, merged with
+> history from maf4711/docsync). Install maccluster to get both `maccluster` and `docsync`;
+> `maccluster docsync …` is the same CLI. There is no separate docsync-lan wheel any more.
+
 Terminal tool that keeps `~/Documents` identical on several Macs over the LAN.
 Bidirectional, rsync+ssh, no cloud, no daemon required. Python 3.11+ stdlib only.
 

@@ -84,11 +84,15 @@ if [[ -f "$STAMP" ]] && [[ "$(cat "$STAMP")" == "$DIGEST" ]] &&
   echo "package unchanged"
 else
   echo "==> install $WHEEL"
+  # docsync used to be injected as the separate docsync-lan distribution; it ships inside
+  # maccluster now. Drop the old one first so its RECORD can never delete the bundled files.
   if command -v pipx >/dev/null 2>&1; then
+    pipx uninject maccluster docsync-lan >/dev/null 2>&1 || true
     pipx install --force "$WHEEL"
   else
     VENV="$HOME/.local/share/maccluster/venv"
     python3 -m venv "$VENV"
+    "$VENV/bin/python" -m pip uninstall --yes docsync-lan >/dev/null 2>&1 || true
     "$VENV/bin/python" -m pip install --no-input --upgrade --force-reinstall "$WHEEL"
     mkdir -p "$HOME/.local/bin"
     ln -sfn "$VENV/bin/maccluster" "$HOME/.local/bin/maccluster"

@@ -273,3 +273,33 @@ def test_invalid_expected_digest_is_option_error(digest):
 def test_pinned_source_requires_local_wheel(source):
     with pytest.raises(CliError, match="local wheel"):
         update.validate_expected_sha256(source, "a" * 64)
+
+
+@pytest.mark.parametrize(
+    ("manager", "expected"),
+    [
+        ("pipx", ["/x/pipx", "uninject", "maccluster", "docsync-lan"]),
+        ("venv", [sys.executable, "-m", "pip", "uninstall", "--yes", "docsync-lan"]),
+    ],
+)
+def test_legacy_docsync_lan_is_removed_before_reinstall(monkeypatch, manager, expected):
+    calls = []
+    monkeypatch.setattr(update, "_legacy_docsync_installed", lambda: True)
+    monkeypatch.setattr(update, "_run", lambda argv, **kw: calls.append(argv) or "")
+    update._drop_legacy_docsync(manager, ["/x/pipx", "install", "--force"], timeout=5)
+    assert calls == [expected]
+
+
+def test_legacy_docsync_lan_absent_means_no_call(monkeypatch):
+    monkeypatch.setattr(update, "_legacy_docsync_installed", lambda: False)
+    monkeypatch.setattr(update, "_run", lambda *a, **k: pytest.fail("must not run"))
+    update._drop_legacy_docsync("pipx", ["/x/pipx"], timeout=5)
+
+
+def test_legacy_docsync_lan_removal_failure_does_not_block_update(monkeypatch):
+    def boom(*a, **k):
+        raise CliError("uninject failed")
+
+    monkeypatch.setattr(update, "_legacy_docsync_installed", lambda: True)
+    monkeypatch.setattr(update, "_run", boom)
+    update._drop_legacy_docsync("venv", [], timeout=5)

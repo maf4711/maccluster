@@ -325,25 +325,20 @@ def test_sync_tree_uses_ditto_when_selected(monkeypatch):
     assert out == called["kw"] or out == "ditto-result"
 
 
-def test_find_docsync_wheel_prefers_highest_version(tmp_path: Path, monkeypatch):
-    monkeypatch.delenv("MACCLUSTER_DOCSYNC_WHEEL", raising=False)
-    dist = tmp_path / "src" / "dist"
-    dist.mkdir(parents=True)
-    for v in ("1.1.0", "1.10.0", "1.2.3"):
-        (dist / f"docsync_lan-{v}-py3-none-any.whl").write_text("w")
-    monkeypatch.setenv("MACCLUSTER_DOCSYNC_SRC", str(tmp_path / "src"))
-    assert sd.find_docsync_wheel().name == "docsync_lan-1.10.0-py3-none-any.whl"
-    monkeypatch.setenv("MACCLUSTER_DOCSYNC_SRC", str(tmp_path / "none"))
-    assert sd.find_docsync_wheel() is None
+def test_docsync_ships_inside_maccluster():
+    """0.9.0: docsync is part of the maccluster distribution, so auto always finds the engine."""
+    assert sd.docsync_version() is not None
+    assert "reinstall maccluster" in sd.INSTALL_HINT
+    assert not hasattr(sd, "find_docsync_wheel") and not hasattr(sd, "inject_script")
 
 
-def test_inject_script_checks_digest_before_installing():
-    script = sd.inject_script(
-        "/tmp/maccluster-install.abc/docsync_lan-1.1.0-py3-none-any.whl", "deadbeef"
+def test_remote_install_drops_legacy_docsync_lan_before_installing():
+    from maccluster.services.remote_install_script import REMOTE_INSTALL_SH as sh
+
+    assert sh.index("pipx uninject maccluster docsync-lan") < sh.index(
+        'pipx install --force "$WHEEL"'
     )
-    assert script.index("shasum -a 256") < script.index("pipx inject --force maccluster")
-    assert "deadbeef" in script and "digest mismatch" in script
-    assert "import docsync" in script
+    assert sh.index("pip uninstall --yes docsync-lan") < sh.index("pip install --no-input")
 
 
 def test_git_trees_are_left_out():

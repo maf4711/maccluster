@@ -460,6 +460,8 @@ def build_parser() -> argparse.ArgumentParser:
     add_automation_parsers(sub)
 
     sub.add_parser("tb", help="Show Thunderbolt hardware info")
+    # Dispatched before parsing (cli.main): everything after `docsync` goes to docsync's own CLI.
+    sub.add_parser("docsync", help="Bundled docsync sync engine CLI (same as `docsync ...`)")
 
     p_init = sub.add_parser(
         "init",

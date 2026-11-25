@@ -4,7 +4,8 @@ deletion guard, SafetyNet, parallel peers) instead of the ditto newest-wins copy
 maccluster keeps the fabric: cluster.toml peers, Keychain ssh user, the Thunderbolt bridge
 address, presets/includes and the exclude file. docsync gets an explicit request per run.
 Selection: ``--engine docsync|ditto|auto`` or ``MACCLUSTER_SYNC_ENGINE``; ``auto`` uses docsync
-when the docsync-lan package (>= 1.1, api_version 1) is importable, ditto otherwise.
+when the docsync engine (>= 1.1, api_version 1) is importable, ditto otherwise. Since 0.9.0
+docsync ships inside the maccluster distribution (packages/docsync), so it is always present.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ from maccluster.errors import CliError
 ENGINE_ENV = "MACCLUSTER_SYNC_ENGINE"
 ENGINES = ("auto", "docsync", "ditto")
 MIN_DOCSYNC = (1, 1)
-INSTALL_HINT = "pipx inject maccluster <docsync_lan-*.whl> (GitHub release of maf4711/docsync)"
+INSTALL_HINT = "reinstall maccluster >= 0.9.0 (docsync ships inside it)"
 
 # Never synced by the docsync engine: application bundles are signed, machine-bound and huge
 # (a first sync on 2026-11-07 planned 297,000 files from three Xcode.app copies in Downloads).
@@ -88,7 +89,7 @@ def resolve_engine(requested: str | None, reasons: list[str]) -> tuple[str, str]
     if choice == "docsync":
         if version is None:
             raise CliError(
-                f"docsync engine not installed (need docsync-lan >= 1.1): {INSTALL_HINT}",
+                f"docsync engine not installed (need docsync >= 1.1): {INSTALL_HINT}",
                 exit_code=1,
             )
         if reasons:
@@ -323,49 +324,4 @@ def run(
         safetynet=True,
         target=target,
         transport_priority=("tb", "wifi"),
-    )
-
-
-# ── shipping the engine to peers (remote-install) ─────────────────────────────
-
-
-def find_docsync_wheel() -> Path | None:
-    """docsync-lan wheel to ship to peers: $MACCLUSTER_DOCSYNC_WHEEL, else the newest in
-    ~/Library/Caches/maccluster/wheels, else ~/Developer/docsync/dist. None if there is none."""
-    env = os.environ.get("MACCLUSTER_DOCSYNC_WHEEL")
-    if env and Path(env).is_file():
-        return Path(env)
-    found: list[Path] = []
-    for d in (
-        Path.home() / "Library" / "Caches" / "maccluster" / "wheels",
-        Path(os.environ.get("MACCLUSTER_DOCSYNC_SRC", Path.home() / "Developer" / "docsync"))
-        / "dist",
-    ):
-        if d.is_dir():
-            found += d.glob("docsync_lan-*-py3-none-any.whl")
-    if not found:
-        return None
-
-    def ver(p: Path) -> tuple[int, ...]:
-        try:
-            return tuple(int(x) for x in p.name.split("-")[1].split("."))
-        except ValueError:
-            return (0,)
-
-    return max(found, key=ver)
-
-
-def inject_script(remote_wheel: str, digest: str) -> str:
-    """Peer-side bash: verify the wheel digest, install it next to maccluster, print the version."""
-    import shlex
-
-    w, d = shlex.quote(remote_wheel), shlex.quote(digest)
-    return (
-        'set -euo pipefail; PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH"; '
-        f'[[ "$(shasum -a 256 {w} | cut -d" " -f1)" == {d} ]] || {{ echo "docsync wheel digest mismatch"; exit 1; }}; '
-        "if command -v pipx >/dev/null 2>&1 && pipx list --short 2>/dev/null | grep -q '^maccluster '; then "
-        f"pipx inject --force maccluster {w}; "
-        f'else "$HOME/.local/share/maccluster/venv/bin/python" -m pip install --no-input --force-reinstall {w}; fi; '
-        "cli=$(python3 -c 'import os,sys; print(os.path.dirname(os.path.realpath(sys.argv[1])))' \"$(command -v maccluster)\"); "
-        '"$cli/python" -c \'import docsync; print("docsync", docsync.__version__)\''
     )

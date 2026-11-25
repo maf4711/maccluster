@@ -76,11 +76,13 @@ install_package() {
   cd "${root}"
   if have pipx; then
     echo "Installing with pipx from ${root} ..."
+    pipx uninject maccluster docsync-lan >/dev/null 2>&1 || true  # bundled since 0.9.0
     pipx install --force .
   elif have python3; then
     local venv_path="${HOME}/.local/share/maccluster/venv"
     echo "pipx not found; installing into ${venv_path} ..."
     python3 -m venv "${venv_path}"
+    "${venv_path}/bin/python" -m pip uninstall --yes docsync-lan >/dev/null 2>&1 || true
     "${venv_path}/bin/python" -m pip install --no-input --upgrade --force-reinstall .
     mkdir -p "${HOME}/.local/bin"
     ln -sfn "${venv_path}/bin/maccluster" "${HOME}/.local/bin/maccluster"
