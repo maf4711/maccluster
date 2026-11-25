@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- While `~/.cache/docsync.hold` exists, heal's `sync_now` does nothing (skip, `held: <reason>`) and
+  `docsync sync --from-agent` / `--from-heal` print `held: <reason>` and exit 0 without syncing; a manual
+  `docsync sync` stays allowed.
+- Note on 1.3.7: launchd's `ThrottleInterval` 900 also caps `WatchPaths`-triggered runs to one per 15 min.
+
 ## 1.3.7 — 2026-11-25
 
 - The sync agent no longer watches roots inside iCloud Desktop & Documents (`icloud.is_icloud_backed`:

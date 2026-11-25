@@ -121,3 +121,33 @@ class HoldFileTests(unittest.TestCase):
         (self.home / ".cache" / "docsync.hold").write_text("")
         self.assertIn("held: ", agent.install(15))
         self.assertEqual(self.calls, [])
+
+    def test_hold_blocks_heal_sync_now(self):
+        ran = []
+
+        def runner(argv, timeout=60, env=None, detach=False, cwd=None):
+            ran.append(list(argv))
+            return 0, "4242"
+        status, text = self.healer(self.home / "p.plist", runner).act_sync_now({})
+        self.assertEqual(status, "skip")
+        self.assertIn("held: incident", text)
+        self.assertEqual((ran, self.calls), ([], []))
+
+    def test_hold_blocks_agent_and_heal_syncs(self):
+        import io
+        from contextlib import redirect_stdout
+        from docsync import cli
+
+        class Reached(Exception):
+            pass
+        with mock.patch.object(cli, "load_config", side_effect=Reached), \
+                mock.patch("docsync.monitor.origin_line", return_value="origin: test"):
+            for flag in ("--from-agent", "--from-heal"):
+                out = io.StringIO()
+                with redirect_stdout(out):
+                    rc = cli.main(["sync", "--all", "--quiet", "--max-runtime", "0", flag])
+                self.assertEqual(rc, 0, flag)
+                self.assertIn("held: incident", out.getvalue())
+            with self.assertRaises(Reached):  # a manual `docsync sync` is not held
+                cli.main(["sync", "--all", "--quiet", "--max-runtime", "0"])
+        self.assertEqual(self.calls, [])

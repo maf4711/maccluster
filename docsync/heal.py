@@ -242,6 +242,8 @@ class Healer:
         return ("ok", f"{how}; {why}") if ok else ("fail", f"{why} after {how} (exit {rc}: {_tail(out)})")
 
     def act_sync_now(self, a: dict) -> tuple[str, str]:
+        if held := agent.hold_reason():  # no sync while an incident pause is in force
+            return "skip", held
         h = lock.holder(self.ctx.state_dir)
         if h and self.alive(h["pid"]):
             return "skip", f"run in progress (pid {h['pid']})"

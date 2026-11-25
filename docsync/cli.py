@@ -200,6 +200,15 @@ def _max_runtime(text: str) -> float:
     return value
 
 
+def _sync_unless_held(a, dry: bool) -> int:
+    """Runs started by the launchd agent or by heal do nothing while ~/.cache/docsync.hold exists
+    (exit 0, one "held: …" line); a manual `docsync sync` stays allowed."""
+    if (getattr(a, "from_agent", False) or getattr(a, "from_heal", False)) and (held := agent.hold_reason()):
+        print(f"docsync: {held} — not syncing")
+        return 0
+    return _with_deadline(a, lambda: cmd_sync(a, dry=dry))
+
+
 def _origin(a) -> str:
     """Who started this run (one line for history.log); taken once, when the run begins."""
     if not getattr(a, "origin", None):
@@ -408,7 +417,7 @@ def build_parser() -> argparse.ArgumentParser:
         s.add_argument("-j", "--jobs", type=int, default=0, help="max parallel peers (default: all)")
         s.add_argument("--root", action="append", metavar="NAME", help="only this root (repeatable; default: all roots)")
         s.add_argument("--json", action="store_true", help="also print the result as one JSON object (last line)")
-        s.set_defaults(fn=lambda a, d=dry: _with_deadline(a, lambda: cmd_sync(a, dry=d)))
+        s.set_defaults(fn=lambda a, d=dry: _sync_unless_held(a, d))
 
     s = sub.add_parser("watch", help="sync all peers every N minutes (foreground)")
     s.add_argument("--interval", type=int, default=10, metavar="MIN")
