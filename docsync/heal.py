@@ -229,6 +229,8 @@ class Healer:
     # ── actions: each does one thing, then verifies it ──────────────────────
 
     def act_reload_agent(self, a: dict) -> tuple[str, str]:
+        if held := agent.hold_reason():  # an incident pause (bootout + hold file) is never undone here
+            return "skip", held
         c = self.ctx
         if c.plist.exists():
             how, (rc, out) = "bootstrap", self.run_cmd(["launchctl", "bootstrap", f"gui/{c.uid}", str(c.plist)], timeout=30)

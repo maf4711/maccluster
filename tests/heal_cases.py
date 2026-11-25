@@ -11,7 +11,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from docsync import heal, heal_rules, lock
+from docsync import agent, heal, heal_rules, lock
 
 T0 = 1_800_000_000.0
 NODES = {"node-a": {"id": "node-a", "ip": "10.42.0.1"},
@@ -80,7 +80,8 @@ class HealBase(unittest.TestCase):
                   mock.patch("os.system", side_effect=AssertionError("os.system in a heal test")),
                   mock.patch("socket.socket", side_effect=AssertionError("real socket in a heal test")),
                   mock.patch("os.kill", side_effect=self._kill),
-                  mock.patch.dict(os.environ, {"DOCSYNC_TEST_FM": "unavailable"})]
+                  mock.patch.dict(os.environ, {"DOCSYNC_TEST_FM": "unavailable"}),
+                  mock.patch.object(agent, "HOLD_FILE", self.base / "no-docsync.hold")]  # never the real ~/.cache
         for g in guards:
             g.start()
             self.addCleanup(g.stop)

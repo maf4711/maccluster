@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- The sync agent no longer watches roots inside iCloud Desktop & Documents (`icloud.is_icloud_backed`:
+  the Desktop & Documents attribute on the path or a folder above it, up to `$HOME`): iCloud touches
+  them constantly, so `WatchPaths` started a full sync about every 11 minutes (node-a, 2,252 runs in
+  17 days). They sync on `StartInterval` only; if the detection fails, nothing is watched.
+- `ThrottleInterval` is 900 s (was 60) wherever `WatchPaths` remain; both agents run with `Nice` 10 in
+  addition to `LowPriorityIO` and `ProcessType` Background.
+- While `~/.cache/docsync.hold` exists, `install-agent`, `install-heal-agent` and heal's `reload_agent`
+  load nothing and report `held: <reason>` (first line of the file).
+  Re-run `docsync install-agent` after upgrading to rewrite the plist.
+
 ## 1.3.6 — 2026-11-25
 
 - rsync keeps partial files only outside the synced roots: `--partial-dir` is now an absolute path in

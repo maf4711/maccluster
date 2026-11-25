@@ -95,6 +95,19 @@ def dd_on(name: str, path: Path) -> bool:
     return getxattr(os.fsencode(path), DOMAIN_XATTR.encode(), None, 0, 0, 0) >= 0
 
 
+def is_icloud_backed(path) -> bool:
+    """True when iCloud Desktop & Documents manages `path` or a folder above it (up to and including
+    $HOME): dd_on is read on each ancestor, since the attribute sits only on ~/Documents and ~/Desktop."""
+    home = Path(os.path.expanduser("~"))
+    p = Path(os.path.abspath(os.path.expanduser(str(path))))
+    for q in (p, *p.parents):
+        if dd_on(q.name, q):
+            return True
+        if q == home:
+            break
+    return False
+
+
 def _helper() -> Path | None:
     """The Swift helper, compiled on first use (like the advisor's). None without swiftc."""
     if HELPER.exists() and HELPER.stat().st_mtime >= SWIFT_SRC.stat().st_mtime:
