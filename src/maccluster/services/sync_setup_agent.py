@@ -13,7 +13,7 @@ import re
 import shlex
 from dataclasses import dataclass
 
-from maccluster.constants import LAUNCH_AGENT_SYNC_LABEL
+from maccluster.constants import DOCSYNC_HOLD_FILE, LAUNCH_AGENT_SYNC_LABEL
 from maccluster.services.sync_setup_remote import NodeShell, script
 
 AGENT_LABEL = "com.a321.docsync"
@@ -31,6 +31,20 @@ AGENT_STATUS = (
     "else echo plist=0; fi\n"
     'echo "py=$py"\n'
     f'launchctl print "gui/$(id -u)/{AGENT_LABEL}" 2>/dev/null || true\n'
+)
+# Operator pause (incident 2026-11-25): a hold file, or launchd's disabled list naming the label.
+# A failing `print-disabled` counts as not disabled; the hold file is still checked.
+_HOLD = DOCSYNC_HOLD_FILE.replace("~", "$HOME", 1)
+AGENT_PAUSE = (
+    f'h="{_HOLD}"\n'
+    'if [ -e "$h" ]; then\n'
+    "  echo hold=1\n"
+    "  printf 'holdreason=%s\\n' \"$(head -c 200 \"$h\" 2>/dev/null | tr '\\r\\n\\t' '   ')\"\n"
+    "fi\n"
+    'if d=$(launchctl print-disabled "gui/$(id -u)" 2>/dev/null); then\n'
+    f'  case "$d" in *\'"{AGENT_LABEL}" => disabled\'*|*\'"{AGENT_LABEL}" => true\'*) '
+    "echo disabled=1;; esac\n"
+    "fi\n"
 )
 AGENT_BOOTOUT = f'launchctl bootout "gui/$(id -u)/{AGENT_LABEL}" 2>/dev/null || true\n'
 OTHER_DOCSYNCS = (
@@ -188,8 +202,34 @@ def replace_foreign(sh: NodeShell, *, dry_run: bool, stamp: str) -> str:
     return "  ".join(msgs)
 
 
+def parse_pause(out: str) -> tuple[str, str] | None:
+    """("hold", reason) | ("disabled", reason) from AGENT_PAUSE output; None when not paused."""
+    m = re.search(r"^hold=1$", out, re.M)
+    if m:
+        why = re.search(r"^holdreason=(.*)$", out, re.M)
+        reason = " ".join((why.group(1) if why else "").split())
+        return "hold", reason or "no reason given"
+    if re.search(r"^disabled=1$", out, re.M):
+        return "disabled", f"launchctl disable {AGENT_LABEL}"
+    return None
+
+
+def is_paused(agent_state: str) -> bool:
+    return agent_state.startswith(("held", "disabled"))
+
+
 def ensure_agent(sh: NodeShell, *, dry_run: bool) -> tuple[str, str, bool]:
-    """(agent_state, message, ok): ours, loaded, every 15 min with --max-runtime 1800."""
+    """(agent_state, message, ok): ours, loaded, every 15 min with --max-runtime 1800.
+
+    A paused node ("held" / "disabled") is reported and left alone: no install-agent, no
+    bootstrap, and a still-loaded agent is not booted out either (that is the operator's call)."""
+    pause = parse_pause(sh.run(script("agent-pause", AGENT_PAUSE)).stdout or "")
+    if pause is not None:
+        kind, reason = pause
+        state = "held" if kind == "hold" else "disabled"
+        if agent_status(sh).loaded:
+            state += " (agent still loaded)"
+        return state, f"agent: {state} — {reason}", True
     if agent_status(sh).ok:
         return "loaded", "agent loaded", True
     if dry_run:

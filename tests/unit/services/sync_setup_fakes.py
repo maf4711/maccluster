@@ -110,6 +110,9 @@ class FakeNode:
         self.dotfiles = "behind"  # missing | behind | clean | dirty | diverged
         self.lock_busy = 0  # number of lock probes that report busy
         self.writes = 0
+        self.hold: str | None = None  # contents of ~/.cache/docsync.hold; None = no file
+        self.launchd_disabled = False  # `launchctl print-disabled` lists com.a321.docsync
+        self.print_disabled_fails = False
 
 
 class FakeCluster:
@@ -182,6 +185,13 @@ class FakeCluster:
                 out += f"plistargs={json.dumps(node.agent_args)}\n"
             out += f"py={OWN_PY}\n"
             return out + (agent_print(node.agent_args) if node.agent_loaded else ""), 0
+        if op == "agent-pause":
+            out = ""
+            if node.hold is not None:
+                out += f"hold=1\nholdreason={node.hold.strip()}\n"
+            if node.launchd_disabled and not node.print_disabled_fails:
+                out += "disabled=1\n"
+            return out, 0
         if op == "agent-bootout":
             node.agent_loaded = node.bootout_fails
             return "", 0
