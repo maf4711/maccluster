@@ -4,6 +4,7 @@ deletions propagate, a case-only rename is no deletion, the deletion guard holds
 from __future__ import annotations
 
 import os
+import subprocess
 import time
 from ipaddress import IPv4Address
 from pathlib import Path
@@ -11,6 +12,22 @@ from pathlib import Path
 import pytest
 
 docsync_api = pytest.importorskip("docsync.api")
+from docsync.transport_base import rsync_bin  # noqa: E402
+
+
+def _rsync3() -> bool:
+    """docsync needs rsync 3.x (Homebrew on macOS); Apple's openrsync lacks its options."""
+    try:
+        out = subprocess.run([rsync_bin(), "--version"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    first = (out.stdout or out.stderr).splitlines()[:1]
+    return bool(first) and first[0].startswith("rsync  version 3")
+
+
+pytestmark = pytest.mark.skipif(
+    not _rsync3(), reason="docsync needs rsync 3.x (brew install rsync); found openrsync/none"
+)
 
 from maccluster.domain.models import Node  # noqa: E402
 from maccluster.services import sync_docsync as sd  # noqa: E402
