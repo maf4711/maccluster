@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.3.7 — 2026-11-25
 
 - The sync agent no longer watches roots inside iCloud Desktop & Documents (`icloud.is_icloud_backed`:
   the Desktop & Documents attribute on the path or a folder above it, up to `$HOME`): iCloud touches
