@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.1 — 2026-11-25
+
+Rollout: together with docsync-lan >= 1.3.7, which honours the same hold file in its own heal and install-agent.
+
+### Changed
+- `maccluster sync setup` never reinstalls the docsync agent while `~/.cache/docsync.hold` exists on a node or `launchctl print-disabled` lists `com.a321.docsync` as disabled. The node reports `agent: held — <reason>` or `agent: disabled — …` with ok=True; an agent still loaded under a hold is left running and reported.
+- `maccluster doctor` shows `docsync paused (hold|disabled): <reason>` instead of a broken agent.
+- A paused node keeps `com.maccluster.sync-home`; setup no longer retires it there.
+
 ## 0.8.0 — 2026-11-08
 
 Rollout: install together with docsync-lan >= 1.3.0 on every node (`MACCLUSTER_SRC=~/Developer/maccluster maccluster remote-install <ip>`), then `maccluster sync setup --dry-run`, then `maccluster sync setup`.
