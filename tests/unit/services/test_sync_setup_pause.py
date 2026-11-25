@@ -13,7 +13,10 @@ from pathlib import Path
 
 import pytest
 import sync_setup_fakes as fakes
-from sync_setup_fakes import THREE_NODES, FakeCluster
+from sync_setup_fakes import LEGACY_CONFIG, THREE_NODES, FakeCluster
+from test_sync_setup import _doctor_out
+
+from maccluster.ports.process import ProcessResult
 
 _REAL_RUN, _REAL_POPEN = subprocess.run, subprocess.Popen
 
@@ -143,3 +146,43 @@ def test_pause_script_reads_hold_and_disabled_list(tmp_path, monkeypatch):
     (home / ".cache" / "docsync.hold").write_text("")
     assert run() == ("hold", "no reason given")
     assert os.environ.get("HOME") != str(home)
+
+
+# (d) ─────────────────────────────────────────────────────────────────────────────────────────
+def test_doctor_reports_paused_docsync(fake_ctx, cluster, monkeypatch):
+    from maccluster.domain.enums import ReachabilityState
+    from maccluster.services.config_service import load_and_bind_self
+    from maccluster.services.sync_setup_doctor import sync_findings
+
+    cfg_dir = Path.home() / ".config" / "docsync"
+    cfg_dir.mkdir(parents=True)
+    (cfg_dir / "config.toml").write_text(LEGACY_CONFIG)
+    now = fake_ctx.clock.now()
+    missing = "agent=loaded\n", "agent=missing\n"
+    outputs = {
+        "node-a": "hold=1\nholdreason=incident 2026-11-25\n"
+        + _doctor_out("node-a", success_age_h=5, now=now).replace(*missing),
+        "node-b": "disabled=1\n"
+        + _doctor_out("node-b", success_age_h=5, now=now).replace(*missing),
+        "node-c": _doctor_out("node-c", success_age_h=5, now=now).replace(*missing),
+    }
+    scripts = []
+
+    def run(argv, *, timeout=15.0, check=False):
+        full = tuple(argv)
+        scripts.append(" ".join(full))
+        return ProcessResult(full, 0, outputs[cluster._target(full)], "")
+
+    monkeypatch.setattr(cluster, "run", run)
+    cfg, self_node = load_and_bind_self(fake_ctx)
+    states = {"node-b": ReachabilityState.UP, "node-c": ReachabilityState.UP}
+    findings = sync_findings(fake_ctx, cfg, self_node, peer_states=states)
+    by = {f.summary.split()[0]: f.summary for f in findings}
+
+    assert sum("docsync paused (hold)" in s for s in by.values()) == 1
+    assert "docsync paused (hold): incident 2026-11-25" in by["node-a"]
+    assert "docsync paused (disabled): launchctl disable com.a321.docsync" in by["node-b"]
+    for name in ("node-a", "node-b"):
+        assert "not loaded" not in by[name]
+    assert "agent com.a321.docsync not loaded" in by["node-c"]
+    assert all("docsync.hold" in s and "print-disabled" in s for s in scripts)

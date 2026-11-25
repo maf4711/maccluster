@@ -1,7 +1,8 @@
 """`doctor` finding `sync`: per node, does the `maccluster sync setup` set-up actually sync?
 
-One finding per node: agent loaded and its last exit code (`launchctl print`), age of the last
-successful docsync run (last report in history.log; warning above 2 h), the iCloud result docsync
+One finding per node: agent loaded and its last exit code (`launchctl print`) — or "docsync
+paused (hold|disabled)" while ~/.cache/docsync.hold exists or launchd disabled the label —, age of
+the last successful docsync run (last report in history.log; warning above 2 h), the iCloud result docsync
 stored in `icloud-<node>.json` (doctor never runs `icloud-check` itself) and the ~/dotfiles state.
 A peer that does not answer is a warning, never a doctor failure.
 """
@@ -19,9 +20,11 @@ from maccluster.domain.models import DoctorFinding, Node
 from maccluster.services.sync_setup import DOTFILES_STATUS, self_first
 from maccluster.services.sync_setup_agent import (
     AGENT_LABEL,
+    AGENT_PAUSE,
     MIN_DOCSYNC,
     foreign_version,
     parse_agent,
+    parse_pause,
     parse_version,
 )
 from maccluster.services.sync_setup_remote import PY_FIND, NodeShell, script
@@ -34,7 +37,7 @@ _SUCCESS = re.compile(r"peers\s+[1-9]\d* ok, 0 failed(?!.*busy)")
 
 def _doctor_script(node_id: str) -> str:
     return (
-        PY_FIND + 'echo "py=$py"\n'
+        AGENT_PAUSE + PY_FIND + 'echo "py=$py"\n'
         '[ -n "$py" ] && echo "pyver=$("$py" -m docsync --version 2>/dev/null | head -1)"\n'
         f'if out=$(launchctl print "gui/$(id -u)/{AGENT_LABEL}" 2>/dev/null); then\n'
         "  echo agent=loaded\n"
@@ -87,7 +90,15 @@ def last_success(history: str) -> datetime | None:
 def _assess(out: str, now: datetime) -> tuple[list[str], bool]:
     """(summary parts, any warning)."""
     parts, warn = [], False
-    if _kv(out, "agent") == "loaded":
+    pause = parse_pause(out)
+    if pause is not None:  # an operator pause, not a broken agent
+        kind, reason = pause
+        part = f"docsync paused ({kind}): {reason}"
+        if _kv(out, "agent") == "loaded":
+            part += " — agent still loaded"
+            warn = True
+        parts.append(part)
+    elif _kv(out, "agent") == "loaded":
         code = _kv(out, "exit") or "?"
         parts.append(f"agent loaded (last exit {code})")
         warn |= code not in ("0", "(never exited)")
