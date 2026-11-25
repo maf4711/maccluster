@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.3.6 — 2026-11-25
 
 - rsync keeps partial files only outside the synced roots: `--partial-dir` is now an absolute path in
   docsync's state dir on the receiving Mac (`<state>/partial/<root>-<peer>`; for pushes over ssh the
