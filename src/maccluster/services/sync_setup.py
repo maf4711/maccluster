@@ -23,6 +23,7 @@ from maccluster.services.sync_docsync import _hosts
 from maccluster.services.sync_setup_agent import (
     MIN_DOCSYNC,
     ensure_agent,
+    is_paused,
     parse_version,
     replace_foreign,
     retire_sync_home,
@@ -260,7 +261,8 @@ def _setup_node(
     except _Skip as skip:
         return NodeSetup(node.id, True, False, "-", "-", str(skip)), False
     agent_state, agent_msg, ok = ensure_agent(sh, dry_run=dry_run)
-    home_msg = retire_sync_home(sh, dry_run=dry_run, agent_ok=ok)
+    # a paused docsync does not sync, so sync-home is not retired while it is paused
+    home_msg = retire_sync_home(sh, dry_run=dry_run, agent_ok=ok and not is_paused(agent_state))
     dot_state, dot_msg = _dotfiles(sh, dry_run=dry_run)
     stale = stale_docsyncs(sh)
     parts = [p for p in (foreign_msg, cfg_msg, agent_msg, home_msg, dot_msg, *stale) if p]

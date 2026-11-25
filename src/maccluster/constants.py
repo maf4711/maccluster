@@ -25,6 +25,8 @@ LAUNCH_AGENT_WATCHDOG_LABEL = "com.maccluster.heal-watchdog"
 LAUNCH_AGENT_WATCHDOG_PLIST = "com.maccluster.heal-watchdog.plist"
 LAUNCH_AGENT_SYNC_LABEL = "com.maccluster.sync-home"
 LAUNCH_AGENT_SYNC_PLIST = "com.maccluster.sync-home.plist"
+# Operator pause of docsync on a node: while it exists, setup never (re)installs com.a321.docsync.
+DOCSYNC_HOLD_FILE = "~/.cache/docsync.hold"
 DEFAULT_SYNC_INTERVAL_S = 3600
 MIN_SYNC_INTERVAL_S = 300
 DEFAULT_WATCHDOG_INTERVAL_S = 60
