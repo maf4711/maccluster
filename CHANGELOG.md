@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.3.8 — 2026-11-25
 
 - While `~/.cache/docsync.hold` exists, heal's `sync_now` does nothing (skip, `held: <reason>`) and
   `docsync sync --from-agent` / `--from-heal` print `held: <reason>` and exit 0 without syncing; a manual
