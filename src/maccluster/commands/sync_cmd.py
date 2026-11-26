@@ -10,6 +10,7 @@ from maccluster.constants import SYNC_DEV_WIFI_TOP, TIMEOUT_SYNC
 from maccluster.errors import CliError
 from maccluster.render.json_out import dumps, to_jsonable
 from maccluster.render.progress import NullProgress, SyncProgress
+from maccluster.render.sync_close import transfer_block
 from maccluster.services import sync_docsync
 from maccluster.services.sync_engine import sync_tree
 from maccluster.services.sync_history import format_last_run, read_last_run
@@ -115,6 +116,7 @@ def _render_plain(result) -> str:
             if result.compare_only
             else "(dry-run — no files written)"
         )
+    lines.append(transfer_block(result))
     return "\n".join(lines)
 
 

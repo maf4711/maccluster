@@ -10,6 +10,7 @@ from typing import Any
 
 from maccluster.config.paths import default_sync_log_dir, default_sync_state_path
 from maccluster.domain.models import SyncHomeResult
+from maccluster.render.sync_close import transfer_block_from_log
 
 
 def _home_of(result: SyncHomeResult) -> Path | None:
@@ -97,6 +98,7 @@ def format_last_run(data: dict[str, Any] | None) -> str:
         downgrades = p.get("downgrades")
         for row in downgrades if isinstance(downgrades, list) else []:
             lines.append(f"      {row}")
+    lines.append(transfer_block_from_log(data))
     return "\n".join(lines)
 
 
@@ -149,6 +151,16 @@ def _result_to_dict(result: SyncHomeResult) -> dict[str, Any]:
                 # ladder rung that moved the bytes ("" = none ran) + downgrade lines
                 "transport": getattr(p, "transport", "") or "",
                 "downgrades": list(getattr(p, "downgrades", ()) or ()),
+                "roots": [
+                    {
+                        "root": r.root,
+                        "push_files": r.push_files,
+                        "push_bytes": r.push_bytes,
+                        "pull_files": r.pull_files,
+                        "pull_bytes": r.pull_bytes,
+                    }
+                    for r in (getattr(p, "roots", ()) or ())
+                ],
             }
         )
     return {

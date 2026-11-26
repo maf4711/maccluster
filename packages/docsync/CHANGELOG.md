@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.11 — 2026-11-26
+
+- The closing `══ TOTAL` names what was transferred, where, and how much, one
+  leg per root. An empty run still prints `(none)`, `(no peer)`, and
+  `push 0 files  0.0 KB`.
+
 ## 1.3.10 — 2026-11-25
 
 - The reverse Thunderbolt path (Mac mini → MacBook) no longer stops at a stale

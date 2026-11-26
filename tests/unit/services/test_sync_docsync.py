@@ -260,6 +260,10 @@ def test_run_maps_request_and_result(tmp_path: Path, monkeypatch):
         2,
         "tb",
     )
+    assert [(r.root, r.push_files, r.push_bytes, r.pull_files, r.pull_bytes) for r in p.roots] == [
+        ("documents", 2, 20, 1, 10),
+        ("desktop", 2, 20, 1, 10),
+    ]
     assert "deleted 2, conflicts 2" in p.message
     assert res.strategy.startswith("docsync ")
     assert "── node-b [documents] @ mini via Thunderbolt" in prog.notes

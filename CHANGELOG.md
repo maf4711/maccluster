@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.9.2 — 2026-11-26
+
+The bundled docsync engine is 1.3.11. Every plain-text Abschluss now states
+what moved, where, and how much, including a run that moved nothing.
+
+### Added
+- `maccluster sync home` and `maccluster sync dev` end with a transfer block:
+  `what`, `where`, and `how much` per root. When the engine did not name roots,
+  the block uses the include list (or the target plus the local home). Dry-run
+  and compare-only label it `transfer: planned (nothing written)`.
+- `maccluster sync --last` prints the same block from the run log. Older logs
+  without per-root counts still print the peer totals.
+- The docsync `══ TOTAL` block names the same three facts per root.
+
 ## 0.9.1 — 2026-11-25
 
 The bundled docsync engine is 1.3.10. `maccluster sync home` on node-a was still

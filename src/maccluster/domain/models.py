@@ -285,6 +285,17 @@ class DoctorReport:
 
 
 @dataclass(frozen=True)
+class SyncRootMove:
+    """One include-root's transfer to or from a single peer."""
+
+    root: str
+    push_files: int = 0
+    push_bytes: int = 0
+    pull_files: int = 0
+    pull_bytes: int = 0
+
+
+@dataclass(frozen=True)
 class SyncPeerResult:
     """One peer direction result for home sync."""
 
@@ -322,6 +333,7 @@ class SyncPeerResult:
     via: str = "tb"  # tb | wifi
     transport: str = ""  # rung that moved the bytes: rdma | tb | wifi ("" = none ran)
     downgrades: tuple[str, ...] = ()  # "transport downgrade a→b: reason" lines
+    roots: tuple[SyncRootMove, ...] = ()  # per-root amounts; empty = only the peer total is known
 
 
 @dataclass(frozen=True)

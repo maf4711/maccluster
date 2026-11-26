@@ -32,6 +32,40 @@ def fmt_rate(nbytes: int, secs: float) -> str:
     return f"{fmt_bytes(int(nbytes / secs))}/s"
 
 
+def _files(n: int) -> str:
+    return f"{n:,} file" if n == 1 else f"{n:,} files"
+
+
+def _where(peer: PeerReport) -> str:
+    dest = peer.peer or "(no peer)"
+    if peer.root:
+        dest += f" [{peer.root}]"
+    if peer.host:
+        dest += f" @ {peer.host}"
+    if peer.via:
+        dest += f" via {peer.via}"
+    return dest
+
+
+def _transfer_lines(peers: list[PeerReport]) -> list[str]:
+    """What moved, where, and how much. Present even when every count is zero."""
+    if not peers:
+        return [
+            f"   {'what':<12} (none)",
+            f"   {'where':<12} (no peer)",
+            f"   {'how much':<12} push 0 files  {fmt_bytes(0)}; pull 0 files  {fmt_bytes(0)}",
+        ]
+    lines = []
+    for peer in peers:
+        lines.append(f"   {'what':<12} {peer.root or '(whole tree)'}")
+        lines.append(f"   {'where':<12} {_where(peer)}")
+        lines.append(
+            f"   {'how much':<12} push {_files(peer.pushed_files)}  {fmt_bytes(peer.pushed_bytes)}; "
+            f"pull {_files(peer.pulled_files)}  {fmt_bytes(peer.pulled_bytes)}"
+        )
+    return lines
+
+
 @dataclass
 class Phase:
     name: str
@@ -160,6 +194,7 @@ class RunReport:
                      + (f" ({', '.join(failed)})" if failed else "")
                      + (f", {len(busy)} busy ({', '.join(busy)})" if busy else ""))
         lines.append(f"   files        {files:,} {verb}  ({fmt_bytes(nbytes)}, {nbytes // 1024:,} KB)")
+        lines.extend(_transfer_lines(self.peers))
         lines.append(f"   deleted      {dels:,}    conflicts {confl:,}")
         lines.append(f"   time         {fmt_secs(secs)}    throughput "
                      + ("n/a (dry run)" if dry else fmt_rate(nbytes, secs)))

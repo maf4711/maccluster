@@ -15,7 +15,7 @@ import re
 import socket
 from pathlib import Path
 
-from maccluster.domain.models import Node, SyncHomeResult, SyncPeerResult
+from maccluster.domain.models import Node, SyncHomeResult, SyncPeerResult, SyncRootMove
 from maccluster.errors import CliError
 
 ENGINE_ENV = "MACCLUSTER_SYNC_ENGINE"
@@ -240,6 +240,17 @@ def _peer_result(node: Node, spec, blocks: list[dict]) -> SyncPeerResult:
         safetynet_backed_up=sum(b["safetynet_files"] for b in blocks),
         via=via,
         transport=via if moved else "",
+        roots=tuple(
+            SyncRootMove(
+                root=str(b.get("root") or ""),
+                push_files=int(b.get("pushed_files") or 0),
+                push_bytes=int(b.get("pushed_bytes") or 0),
+                pull_files=int(b.get("pulled_files") or 0),
+                pull_bytes=int(b.get("pulled_bytes") or 0),
+            )
+            for b in blocks
+            if str(b.get("root") or "").strip()
+        ),
     )
 
 
